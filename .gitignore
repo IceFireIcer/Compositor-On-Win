@@ -1,24 +1,36 @@
-# Build output
-dist/
-build/
-DerivedData/
-*.xcarchive
-*.dmg
+# Go
+/bin/
+/dist/
+*.exe
+*.exe~
+*.test
+*.out
+*.syso
 
-# Xcode per-user state
-xcuserdata/
-*.xcuserstate
+# Node / frontend
+node_modules/
+frontend/dist/
 
-# macOS
+# Wails（build/ 下的 appicon、manifest、NSIS 资产需要提交，只忽略产物）
+build/bin/
+
+# 测试与覆盖率
+coverage/
+*.cover
+playwright-report/
+test-results/
+tests/golden/out/
+
+# IDE / OS
 .DS_Store
+Thumbs.db
+.idea/
+.vscode/
 
-# Signing material and secrets — never commit
+# 签名材料与机密——绝不提交
 *.p12
-*.p8
+*.pfx
 *.cer
+*.p8
 *.certSigningRequest
 .env
-
-# Claude Code settings personal to this machine
-.claude/settings.local.json
-BUILD_PLAN.md
