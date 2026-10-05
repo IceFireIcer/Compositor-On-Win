@@ -1,0 +1,8 @@
+{
+  "kernel": "heal",
+  "input": "patches",
+  "width": 48, "height": 48,
+  "epsilon": 1,
+  "params": { "opacity": 1, "mode": 0, "seed": 7 },
+  "note": "spot_heal：mode 0 Content-Aware——环形最佳匹配补丁 + 膜式填充 + 种子颗粒。浮点匹配 ε=1。"
+}

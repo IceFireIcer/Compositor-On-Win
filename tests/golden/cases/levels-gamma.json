@@ -1,0 +1,15 @@
+{
+  "kernel": "levels",
+  "input": "ramp",
+  "width": 64, "height": 64,
+  "epsilon": 1,
+  "params": {
+    "ranges": [
+      [0, 2, 255, 0, 255],
+      [51, 1, 204, 0, 128],
+      [0, 1, 255, 0, 255],
+      [0, 1, 255, 0, 255]
+    ]
+  },
+  "note": "master gamma=2（RGB 表再弯一次）+ 红通道输出白 128。pow 的末位 ulp 在 C 库与 Go math.Pow 间不可复现，按 testing.md 显式 ε=1。"
+}

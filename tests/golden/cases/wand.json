@@ -1,0 +1,8 @@
+{
+  "kernel": "wand",
+  "input": "patches",
+  "width": 48, "height": 48,
+  "epsilon": 0,
+  "params": { "seedX": 8, "seedY": 8, "radius": 1, "tolerance": 32, "contiguous": 1 },
+  "note": "wand_mask：四连通容差 32 选区（左上红块内下种），输出蒙版灰度展开。整数比较逐位一致。"
+}

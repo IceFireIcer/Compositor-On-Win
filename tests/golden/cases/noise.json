@@ -1,0 +1,8 @@
+{
+  "kernel": "noise",
+  "input": "blend",
+  "width": 64, "height": 64,
+  "epsilon": 1,
+  "params": { "amount": 20, "gaussian": 0, "monochromatic": 1, "seed": 1234 },
+  "note": "noise_add：位置+种子确定性均匀噪声、单色模式。float 噪声幅度 ε=1。"
+}

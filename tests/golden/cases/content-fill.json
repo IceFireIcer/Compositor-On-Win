@@ -1,0 +1,8 @@
+{
+  "kernel": "content_fill",
+  "input": "patches",
+  "width": 48, "height": 48,
+  "epsilon": 0,
+  "params": {},
+  "note": "content_fill：中心 1/4 方块遮罩，从周边纹理补全。程序化 patches 输入的中央补全路径。"
+}

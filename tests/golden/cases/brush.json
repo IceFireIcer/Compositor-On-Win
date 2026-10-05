@@ -1,0 +1,8 @@
+{
+  "kernel": "brush",
+  "input": "ramp",
+  "width": 64, "height": 64,
+  "epsilon": 0,
+  "params": {},
+  "note": "layer_unpremultiply_opaque：反预乘直色并强制 alpha=255（BrushRaster 复制路径的前置/收尾步骤）。整数舍入公式逐位一致。"
+}

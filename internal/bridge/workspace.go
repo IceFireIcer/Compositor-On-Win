@@ -9,9 +9,11 @@ import (
 	"compositor-win/internal/domain"
 )
 
-// Document is the scaffold-stage document descriptor: just enough for the
-// shell (tabs, checkerboard, dirty marker). Ticket 04 replaces it with the
-// full model; the ID/Name/Dirty semantics carry over.
+// Document is the shell-stage document descriptor: just enough for the
+// tabs, the checkerboard and the dirty marker. The full domain model
+// (internal/domain) backs the document once the M2 wiring tickets connect
+// Workspace to project.Store/history — until then the shell carries this
+// view of it, and ID/Name/Dirty semantics carry over unchanged.
 type Document struct {
 	ID         string `json:"id"`
 	Name       string `json:"name"`

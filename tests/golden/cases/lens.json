@@ -1,0 +1,8 @@
+{
+  "kernel": "lens",
+  "input": "ramp",
+  "width": 64, "height": 64,
+  "epsilon": 1,
+  "params": { "k": 0.3 },
+  "note": "lens_distort：k=0.3 桶形校正，双线性采样 + 视野外透明。采样坐标浮点 ε=1。"
+}

@@ -1,0 +1,15 @@
+{
+  "kernel": "levels",
+  "input": "blend",
+  "width": 64, "height": 64,
+  "epsilon": 0,
+  "params": {
+    "ranges": [
+      [0, 1, 255, 0, 255],
+      [51, 1, 204, 0, 255],
+      [0, 1, 255, 0, 255],
+      [0, 1, 255, 26, 229]
+    ]
+  },
+  "note": "levels_apply：gamma=1 走纯算术路径，要求逐位一致。红通道收黑/白点、蓝通道重映射输出端——对齐原版 LevelsFilter.run 的表构建 + C 内核应用全链。"
+}

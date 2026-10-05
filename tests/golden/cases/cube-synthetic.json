@@ -1,0 +1,8 @@
+{
+  "kernel": "cube",
+  "input": "blend",
+  "width": 64, "height": 64,
+  "epsilon": 0,
+  "params": {},
+  "note": "cube_apply：33³ 立方三线性插值（顶边 lo 钳位 31/fraction 1 的边界语义）。立方为驱动与 Go 测试同公式的多项式合成数据（真实 HSV 立方在 Swift 侧构建，C 只消费）。"
+}

@@ -1,0 +1,13 @@
+{
+  "kernel": "camera_raw",
+  "input": "blend",
+  "width": 48, "height": 48,
+  "epsilon": 1,
+  "params": {
+    "redGain": 1.1, "greenGain": 1.0, "blueGain": 0.9,
+    "exposure": 0.5, "contrast": 15, "highlights": -20,
+    "shadows": 25, "whites": 10, "blacks": -10,
+    "vibrance": 20, "saturation": 10, "clipping": 0
+  },
+  "note": "adjust_camera_raw：白平衡增益→曝光→对比→高光/阴影/白/黑→自然饱和/饱和的完整 Light 组。跨库 pow/exp2/fabs ε=1。"
+}

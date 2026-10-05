@@ -1,0 +1,13 @@
+{
+  "kernel": "color_balance",
+  "input": "blend",
+  "width": 64, "height": 64,
+  "epsilon": 1,
+  "params": {
+    "shadow": [30, -20, 10],
+    "mid": [0, 0, 0],
+    "highlight": [-15, 25, -5],
+    "preserveLuminosity": 1
+  },
+  "note": "adjust_color_balance：三区色调偏移 + preserveLuminosity 回写亮度。float 位移 + 0.299/0.587/0.114 亮度比 ε=1。"
+}

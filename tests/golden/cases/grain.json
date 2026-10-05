@@ -1,0 +1,8 @@
+{
+  "kernel": "grain",
+  "input": "blend",
+  "width": 64, "height": 64,
+  "epsilon": 1,
+  "params": { "amount": 40, "size": 2.5, "roughness": 50, "seed": 42, "originX": 0, "originY": 0, "unitsPerPixel": 1 },
+  "note": "adjust_grain：种子锚定噪声场（lattice/mix32 整数哈希 + 平滑插值），中频最强的胶片颗粒。浮点插值 ε=1。"
+}

@@ -1,0 +1,8 @@
+{
+  "kernel": "exposure",
+  "input": "blend",
+  "width": 64, "height": 64,
+  "epsilon": 1,
+  "params": { "exposure": 1, "offset": 0.02, "gamma": 1.2 },
+  "note": "ExposureSettings.table：sRGB↔线性 + 2^exposure + offset + gamma，三通道同表走 levels_apply。跨库 pow ε=1。"
+}

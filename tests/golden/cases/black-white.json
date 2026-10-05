@@ -1,0 +1,8 @@
+{
+  "kernel": "black_white",
+  "input": "blend",
+  "width": 64, "height": 64,
+  "epsilon": 1,
+  "params": { "reds": 40, "yellows": 60, "greens": 40, "cyans": 60, "blues": 20, "magentas": 80, "tint": 0, "tintHue": 40, "tintSaturation": 20 },
+  "note": "adjust_black_white：Photoshop 默认六通道权重（红 40/黄 60/绿 40/青 60/蓝 20/品 80），primary/secondary 分解。float 权重 ε=1。"
+}
