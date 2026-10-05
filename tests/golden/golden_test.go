@@ -1,6 +1,7 @@
 package golden
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -48,6 +49,18 @@ func goPort(c Case, px []byte) error {
 	case "cube":
 		cube := buildSyntheticCube(render.HueCubeDimension)
 		render.ApplyCube(bmp, cube)
+	case "wand":
+		num := func(key string) int { return int(p[key].(float64)) }
+		mask := make([]byte, c.Width*c.Height)
+		if render.WandMask(bmp.Pix, c.Width, c.Height, c.Width*4, num("seedX"), num("seedY"),
+			num("radius"), num("tolerance"), num("contiguous") != 0, mask) < 0 {
+			return fmt.Errorf("wand: wand_mask failed")
+		}
+		// The driver's gray_to_rgba: RGB = the gray value, A = 255.
+		for i, gray := range mask {
+			j := i * 4
+			bmp.Pix[j], bmp.Pix[j+1], bmp.Pix[j+2], bmp.Pix[j+3] = gray, gray, gray, 255
+		}
 	default:
 		return errNotPorted
 	}
@@ -156,8 +169,11 @@ func TestGoldenReferencesMatchGoPorts(t *testing.T) {
 		t.Fatal(err)
 	}
 	ported := 0
+	ran := map[string]bool{}
+	compared := map[string]bool{}
 	for _, c := range cases {
 		t.Run(c.CaseName, func(t *testing.T) {
+			ran[c.Kernel] = true
 			raw, err := os.ReadFile(filepath.Join(refDir, c.CaseName+".png"))
 			if err != nil {
 				t.Skipf("no reference PNG yet (generate with `go run ./tests/golden/gen`)")
@@ -174,6 +190,7 @@ func TestGoldenReferencesMatchGoPorts(t *testing.T) {
 				t.Fatal(err)
 			}
 			ported++
+			compared[c.Kernel] = true
 			if err := Compare(got, want, c.Epsilon); err != nil {
 				t.Fatalf("%s: Go port diverges from C reference: %v", c.CaseName, err)
 			}
@@ -182,5 +199,12 @@ func TestGoldenReferencesMatchGoPorts(t *testing.T) {
 	t.Logf("%d/%d cases compared against references", ported, len(cases))
 	if ported == 0 {
 		t.Fatal("no case ran a Go comparison — wire the ported kernels into goPort")
+	}
+	// Kernels with a live Go port must actually run a comparison, not skip —
+	// but only when their case was part of this run (go test -run may filter).
+	for _, k := range []string{"levels", "exposure", "gradient_map", "cube", "wand"} {
+		if ran[k] && !compared[k] {
+			t.Errorf("kernel %q has a Go port in goPort but was not compared", k)
+		}
 	}
 }
