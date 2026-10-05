@@ -118,11 +118,11 @@
 
 | # | 种类 | 实现锚点 | 故事# | 里程碑 | 状态 |
 | --- | --- | --- | --- | --- | --- |
-| A01 | Hue/Saturation（分区/分段） | 33³ color cube | 37 | M5 | ☐ |
-| A02 | Levels（Auto + 黑/灰/白三吸管） | `LevelsPixels.c` LUT | 37 | M5 | ☐ |
-| A03 | Curves | 256 项/通道表 | 37 | M5 | ☐ |
-| A04 | Exposure | sRGB↔线性表 | 37 | M5 | ☐ |
-| A05 | Gradient Map | 256×3 表 | 37 | M5 | ☐ |
+| A01 | Hue/Saturation（分区/分段） | 33³ color cube | 37 | M5 | ◐ 票10：LUT/cube 生成+接线已落地，M5 内核票 37 出口 |
+| A02 | Levels（Auto + 黑/灰/白三吸管） | `LevelsPixels.c` LUT | 37 | M5 | ◐ 票10：LUT/cube 生成+接线已落地，M5 内核票 37 出口 |
+| A03 | Curves | 256 项/通道表 | 37 | M5 | ◐ 票10：LUT/cube 生成+接线已落地，M5 内核票 37 出口 |
+| A04 | Exposure | sRGB↔线性表 | 37 | M5 | ◐ 票10：LUT/cube 生成+接线已落地，M5 内核票 37 出口 |
+| A05 | Gradient Map | 256×3 表 | 37 | M5 | ◐ 票10：LUT/cube 生成+接线已落地，M5 内核票 37 出口 |
 | A06 | Grain（胶片颗粒，文档锚定噪声场） | `adjust_grain` | 37 | M5 | ☐ |
 | A07 | Add Noise（位置+种子确定性） | `noise_add_at` | 37 | M5 | ☐ |
 | A08 | Gaussian Blur（溢出层边缘） | CI blur 语义 | 37 | M5 | ☐ |
