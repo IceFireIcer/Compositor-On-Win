@@ -21,13 +21,17 @@
     position: absolute;
     inset: 0;
     overflow: auto;
+    /* safe center: plain center clips the start edge when the document is
+       larger than the stage and makes it unscrollable (review I3). */
     display: grid;
-    place-items: center;
+    place-items: safe center;
   }
 
-  /* Checkerboard (transparency) + document bounds. */
+  /* Checkerboard (transparency) + document bounds. margin:auto keeps the
+     document centered in engines without `safe` alignment. */
   .doc {
     flex: none;
+    margin: auto;
     background: repeating-conic-gradient(#3c3c41 0% 25%, #4a4a50 0% 50%) 0 0 / 16px 16px;
     border: 1px solid #141416;
     box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08), 0 8px 32px rgba(0, 0, 0, 0.45);

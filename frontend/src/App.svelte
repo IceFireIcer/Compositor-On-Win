@@ -35,12 +35,14 @@
     })();
 
     // Window size persistence: debounced save on resize; restore happens
-    // Go-side at startup (main.go OnStartup).
+    // Go-side at startup (main.go OnStartup). outerWidth/outerHeight match
+    // the unit of runtime.WindowSetSize — saving the viewport would shrink
+    // the window by the titlebar on every relaunch (review I2).
     let timer: number | undefined;
     const onResize = () => {
       clearTimeout(timer);
       timer = window.setTimeout(() => {
-        void SaveWindowState(window.innerWidth, window.innerHeight);
+        void SaveWindowState(window.outerWidth, window.outerHeight);
       }, 400);
     };
     window.addEventListener("resize", onResize);
