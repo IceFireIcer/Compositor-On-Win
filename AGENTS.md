@@ -25,6 +25,11 @@
 
 ## 工作流
 
-- 逐票实现：`/to-tickets` 生成的票（含阻塞边）→ 每票 `/implement`（内部 TDD）→ `/code-review`。
-- 当前阶段：docs 已就绪，M0 未开始；拆票顺序建议见 `docs/plan.md` 末节。
+- 逐票实现：`/to-tickets` 生成的票（docs/tickets/，`00-README.md` 是索引）→ 每票 `/implement`（内部 TDD）→ `/code-review`。
+- 当前 frontier：票 04（域模型）、08（黄金基准 harness）可并行开工；顺序建议见 `docs/plan.md` 末节。
 - 代码风格：Go 惯用命名；TS strict 模式；美式拼写（"color"）。跟随原版的算法注释密度——移植的内核应保留原 C 代码中的数值注释。
+
+## 环境注意（本机）
+
+- Go 代理已固化 `goproxy.cn`（proxy.golang.org 直连不可达）；CI 上用默认源。
+- `npm ci` 报 rollup 原生模块 EPERM 时，先 `taskkill` 残留的 esbuild/vite watcher node 进程（wails dev 强杀后会遗留孤儿进程锁文件）。

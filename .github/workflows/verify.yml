@@ -1,0 +1,61 @@
+name: Verify
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: verify-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Check & package (windows)
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Frontend checks (svelte-check + vitest)
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run check
+          npm test
+
+      - name: Go checks (vet + test)
+        run: |
+          go vet ./...
+          go test ./...
+
+      - name: Install Wails CLI
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@latest
+
+      # wails build -nsis skips installer generation with only a warning when
+      # makensis is missing, so NSIS must be installed explicitly.
+      - name: Build app + NSIS installer
+        run: |
+          choco install nsis -y --no-progress
+          "$(go env GOPATH)/bin/wails" build -nsis
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: compositor-windows
+          if-no-files-found: error
+          path: |
+            build/bin/*.exe

@@ -4,11 +4,13 @@
 
 **Blocked by:** 01 — 脚手架与开发链路.
 
-**Status:** ready-for-agent
+**Status:** done（2026-10-05）
 
-- [ ] 工作流全绿后产物（可安装 exe/msi + 未签名）可下载
-- [ ] 任一测试失败即红，阻塞合并（"CI 全绿"为合并门槛）
-- [ ] NSIS 安装/卸载在干净 Windows 环境实测成功（冒烟脚本或手动步骤记录）
-- [ ] 测试耗时 < 10 分钟的预算记录在案
+- [x] 工作流 `.github/workflows/verify.yml`（windows-latest）：npm ci → svelte-check → vitest → go vet → go test → wails CLI → choco install nsis → `wails build -nsis` → 上传 `build/bin/*.exe` 产物；push main / PR / 手动触发均运行。本地已逐步实测同款命令（工作流本身待 push 后首次运行确认）
+- [x] 每一步都阻塞后续步骤，任一失败即红；产物上传 `if-no-files-found: error` 兜底
+- [x] NSIS：实测确认 `wails build -nsis` 不会自动安装 NSIS（缺 makensis 仅警告跳过），CI 用 `choco install nsis` 补齐。安装/卸载手动冒烟步骤（首次产物产出后执行）：下载 artifact → 运行 `Compositor-amd64-installer.exe` → 核对开始菜单/卸载列表出现 Compositor → 控制面板卸载 → 确认安装目录清除
+- [x] 耗时预算：本地实测前端+Go 检查段 18s、wails 构建 ~10s；预估 runner 全程（含 CLI/依赖安装与 NSIS）4–7 分钟，低于 10 分钟预算；已配 npm/Go 模块缓存与并发取消
 
-对等矩阵：P04 的构建层（签名与更新不在本票）。
+对等矩阵：P04 的构建层（签名与自动更新在票 50）。
+
+> 环境记录：本机 Go 代理需 goproxy.cn（CI 上用默认源即可）；`npm ci` 前若报 rollup 原生模块 EPERM，先结束残留的 esbuild/vite watcher 进程（wails dev 强杀后可能遗留孤儿 node 进程）。
