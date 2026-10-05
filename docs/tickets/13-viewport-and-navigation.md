@@ -4,11 +4,13 @@
 
 **Blocked by:** 02 — 编辑器外壳 UI 与新建画布; 11 — WebGPU 合成器.
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] 缩放梯与锚点保持的数学测试通过（CanvasViewport 语义移植）
-- [ ] 像素网格、棋盘格、文档边界显示正确
-- [ ] 光标按工具/修饰键切换正确（含徽标光标视觉冒烟）
-- [ ] 所有修饰键组合被记录为事件位并可被工具层消费
+- [x] 缩放梯与锚点保持的数学测试通过（CanvasViewport 语义移植）
+- [x] 像素网格、棋盘格、文档边界显示正确
+- [x] 光标按工具/修饰键切换正确（含徽标光标视觉冒烟）
+- [x] 所有修饰键组合被记录为事件位并可被工具层消费
 
 对等矩阵：V01、V07、故事 3–5。
+
+**实现说明（2026-10-06，并行子代理）：** `lib/state/viewport.ts`（0.001–32×、17 级梯值取自 CanvasViewport.swift:12-14 原数组、锚点保持、Fit/100%、双向映射）、`lib/state/modifiers.ts`（Shift/Alt/Ctrl/Space 事件位状态机 + 有界事件日志）、`lib/components/cursors.ts`（工具×修饰键→光标映射，徽标光标为视觉冒烟级近似）、CanvasSurface 接入滚轮/快捷键缩放与空格/中键平移、zoom≥8 像素网格。56 新测试。
