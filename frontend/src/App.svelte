@@ -1,31 +1,69 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { TOOLS, activeTool, selectTool } from "./lib/state/tools";
   import { Version } from "../wailsjs/go/bridge/Service";
+  import { Snapshot as GetSnapshot } from "../wailsjs/go/bridge/Workspace";
+  import { Save as SaveWindowState } from "../wailsjs/go/bridge/WindowStore";
+  import { TOOLS, activeTool, selectTool } from "./lib/state/tools";
+  import {
+    workspace,
+    applySnapshot,
+    activeTab,
+    hasDocument,
+  } from "./lib/state/workspace";
+  import TabStrip from "./lib/components/TabStrip.svelte";
+  import NewCanvasSheet from "./lib/components/NewCanvasSheet.svelte";
+  import CanvasSurface from "./lib/components/CanvasSurface.svelte";
 
   let version = $state("…");
+  let sheetOpen = $state(false);
 
-  onMount(async () => {
-    try {
-      version = await Version();
-    } catch {
-      version = "离线";
-    }
+  const current = $derived(activeTab($workspace));
+
+  // Welcome screen whenever the workspace empties (first launch or last tab closed).
+  $effect(() => {
+    if (!hasDocument($workspace)) sheetOpen = true;
   });
+
+  onMount(() => {
+    void (async () => {
+      try {
+        version = await Version();
+      } catch {
+        version = "离线";
+      }
+      applySnapshot(await GetSnapshot());
+    })();
+
+    // Window size persistence: debounced save on resize; restore happens
+    // Go-side at startup (main.go OnStartup).
+    let timer: number | undefined;
+    const onResize = () => {
+      clearTimeout(timer);
+      timer = window.setTimeout(() => {
+        void SaveWindowState(window.innerWidth, window.innerHeight);
+      }, 400);
+    };
+    window.addEventListener("resize", onResize);
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener("resize", onResize);
+    };
+  });
+
+  function newCanvas(): void {
+    sheetOpen = true;
+  }
 </script>
 
 <div class="app">
   <header class="toolbar">
     <div class="brand">Compositor</div>
-    <div class="tabs">
-      <span class="tab active">未命名</span>
-      <button class="tab-add" title="新建画布（票 02）">＋</button>
-    </div>
+    <TabStrip onnew={newCanvas} />
     <div class="spacer"></div>
     <div class="zoom-controls">
-      <button title="缩小">−</button>
+      <button title="缩小（票 13 实装）">−</button>
       <span class="zoom-value">100%</span>
-      <button title="放大">＋</button>
+      <button title="放大（票 13 实装）">＋</button>
     </div>
   </header>
 
@@ -44,24 +82,48 @@
     </nav>
 
     <main class="canvas-area">
-      <div class="welcome">
-        <p class="welcome-title">Compositor for Windows</p>
-        <p class="hint">脚手架就绪 — 空画布区域（票 02 接新建画布）</p>
-      </div>
+      {#if current}
+        <CanvasSurface doc={current} />
+      {:else}
+        <div class="welcome">
+          <p class="welcome-title">Compositor for Windows</p>
+          <p class="hint">新建画布开始创作，或打开 .comp 项目（票 05）</p>
+          <button class="welcome-new" onclick={newCanvas}>新建画布…</button>
+        </div>
+      {/if}
     </main>
 
     <aside class="layers-panel">
       <div class="panel-title">图层</div>
-      <div class="panel-empty">没有打开的文档</div>
+      {#if current}
+        <div class="panel-empty">「{current.name}」尚无图层内容（票 04 接域模型）</div>
+      {:else}
+        <div class="panel-empty">没有打开的文档</div>
+      {/if}
     </aside>
   </div>
 
   <footer class="status-bar">
-    <span>就绪</span>
+    <span>{current ? "就绪" : "欢迎"}</span>
+    {#if current}
+      <span class="sep">·</span>
+      <span>{current.name} — {current.width} × {current.height} @ {current.resolution}ppi</span>
+      {#if current.dirty}
+        <span class="sep">·</span>
+        <span class="unsaved">未保存</span>
+      {/if}
+    {/if}
     <span class="spacer"></span>
     <span title="internal/bridge.Service.Version 往返">v{version}</span>
   </footer>
 </div>
+
+<NewCanvasSheet
+  open={sheetOpen}
+  onclose={() => {
+    sheetOpen = false;
+  }}
+/>
 
 <style>
   .app {
@@ -82,28 +144,6 @@
 
   .brand {
     font-weight: 600;
-  }
-
-  .tabs {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-  }
-
-  .tab {
-    padding: 3px 12px;
-    border-radius: 4px;
-    background: var(--bg-raised);
-  }
-
-  .tab.active {
-    background: var(--accent-dim);
-  }
-
-  .tab-add {
-    width: 24px;
-    height: 24px;
-    padding: 0;
   }
 
   .zoom-controls {
@@ -139,6 +179,7 @@
     gap: 2px;
     background: var(--bg-panel);
     border-right: 1px solid var(--border);
+    overflow-y: auto;
   }
 
   .tool {
@@ -150,6 +191,7 @@
   .canvas-area {
     position: relative;
     background: var(--bg-canvas);
+    min-width: 0;
   }
 
   .welcome {
@@ -159,7 +201,7 @@
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    gap: 4px;
+    gap: 8px;
   }
 
   .welcome-title {
@@ -171,10 +213,16 @@
     color: var(--text-dim);
   }
 
+  .welcome-new {
+    padding: 6px 18px;
+    margin-top: 8px;
+  }
+
   .layers-panel {
     padding: 8px;
     background: var(--bg-panel);
     border-left: 1px solid var(--border);
+    overflow-y: auto;
   }
 
   .panel-title {
@@ -196,5 +244,13 @@
     border-top: 1px solid var(--border);
     color: var(--text-dim);
     font-size: 11px;
+  }
+
+  .unsaved {
+    color: var(--text);
+  }
+
+  .sep {
+    opacity: 0.5;
   }
 </style>
