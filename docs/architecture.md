@@ -36,7 +36,7 @@
 | `Document/`（54 文件：模型、工具逻辑、选区、调整、撤销） | Go `internal/{domain,history,pixel}` | 逻辑与算法；选区算法在 `pixel` |
 | `EditorSession.swift`（982 行会话对象） | Go `bridge` 会话服务 + 前端状态镜像 | 会话门控（canEditLayers 等）在 Go，UI 态在前端 |
 | `DocumentHistory.swift` | Go `history` | 快照式 + 结构共享原样保留 |
-| `ProjectStore / ProjectWatcher / ProjectDigest` | Go `project` | manifest v11、fsnotify、sha256 |
+| `ProjectStore / ProjectWatcher / ProjectDigest` | Go `project` + Go `watch` | manifest v11、fsnotify、sha256 |
 | `PSD/*`（手写解析器，PSDText 682 行） | Go `psd` | 字节级行为移植，测试夹具同源 |
 | `ImageImporter / ImageExporter / RawImporter` | Go `importer/exporter` | HEIC/RAW 走 cgo（libheif/LibRaw） |
 | `Rendering/EditorCanvas.swift`（3,124 行 NSView） | 前端 `lib/canvas` + 组件 | 指针/滚轮/键盘交互全在 Web 事件模型 |
@@ -118,7 +118,8 @@ docs/                     执行文档（本目录）
 internal/
   bridge/                 Wails 装配、生命周期、事件
   domain/                 文档模型与限额
-  project/                .comp 存取、校验、监视、digest
+  project/                .comp 存取、校验、原子保存、PNG 资产
+  watch/                  外部变更监视（fsnotify 合并/重挂）、digest、退避协调
   history/                快照撤销
   pixel/                  C 内核 Go 移植（wand/heal/fill/adjust/levels/noise/lens/dither/brush）
   render/                 CPU 合成、混合模式、特效、降采样
