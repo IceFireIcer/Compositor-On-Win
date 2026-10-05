@@ -14,3 +14,5 @@
 对等矩阵：P04 的构建层（签名与自动更新在票 50）。
 
 > 环境记录：本机 Go 代理需 goproxy.cn（CI 上用默认源即可）；`npm ci` 前若报 rollup 原生模块 EPERM，先结束残留的 esbuild/vite watcher 进程（wails dev 强杀后可能遗留孤儿 node 进程）。
+
+> 2026-10-06 拆分：verify.yml 拆为两个 job——`verify`（前端+Go 检查，每次 push/PR 必跑，无打包）与 `package`（Wails+NSIS 构建+产物上传），后者仅手动 dispatch 勾选 package 或打 tag 时执行；既有 artifacts 已清理。安装/卸载手动冒烟仍待执行。
