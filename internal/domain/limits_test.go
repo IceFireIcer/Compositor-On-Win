@@ -7,9 +7,9 @@ import (
 
 func TestValidateNewDocument(t *testing.T) {
 	cases := []struct {
-		name              string
+		name               string
 		width, height, res int
-		wantErr           string // "" means valid
+		wantErr            string // "" means valid
 	}{
 		{"typical HD", 1920, 1080, 72, ""},
 		{"max side, valid surface", 30000, 6666, 9600, ""},
