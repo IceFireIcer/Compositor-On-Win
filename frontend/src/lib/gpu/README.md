@@ -12,6 +12,9 @@
 | `device.ts` | WebGPU 探测——每条失败路径都解析为带原因的 `cpu-fallback` 声明（不抛异常） | `device.test.ts` |
 | `shaders/blend.ts` | `BLEND_WGSL`：24 种混合模式逐式镜像 `internal/render/blend.go`（PDF 16 + Photoshop 8 + 非可分离 4，sRGB 语义、PDF 合成方程、预乘进出） | 一致性协议（下） |
 | `renderGraph.ts` | 设备无关的绘制计划，镜像 composite.go 语义（顺序/组衰减/蒙版/剪贴/不可见/调整层透传） | `renderGraph.test.ts` |
+| `shaders/adjust.ts` | 调整层 GPU 应用：1D LUT 与 3D cube 纹理化采样（消费票 10 的 LUT/cube 数据结构，含顶边钳位语义） | 一致性协议 |
+| `shaders/effects.ts` | 特效通道：覆盖率→行/列分离模糊→环形合成（内/外沿）→着色，角度/距离语义同 ShadowEffect | 一致性协议 |
+| `effectPass.ts` | 特效→GPU pass 链（6 种，E01–E06 顺序）；特效输出缓存按"修订+属性"键控、stale-while-revalidate 不闪白 | `effectPass.test.ts` |
 
 ## 一致性协议（GPU 输出 vs CPU 真值，逐模式）
 
