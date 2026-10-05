@@ -7,9 +7,10 @@
 *.out
 *.syso
 
-# Node / frontend
+# Node / frontend（dist 需要 .gitkeep 供 go:embed 引用）
 node_modules/
-frontend/dist/
+frontend/dist/*
+!frontend/dist/.gitkeep
 
 # Wails（build/ 下的 appicon、manifest、NSIS 资产需要提交，只忽略产物）
 build/bin/
