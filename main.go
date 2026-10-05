@@ -4,6 +4,8 @@ import (
 	"context"
 	"embed"
 	"log"
+	"os"
+	"strings"
 
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
@@ -16,6 +18,25 @@ import (
 
 //go:embed all:frontend/dist
 var assets embed.FS
+
+// init runs before the WebView2 environment is created. System proxies
+// (Clash/v2ray etc.) answer 502 for wails.localhost: their bypass lists
+// cover localhost/127.* but not the wails.localhost virtual host. Force
+// WebView2 to bypass any proxy for loopback traffic (user-reported
+// HTTP ERROR 502). Existing additional arguments are preserved.
+func init() {
+	const env = "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"
+	const bypass = "--proxy-bypass-list=<-loopback>"
+	existing := os.Getenv(env)
+	if strings.Contains(existing, bypass) {
+		return
+	}
+	if existing == "" {
+		_ = os.Setenv(env, bypass)
+		return
+	}
+	_ = os.Setenv(env, existing+" "+bypass)
+}
 
 func main() {
 	workspace := bridge.NewWorkspace()
