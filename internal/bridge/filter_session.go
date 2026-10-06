@@ -291,6 +291,8 @@ func (s *Service) CommitFilter(settingsJSON string) (string, error) {
 		return "", fmt.Errorf("无法解析滤镜参数: %w", err)
 	}
 	p = p.normalized(f.kind)
+	p.CameraRawClipping = nil // the clip view is preview-only, never committed
+	p.CameraRawSharpenMask = false
 	l, err := layerByID(sess.doc, f.layerID)
 	if err != nil {
 		return "", err
@@ -665,4 +667,187 @@ func (s *Service) LevelsAuto(mode int) (string, error) {
 		return "", err
 	}
 	return string(b), nil
+}
+
+// ---------------------------------------------------------------------------
+// Camera Raw panel endpoints: scopes and the sampling solvers
+// ---------------------------------------------------------------------------
+
+// scopeTargetBitmap returns the pixels the scopes read: the latest filter
+// preview when a Camera Raw session is open, else the active layer's stored
+// bitmap — "真实像素且实时更新".
+func (s *Service) scopeTargetBitmap(sess *session) (*render.Bitmap, error) {
+	if sess.filter != nil && sess.filter.preview != nil {
+		return sess.filter.preview, nil
+	}
+	if sess.doc.ActiveLayerID == nil {
+		return nil, fmt.Errorf("没有活动图层")
+	}
+	l, err := layerByID(sess.doc, *sess.doc.ActiveLayerID)
+	if err != nil {
+		return nil, err
+	}
+	if l.ImageFile == nil {
+		return nil, fmt.Errorf("图层 %s 没有位图", l.ID)
+	}
+	bmp, ok := sess.bitmaps[*l.ImageFile]
+	if !ok || bmp == nil {
+		return nil, fmt.Errorf("内存位图库缺少资产 %s", *l.ImageFile)
+	}
+	return bmp, nil
+}
+
+// CameraRawScope bins the graded pixels: the RGB histogram plus the 64×64
+// hue/saturation vectorscope, refreshed by the frontend on every preview
+// revision.
+func (s *Service) CameraRawScope() (string, error) {
+	if s.ws == nil {
+		return "", errNoDocument
+	}
+	s.ws.mu.Lock()
+	defer s.ws.mu.Unlock()
+	sess := s.ws.activeSessionLocked()
+	if sess == nil {
+		return "", errNoDocument
+	}
+	bmp, err := s.scopeTargetBitmap(sess)
+	if err != nil {
+		return "", err
+	}
+	scope := render.BuildCameraRawScope(bmp)
+	b, err := json.Marshal(scope)
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
+}
+
+// sampleLayerPixel converts a document-pixel click into the filter source's
+// straight sRGB (the Camera Raw eyedroppers sample the original layer, not
+// the graded preview — CameraRawSettings.sampleCameraRawWhiteBalance).
+func sampleLayerPixel(sess *session, f *filterSession, x, y int) (r, g, b float64, err error) {
+	dx, dy := docToLayerIndex(f.grownT, f.grown.W, f.grown.H, float64(x)+0.5, float64(y)+0.5)
+	ix, iy := int(math.Floor(dx)), int(math.Floor(dy))
+	if ix < 0 || iy < 0 || ix >= f.grown.W || iy >= f.grown.H {
+		return 0, 0, 0, fmt.Errorf("取样点 (%d,%d) 落在图层外", x, y)
+	}
+	i := (iy*f.grown.W + ix) * 4
+	alpha := float64(f.grown.Pix[i+3])
+	if alpha == 0 {
+		return 0, 0, 0, fmt.Errorf("取样点 (%d,%d) 是透明的", x, y)
+	}
+	return math.Min(1, float64(f.grown.Pix[i])/alpha),
+		math.Min(1, float64(f.grown.Pix[i+1])/alpha),
+		math.Min(1, float64(f.grown.Pix[i+2])/alpha), nil
+}
+
+// CameraRawWhiteBalanceSample solves the temperature/tint that makes the
+// clicked pixel neutral (the white-balance eyedropper).
+func (s *Service) CameraRawWhiteBalanceSample(x, y int) (string, error) {
+	if s.ws == nil {
+		return "", errNoDocument
+	}
+	s.ws.mu.Lock()
+	defer s.ws.mu.Unlock()
+	sess := s.ws.activeSessionLocked()
+	if sess == nil || sess.filter == nil {
+		return "", fmt.Errorf("没有打开的 Camera Raw 会话")
+	}
+	r, g, b, err := sampleLayerPixel(sess, sess.filter, x, y)
+	if err != nil {
+		return "", err
+	}
+	lr, lg, lb := render.DecodeSrgb(r), render.DecodeSrgb(g), render.DecodeSrgb(b)
+	temperature, tint, ok := render.NeutralizeWhiteBalance(lr, lg, lb)
+	if !ok {
+		return "", fmt.Errorf("该颜色无法表达为色温/色调偏移")
+	}
+	out, err := json.Marshal(map[string]float64{"temperature": temperature, "tint": tint})
+	if err != nil {
+		return "", err
+	}
+	return string(out), nil
+}
+
+// CameraRawAutoWhiteBalance solves the gray-world balance of the layer's
+// opaque pixels (CameraRawSettings.autoBalance).
+func (s *Service) CameraRawAutoWhiteBalance() (string, error) {
+	if s.ws == nil {
+		return "", errNoDocument
+	}
+	s.ws.mu.Lock()
+	defer s.ws.mu.Unlock()
+	sess := s.ws.activeSessionLocked()
+	if sess == nil || sess.filter == nil {
+		return "", fmt.Errorf("没有打开的 Camera Raw 会话")
+	}
+	var red, green, blue, count float64
+	for i := 0; i < len(sess.filter.grown.Pix); i += 4 {
+		alpha := float64(sess.filter.grown.Pix[i+3])
+		if alpha == 0 {
+			continue
+		}
+		red += render.DecodeSrgb(math.Min(1, float64(sess.filter.grown.Pix[i])/alpha))
+		green += render.DecodeSrgb(math.Min(1, float64(sess.filter.grown.Pix[i+1])/alpha))
+		blue += render.DecodeSrgb(math.Min(1, float64(sess.filter.grown.Pix[i+2])/alpha))
+		count++
+	}
+	if count == 0 {
+		return "", fmt.Errorf("图层没有像素可取样")
+	}
+	temperature, tint, ok := render.NeutralizeWhiteBalance(red/count, green/count, blue/count)
+	if !ok {
+		return "", fmt.Errorf("平均色无法表达为色温/色调偏移")
+	}
+	out, err := json.Marshal(map[string]float64{"temperature": temperature, "tint": tint})
+	if err != nil {
+		return "", err
+	}
+	return string(out), nil
+}
+
+// CameraRawDefringeSample centers the purple or green hue range on the
+// clicked fringe color (EditorSession.sampleCameraRawDefringe): whichever
+// wheel center (290° purple / 90° green) is nearer, ±25° span, arming the
+// amount at 50 when it was off.
+func (s *Service) CameraRawDefringeSample(x, y int, settingsJSON string) (string, error) {
+	if s.ws == nil {
+		return "", errNoDocument
+	}
+	s.ws.mu.Lock()
+	defer s.ws.mu.Unlock()
+	sess := s.ws.activeSessionLocked()
+	if sess == nil || sess.filter == nil {
+		return "", fmt.Errorf("没有打开的 Camera Raw 会话")
+	}
+	r, g, b, err := sampleLayerPixel(sess, sess.filter, x, y)
+	if err != nil {
+		return "", err
+	}
+	hue := render.PixelHueDegrees(r, g, b)
+	var p filterParams
+	if err := json.Unmarshal([]byte(settingsJSON), &p); err != nil {
+		return "", fmt.Errorf("无法解析参数: %w", err)
+	}
+	optics := p.CameraRaw.Optics.Normalized()
+	const span = 25.0
+	if math.Abs(hue-290.0) < math.Abs(hue-90.0) {
+		optics.PurpleHueLow = hue - span
+		optics.PurpleHueHigh = hue + span
+		if optics.PurpleAmount == 0 {
+			optics.PurpleAmount = 50
+		}
+	} else {
+		optics.GreenHueLow = hue - span
+		optics.GreenHueHigh = hue + span
+		if optics.GreenAmount == 0 {
+			optics.GreenAmount = 50
+		}
+	}
+	p.CameraRaw.Optics = optics.Normalized()
+	out, err := json.Marshal(p)
+	if err != nil {
+		return "", err
+	}
+	return string(out), nil
 }

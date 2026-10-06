@@ -423,52 +423,6 @@
               <input type="number" min="-100" max="100" value={s.distortion}
                 onchange={(e) => updateFilterSettings({ distortion: +e.currentTarget.value })} />
             </label>
-          {:else if kind === "cameraRaw"}
-            <p class="hint">Light / Color 快速组 —— 完整面板（曲线/混色器/分级/细节/光学）随 34 号票。</p>
-            <label class="row">
-              <span>曝光</span>
-              <input type="range" min="-5" max="5" step="0.05" value={s.cameraRaw.exposure ?? 0}
-                oninput={(e) => updateFilterSettings({ cameraRaw: { ...s.cameraRaw, exposure: +e.currentTarget.value } })} />
-              <input type="number" min="-5" max="5" step="0.05" value={s.cameraRaw.exposure ?? 0}
-                onchange={(e) => updateFilterSettings({ cameraRaw: { ...s.cameraRaw, exposure: +e.currentTarget.value } })} />
-            </label>
-            <label class="row">
-              <span>对比度</span>
-              <input type="range" min="-100" max="100" value={s.cameraRaw.contrast ?? 0}
-                oninput={(e) => updateFilterSettings({ cameraRaw: { ...s.cameraRaw, contrast: +e.currentTarget.value } })} />
-              <input type="number" min="-100" max="100" value={s.cameraRaw.contrast ?? 0}
-                onchange={(e) => updateFilterSettings({ cameraRaw: { ...s.cameraRaw, contrast: +e.currentTarget.value } })} />
-            </label>
-            <label class="row">
-              <span>高光</span>
-              <input type="range" min="-100" max="100" value={s.cameraRaw.highlights ?? 0}
-                oninput={(e) => updateFilterSettings({ cameraRaw: { ...s.cameraRaw, highlights: +e.currentTarget.value } })} />
-            </label>
-            <label class="row">
-              <span>阴影</span>
-              <input type="range" min="-100" max="100" value={s.cameraRaw.shadows ?? 0}
-                oninput={(e) => updateFilterSettings({ cameraRaw: { ...s.cameraRaw, shadows: +e.currentTarget.value } })} />
-            </label>
-            <label class="row">
-              <span>色温</span>
-              <input type="range" min="-100" max="100" value={s.cameraRaw.temperature ?? 0}
-                oninput={(e) => updateFilterSettings({ cameraRaw: { ...s.cameraRaw, temperature: +e.currentTarget.value } })} />
-            </label>
-            <label class="row">
-              <span>色调</span>
-              <input type="range" min="-100" max="100" value={s.cameraRaw.tint ?? 0}
-                oninput={(e) => updateFilterSettings({ cameraRaw: { ...s.cameraRaw, tint: +e.currentTarget.value } })} />
-            </label>
-            <label class="row">
-              <span>自然饱和度</span>
-              <input type="range" min="-100" max="100" value={s.cameraRaw.vibrance ?? 0}
-                oninput={(e) => updateFilterSettings({ cameraRaw: { ...s.cameraRaw, vibrance: +e.currentTarget.value } })} />
-            </label>
-            <label class="row">
-              <span>饱和度</span>
-              <input type="range" min="-100" max="100" value={s.cameraRaw.saturation ?? 0}
-                oninput={(e) => updateFilterSettings({ cameraRaw: { ...s.cameraRaw, saturation: +e.currentTarget.value } })} />
-            </label>
           {/if}
         {:else if kind === "adjust:Levels" && s}
           <div class="hist-wrap">

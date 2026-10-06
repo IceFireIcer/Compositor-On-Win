@@ -7,11 +7,27 @@ export function ApplyFilter(arg1:string,arg2:string,arg3:string,arg4:number,arg5
 
 export function BeginFilterEdit(arg1:string,arg2:string,arg3:string,arg4:number,arg5:string):Promise<string>;
 
+export function CameraRawAutoWhiteBalance():Promise<string>;
+
+export function CameraRawDefringeSample(arg1:number,arg2:number,arg3:string):Promise<string>;
+
+export function CameraRawScope():Promise<string>;
+
+export function CameraRawWhiteBalanceSample(arg1:number,arg2:number):Promise<string>;
+
 export function BeginStroke(arg1:number,arg2:number):Promise<string>;
 
 export function ApplyLevelsSample(arg1:string,arg2:number,arg3:number,arg4:number):Promise<string>;
 
 export function BeginFilterEdit(arg1:string,arg2:string,arg3:string,arg4:number,arg5:string):Promise<string>;
+
+export function CameraRawAutoWhiteBalance():Promise<string>;
+
+export function CameraRawDefringeSample(arg1:number,arg2:number,arg3:string):Promise<string>;
+
+export function CameraRawScope():Promise<string>;
+
+export function CameraRawWhiteBalanceSample(arg1:number,arg2:number):Promise<string>;
 
 export function BeginStroke(arg1:number,arg2:number):Promise<string>;
 

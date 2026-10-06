@@ -76,6 +76,12 @@ export interface FilterSettings {
   tonalHighlights: number;
   distortion: number;
   cameraRaw: Record<string, unknown>;
+  /** Camera Raw panel's per-group eyes (nil-equivalent = all show). */
+  cameraRawShows: Record<string, boolean>;
+  /** Option-drag clipping view (1 highlights / 2 shadows); preview-only. */
+  clipping: number;
+  /** Option-drag on Sharpening Masking: preview-only mask overlay. */
+  sharpenMask: boolean;
   adjustment: Record<string, unknown> | null;
 }
 
@@ -101,6 +107,9 @@ export function defaultFilterSettings(kind: string): FilterSettings {
     tonalHighlights: 30,
     distortion: 0,
     cameraRaw: {},
+    cameraRawShows: {},
+    clipping: 0,
+    sharpenMask: false,
     adjustment: null,
   };
 }
@@ -264,9 +273,11 @@ export async function cancelFilter(): Promise<void> {
   }
 }
 
-/** The Levels dialog's armed eyedropper; CanvasSurface forwards canvas
- * clicks here first and swallows them while armed. */
-export const armedEyedropper = writable<"black" | "gray" | "white" | null>(null);
+/** The armed sampler: Levels' three eyedroppers or Camera Raw's white
+ * balance / defringe; CanvasSurface forwards canvas clicks here first and
+ * swallows them while armed. */
+export type ArmedSampler = "black" | "gray" | "white" | "wb" | "defringe";
+export const armedEyedropper = writable<ArmedSampler | null>(null);
 
 type EyedropperHook = (docX: number, docY: number, mode: "black" | "gray" | "white") => void;
 let eyedropperHook: EyedropperHook | null = null;
@@ -279,12 +290,64 @@ export function registerLevelsEyedropper(hook: EyedropperHook): () => void {
   };
 }
 
-/** Returns true when the click was consumed by an armed eyedropper. */
+/** Returns true when the click was consumed by an armed sampler. */
 export function eyedropperClick(docX: number, docY: number): boolean {
   const mode = get(armedEyedropper);
   if (!mode) return false;
-  eyedropperHook?.(docX, docY, mode);
+  if (mode === "black" || mode === "gray" || mode === "white") {
+    eyedropperHook?.(docX, docY, mode);
+    return true;
+  }
+  const session = get(filterSession);
+  if (!session) return false;
+  const x = Math.floor(docX);
+  const y = Math.floor(docY);
+  if (mode === "wb") {
+    BridgeService.CameraRawWhiteBalanceSample(x, y)
+      .then((raw: string) => {
+        const solved = JSON.parse(raw) as { temperature: number; tint: number };
+        updateFilterSettings({
+          cameraRaw: {
+            ...session.settings.cameraRaw,
+            temperature: solved.temperature,
+            tint: solved.tint,
+            whiteBalance: "Custom",
+          },
+        });
+        armedEyedropper.set(null);
+      })
+      .catch((err: unknown) => console.warn("白平衡取样失败", err));
+    return true;
+  }
+  BridgeService.CameraRawDefringeSample(x, y, JSON.stringify(session.settings))
+    .then((raw: string) => {
+      const params = JSON.parse(raw) as { cameraRaw: Record<string, unknown> };
+      updateFilterSettings({ cameraRaw: params.cameraRaw });
+      armedEyedropper.set(null);
+    })
+    .catch((err: unknown) => console.warn("去边取样失败", err));
   return true;
+}
+
+/** White Balance > Auto: the gray-world solve of the layer's opaque pixels
+ * (CameraRawSettings.autoBalance). */
+export async function autoWhiteBalance(): Promise<void> {
+  try {
+    const raw = await BridgeService.CameraRawAutoWhiteBalance();
+    const solved = JSON.parse(raw) as { temperature: number; tint: number };
+    const session = get(filterSession);
+    if (!session) return;
+    updateFilterSettings({
+      cameraRaw: {
+        ...session.settings.cameraRaw,
+        temperature: solved.temperature,
+        tint: solved.tint,
+        whiteBalance: "Auto",
+      },
+    });
+  } catch (err) {
+    console.warn("自动白平衡失败", err);
+  }
 }
 
 /** The workspace pushes "filterPreview:{tabID}" when a preview lands;

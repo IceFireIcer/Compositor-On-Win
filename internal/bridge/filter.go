@@ -78,7 +78,14 @@ type filterParams struct {
 	Distortion float64 `json:"distortion"` // lens correction, −100–100
 
 	CameraRaw  render.CameraRawSettings `json:"cameraRaw"`  // Camera Raw filter
-	Adjustment *domain.Adjustment       `json:"adjustment"` // image-menu adjustments
+	// CameraRawShows carries the panel's per-group eyes (nil = all show);
+	// the grade skips hidden groups but the panel keeps its slider values.
+	CameraRawShows map[string]bool `json:"cameraRawShows,omitempty"`
+	// CameraRawClipping is the Option-drag preview view (1 highlights,
+	// 2 shadows); committing forces it back to 0.
+	CameraRawClipping *int              `json:"cameraRawClipping,omitempty"`
+	CameraRawSharpenMask bool           `json:"cameraRawSharpenMask,omitempty"`
+	Adjustment         *domain.Adjustment `json:"adjustment"` // image-menu adjustments
 }
 
 func clampF(v, lo, hi, fb float64) float64 {
@@ -358,8 +365,13 @@ func runFilterJob(kind string, work *render.Bitmap, p *filterParams, scale float
 		src := work.Clone()
 		render.LensDistort(src, work, p.Distortion/100*0.35)
 	case FilterCameraRaw:
-		*work = *render.ApplyCameraRawFilter(work, p.CameraRaw, render.CameraRawOptions{
-			Scale: scale, Seed: seed,
+		clipping := 0
+		if p.CameraRawClipping != nil {
+			clipping = *p.CameraRawClipping
+		}
+		grade := p.CameraRaw.ApplyingGroups(p.CameraRawShows)
+		*work = *render.ApplyCameraRawFilter(work, grade, render.CameraRawOptions{
+			Scale: scale, Seed: seed, Clipping: clipping, SharpenMask: p.CameraRawSharpenMask,
 		})
 	case FilterInvert:
 		render.ApplyInvert(work)

@@ -2244,3 +2244,188 @@ func ApplyCameraRawFilter(b *Bitmap, settings CameraRawSettings, opts CameraRawO
 	}
 	return src
 }
+
+// ---------------------------------------------------------------------------
+// Panel support: group eyes, scopes, and the sampling solvers
+// ---------------------------------------------------------------------------
+
+// ApplyingGroups drops the groups whose eye is off from a render copy —
+// the panel keeps its slider values, the grade just skips them
+// (CameraRawSettings.applying(shows…)). A nil/empty map means every group
+// shows.
+func (s CameraRawSettings) ApplyingGroups(shows map[string]bool) CameraRawSettings {
+	// The panel lists only the hidden groups; unlisted keys show.
+	on := func(key string) bool {
+		if shows == nil {
+			return true
+		}
+		v, ok := shows[key]
+		return !ok || v
+	}
+	r := s
+	if !on("light") {
+		r.Exposure, r.Contrast, r.Highlights, r.Shadows, r.Whites, r.Blacks = 0, 0, 0, 0, 0, 0
+	}
+	if !on("color") {
+		r.Temperature, r.Tint, r.Vibrance, r.Saturation = 0, 0, 0, 0
+	}
+	if !on("effects") {
+		r.Texture, r.Clarity, r.Dehaze, r.Glow, r.VignetteAmount, r.GrainAmount = 0, 0, 0, 0, 0, 0
+	}
+	if !on("curve") {
+		r.Curve = CameraRawCurveSettings{}
+	}
+	if !on("mixer") {
+		r.Mixer = CameraRawMixerSettings{}
+	}
+	if !on("grading") {
+		r.Grading = CameraRawGradingSettings{}
+	}
+	if !on("detail") {
+		r.Detail = CameraRawDetailSettings{}
+	}
+	if !on("optics") {
+		r.Optics = CameraRawOpticsSettings{}
+	}
+	if !on("geometry") {
+		r.Geometry = CameraRawGeometrySettings{}
+	}
+	if !on("calibration") {
+		r.Calibration = CameraRawCalibrationSettings{}
+	}
+	return r
+}
+
+// CameraRawScope is the histogram plus the hue/saturation vectorscope of the
+// same graded pixels (CameraRawScope.make).
+type CameraRawScope struct {
+	Histogram   [4][256]float64 `json:"histogram"`
+	Vectorscope []float64       `json:"vectorscope"`
+	ScopeSide   int             `json:"scopeSide"`
+}
+
+// scopeSide is the vectorscope's cell resolution (CameraRawScope.scopeSide).
+const scopeSide = 64
+
+// BuildCameraRawScope bins the graded image: the shared Levels histogram and
+// the hue/saturation density plot (alpha-weighted, transparent pixels
+// skipped).
+func BuildCameraRawScope(b *Bitmap) CameraRawScope {
+	scope := CameraRawScope{
+		Histogram:   LevelsHistogram(b, nil),
+		Vectorscope: make([]float64, scopeSide*scopeSide),
+		ScopeSide:   scopeSide,
+	}
+	for y := 0; y < b.H; y++ {
+		for x := 0; x < b.W; x++ {
+			i := (y*b.W + x) * 4
+			alpha := float64(b.Pix[i+3])
+			if alpha == 0 {
+				continue
+			}
+			r := math.Min(1, float64(b.Pix[i])/alpha)
+			g := math.Min(1, float64(b.Pix[i+1])/alpha)
+			bl := math.Min(1, float64(b.Pix[i+2])/alpha)
+			maxc := math.Max(r, math.Max(g, bl))
+			minc := math.Min(r, math.Min(g, bl))
+			chroma := maxc - minc
+			if chroma <= 1e-4 || maxc <= 1e-4 {
+				continue
+			}
+			var hue float64
+			if maxc == r {
+				hue = (g - bl) / chroma
+			} else if maxc == g {
+				hue = 2 + (bl-r)/chroma
+			} else {
+				hue = 4 + (r-g)/chroma
+			}
+			hue /= 6
+			if hue < 0 {
+				hue += 1
+			}
+			angle := hue * 2 * math.Pi
+			saturation := chroma / maxc
+			plotX := 0.5 + math.Cos(angle)*saturation*0.48
+			plotY := 0.5 + math.Sin(angle)*saturation*0.48
+			column := int(plotX * float64(scopeSide))
+			row := int(plotY * float64(scopeSide))
+			if column < 0 {
+				column = 0
+			}
+			if column > scopeSide-1 {
+				column = scopeSide - 1
+			}
+			if row < 0 {
+				row = 0
+			}
+			if row > scopeSide-1 {
+				row = scopeSide - 1
+			}
+			scope.Vectorscope[row*scopeSide+column] += alpha / 255
+		}
+	}
+	return scope
+}
+
+// NeutralizeWhiteBalance solves the temperature/tint that brings one
+// linear-light pixel to neutral with the same gains the grade multiplies
+// (CameraRawSettings.neutralize); ok=false when a channel is missing or the
+// cast cannot be expressed as those two axes.
+func NeutralizeWhiteBalance(red, green, blue float64) (temperature, tint float64, ok bool) {
+	if red <= 1e-4 || green <= 1e-4 || blue <= 1e-4 {
+		return 0, 0, false
+	}
+	const temperatureGain = 0.35
+	const tintRedBlue = 0.15
+	const tintGreen = 0.30
+	a1 := temperatureGain * red
+	b1 := tintRedBlue*red + tintGreen*green
+	c1 := green - red
+	a2 := -temperatureGain * blue
+	b2 := tintRedBlue*blue + tintGreen*green
+	c2 := green - blue
+	determinant := a1*b2 - a2*b1
+	if math.Abs(determinant) <= 1e-8 {
+		return 0, 0, false
+	}
+	warm := (c1*b2 - c2*b1) / determinant
+	magenta := (a1*c2 - a2*c1) / determinant
+	if math.IsNaN(warm) || math.IsInf(warm, 0) || math.IsNaN(magenta) || math.IsInf(magenta, 0) {
+		return 0, 0, false
+	}
+	return warm * 100, magenta * 100, true
+}
+
+// DecodeSrgb is the sRGB transfer function the eyedroppers decode through
+// (CameraRawSettings.decode).
+func DecodeSrgb(encoded float64) float64 {
+	if encoded <= 0.04045 {
+		return encoded / 12.92
+	}
+	return math.Pow((encoded+0.055)/1.055, 2.4)
+}
+
+// PixelHueDegrees is EditorSession.hueDegrees: the pixel's hue on the color
+// wheel in degrees, 0 when gray.
+func PixelHueDegrees(r, g, b float64) float64 {
+	maxc := math.Max(r, math.Max(g, b))
+	minc := math.Min(r, math.Min(g, b))
+	chroma := maxc - minc
+	if chroma <= 1e-6 {
+		return 0
+	}
+	var hue float64
+	if maxc == r {
+		hue = (g - b) / chroma
+	} else if maxc == g {
+		hue = 2 + (b-r)/chroma
+	} else {
+		hue = 4 + (r-g)/chroma
+	}
+	degrees := hue * 60
+	if degrees < 0 {
+		degrees += 360
+	}
+	return degrees
+}

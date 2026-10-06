@@ -20,6 +20,7 @@
   import LayersPanel from "./lib/components/LayersPanel.svelte";
   import MenuBar from "./lib/components/MenuBar.svelte";
   import FilterDialog from "./lib/components/FilterDialog.svelte";
+  import CameraRawPanel from "./lib/components/CameraRawPanel.svelte";
   import { watchFilterPreviews, beginFilter, filterSession } from "./lib/state/filters";
 
   let version = $state("…");
@@ -42,6 +43,35 @@
     if (id) void loadDocument(id);
     else clearDocument();
   });
+
+  // Camera Raw panel docking: width is resizable and remembered across
+  // restarts (ticket 34's 尺寸调整/关闭记忆).
+  const PANEL_KEY = "cameraRawPanelWidth";
+  let panelWidth = $state(loadPanelWidth());
+  let panelDrag = $state(false);
+
+  function loadPanelWidth(): number {
+    const raw = Number(localStorage.getItem(PANEL_KEY));
+    return raw >= 320 && raw <= 640 ? raw : 440;
+  }
+
+  function startPanelDrag(e: MouseEvent): void {
+    e.preventDefault();
+    panelDrag = true;
+  }
+
+  function movePanelDrag(e: MouseEvent): void {
+    if (!panelDrag) return;
+    panelWidth = Math.max(320, Math.min(640, window.innerWidth - e.clientX));
+  }
+
+  function endPanelDrag(): void {
+    if (!panelDrag) return;
+    panelDrag = false;
+    localStorage.setItem(PANEL_KEY, String(panelWidth));
+  }
+
+  const cameraRawOpen = $derived($filterSession?.kind === "cameraRaw");
 
   // Filter preview pushes (filterPreview:{tabID}) keep document.filterRev —
   // and therefore the canvas URL — fresh while a dialog is open.
@@ -124,7 +154,7 @@
   }
 </script>
 
-<svelte:window onkeydown={onKeydown} />
+<svelte:window onkeydown={onKeydown} onmousemove={movePanelDrag} onmouseup={endPanelDrag} />
 
 <div class="app">
   <header class="toolbar">
@@ -188,8 +218,18 @@
       {/if}
     </main>
 
-    <aside class="layers-panel">
-      <LayersPanel />
+    <aside
+      class="right-panel"
+      class:docking={panelDrag}
+      style:width={cameraRawOpen ? `${panelWidth}px` : "260px"}
+    >
+      {#if cameraRawOpen}
+        <!-- svelte-ignore a11y_no_static_element_interactions -->
+        <div class="panel-resize" onmousedown={startPanelDrag}></div>
+        <CameraRawPanel />
+      {:else}
+        <LayersPanel />
+      {/if}
     </aside>
   </div>
 
@@ -215,7 +255,9 @@
   }}
 />
 
-<FilterDialog />
+{#if $filterSession && $filterSession.kind !== "cameraRaw"}
+  <FilterDialog />
+{/if}
 
 <style>
   .app {
@@ -335,11 +377,32 @@
     margin-top: 8px;
   }
 
-  .layers-panel {
-    padding: 8px;
+  .right-panel {
+    position: relative;
     background: var(--bg-panel);
     border-left: 1px solid var(--border);
-    overflow-y: auto;
+    overflow: hidden;
+    display: flex;
+    min-width: 0;
+  }
+
+  .right-panel.docking {
+    user-select: none;
+  }
+
+  .panel-resize {
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 5px;
+    cursor: ew-resize;
+    z-index: 10;
+  }
+
+  .right-panel > :global(*) {
+    flex: 1;
+    min-width: 0;
   }
 
   .status-bar {

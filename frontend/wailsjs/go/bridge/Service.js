@@ -14,6 +14,22 @@ export function BeginFilterEdit(arg1, arg2, arg3, arg4, arg5) {
   return window['go']['bridge']['Service']['BeginFilterEdit'](arg1, arg2, arg3, arg4, arg5);
 }
 
+export function CameraRawAutoWhiteBalance() {
+  return window['go']['bridge']['Service']['CameraRawAutoWhiteBalance']();
+}
+
+export function CameraRawDefringeSample(arg1, arg2, arg3) {
+  return window['go']['bridge']['Service']['CameraRawDefringeSample'](arg1, arg2, arg3);
+}
+
+export function CameraRawScope() {
+  return window['go']['bridge']['Service']['CameraRawScope']();
+}
+
+export function CameraRawWhiteBalanceSample(arg1, arg2) {
+  return window['go']['bridge']['Service']['CameraRawWhiteBalanceSample'](arg1, arg2);
+}
+
 export function BeginStroke(arg1, arg2) {
   return window['go']['bridge']['Service']['BeginStroke'](arg1, arg2);
 }

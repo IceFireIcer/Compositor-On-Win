@@ -306,3 +306,96 @@ func TestApplyImageAdjustmentThroughFilterPath(t *testing.T) {
 		t.Fatalf("反相 = %v/%v，想要 155/255", got.Pix[0], got.Pix[3])
 	}
 }
+
+func TestCameraRawPanelPipeline(t *testing.T) {
+	svc, _ := newTestService(t, 32, 32)
+	sess := activeSessionOf(t, svc)
+	paintRect(sess, 0, 0, 32, 32, 200)
+	// A warm cast for the white-balance solve (the session freezes the
+	// pixels it opens with, matching edit.original semantics).
+	for i := 0; i < len(sess.bitmaps[*sess.doc.Layers[0].ImageFile].Pix); i += 4 {
+		bmp := sess.bitmaps[*sess.doc.Layers[0].ImageFile]
+		bmp.Pix[i], bmp.Pix[i+1], bmp.Pix[i+2] = 230, 170, 120
+	}
+
+	// Exposure +2 with the Light eye OFF must leave the pixels ~unchanged;
+	// turning the eye back on must brighten them.
+	if _, err := svc.BeginFilterEdit("cameraRaw", "",
+		`{"cameraRaw":{"exposure":2},"cameraRawShows":{"light":false}}`, 0, ""); err != nil {
+		t.Fatal(err)
+	}
+	waitPreview := func(t *testing.T, minRev int) *render.Bitmap {
+		t.Helper()
+		deadline := time.Now().Add(3 * time.Second)
+		for {
+			svc.ws.mu.Lock()
+			f := sess.filter
+			ready := f != nil && f.preview != nil && f.previewRev >= minRev
+			var bmp *render.Bitmap
+			if ready {
+				bmp = f.preview.Clone()
+			}
+			svc.ws.mu.Unlock()
+			if ready {
+				return bmp
+			}
+			if time.Now().After(deadline) {
+				t.Fatal("预览未在时限内落地")
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+	}
+	if _, err := svc.UpdateFilterPreview(`{"cameraRaw":{"exposure":2},"cameraRawShows":{"light":false}}`); err != nil {
+		t.Fatal(err)
+	}
+	hidden := waitPreview(t, 1)
+	if got := hidden.Pix[(16*32+16)*4]; got < 195 {
+		t.Fatalf("Light 眼关闭时曝光不得生效: %v", got)
+	}
+	if _, err := svc.UpdateFilterPreview(`{"cameraRaw":{"exposure":2},"cameraRawShows":{}}`); err != nil {
+		t.Fatal(err)
+	}
+	shown := waitPreview(t, 2)
+	if shown.Pix[(16*32+16)*4] <= hidden.Pix[(16*32+16)*4] {
+		t.Fatal("Light 眼打开后曝光必须生效")
+	}
+
+	// The scope endpoint reads the preview pixels (real, live).
+	scopeRaw, err := svc.CameraRawScope()
+	if err != nil {
+		t.Fatal(err)
+	}
+	scope := parseJSON[struct {
+		Histogram   [4][256]float64 `json:"histogram"`
+		Vectorscope []float64       `json:"vectorscope"`
+		ScopeSide   int             `json:"scopeSide"`
+	}](t, scopeRaw)
+	if scope.ScopeSide != 64 || len(scope.Vectorscope) != 64*64 {
+		t.Fatalf("示波器形状不符: %d/%d", scope.ScopeSide, len(scope.Vectorscope))
+	}
+
+	// The white-balance eyedropper on the warm (red-heavy) field solves a
+	// negative temperature — cooling it back to neutral (it samples the
+	// pixels the session opened with).
+	wbRaw, err := svc.CameraRawWhiteBalanceSample(16, 16)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wb := parseJSON[struct {
+		Temperature float64 `json:"temperature"`
+		Tint        float64 `json:"tint"`
+	}](t, wbRaw)
+	if wb.Temperature >= 0 {
+		t.Fatalf("偏红的暖色场应解出负色温（降温回中性）: %v", wb.Temperature)
+	}
+}
+
+// parseJSON is the shared generic JSON helper for endpoint replies.
+func parseJSON[T any](t *testing.T, raw string) T {
+	t.Helper()
+	var out T
+	if err := json.Unmarshal([]byte(raw), &out); err != nil {
+		t.Fatalf("无法解析端点应答: %v", err)
+	}
+	return out
+}
