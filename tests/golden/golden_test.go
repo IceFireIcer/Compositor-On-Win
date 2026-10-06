@@ -79,6 +79,34 @@ func goPort(c Case, px []byte) error {
 			j := i * 4
 			bmp.Pix[j], bmp.Pix[j+1], bmp.Pix[j+2], bmp.Pix[j+3] = gray, gray, gray, 255
 		}
+	case "grain":
+		num := func(key string) float64 { return p[key].(float64) }
+		render.ApplyGrain(bmp, num("amount"), num("size"), num("roughness"),
+			uint32(num("seed")), num("originX"), num("originY"), num("unitsPerPixel"))
+	case "black_white":
+		num := func(key string) float64 { return p[key].(float64) }
+		// The driver passes the sliders raw (no /100); the kernel is
+		// scale-agnostic and its callers scale.
+		var weights [6]float32
+		for i, k := range []string{"reds", "yellows", "greens", "cyans", "blues", "magentas"} {
+			weights[i] = float32(num(k))
+		}
+		render.ApplyBlackWhite(bmp, weights, num("tint") != 0, num("tintHue"), num("tintSaturation"))
+	case "color_balance":
+		shifts := func(key string) [3]float32 {
+			raw := p[key].([]any)
+			var out [3]float32
+			for i, v := range raw {
+				out[i] = float32(v.(float64))
+			}
+			return out
+		}
+		render.ApplyColorBalance(bmp, shifts("shadow"), shifts("mid"), shifts("highlight"),
+			p["preserveLuminosity"].(float64) != 0)
+	case "noise":
+		render.ApplyAddNoise(bmp, float32(p["amount"].(float64)),
+			p["gaussian"].(float64) != 0, p["monochromatic"].(float64) != 0,
+			uint32(p["seed"].(float64)))
 	default:
 		return errNotPorted
 	}
@@ -239,7 +267,8 @@ func TestGoldenReferencesMatchGoPorts(t *testing.T) {
 	}
 	// Kernels with a live Go port must actually run a comparison, not skip —
 	// but only when their case was part of this run (go test -run may filter).
-	for _, k := range []string{"levels", "exposure", "gradient_map", "cube", "wand"} {
+	for _, k := range []string{"levels", "exposure", "gradient_map", "cube", "wand",
+		"grain", "black_white", "color_balance", "noise"} {
 		if ran[k] && !compared[k] {
 			t.Errorf("kernel %q has a Go port in goPort but was not compared", k)
 		}
