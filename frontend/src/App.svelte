@@ -18,6 +18,9 @@
   import NewCanvasSheet from "./lib/components/NewCanvasSheet.svelte";
   import CanvasSurface from "./lib/components/CanvasSurface.svelte";
   import LayersPanel from "./lib/components/LayersPanel.svelte";
+  import MenuBar from "./lib/components/MenuBar.svelte";
+  import FilterDialog from "./lib/components/FilterDialog.svelte";
+  import { watchFilterPreviews, beginFilter, filterSession } from "./lib/state/filters";
 
   let version = $state("…");
   let sheetOpen = $state(false);
@@ -39,6 +42,45 @@
     if (id) void loadDocument(id);
     else clearDocument();
   });
+
+  // Filter preview pushes (filterPreview:{tabID}) keep document.filterRev —
+  // and therefore the canvas URL — fresh while a dialog is open.
+  $effect(() => {
+    const stop = watchFilterPreviews();
+    return stop;
+  });
+
+  // Image-menu shortcuts: ⌘M 曲线 / ⌘L 色阶 / ⌘U 色相饱和度 / ⌘I 反相.
+  function onKeydown(event: KeyboardEvent): void {
+    if (!(event.metaKey || event.ctrlKey) || $filterSession) return;
+    const key = event.key.toLowerCase();
+    if (key !== "m" && key !== "l" && key !== "u" && key !== "i") return;
+    const doc = current;
+    if (!doc) return;
+    event.preventDefault();
+    const map: Record<string, { kind: string; label: string }> = {
+      m: { kind: "adjust:Curves", label: "曲线" },
+      l: { kind: "adjust:Levels", label: "色阶" },
+      u: { kind: "adjust:Hue/Saturation", label: "色相/饱和度" },
+    };
+    if (key === "i") {
+      void (async () => {
+        const { ApplyFilter } = await import("../wailsjs/go/bridge/Service");
+        const { applyDocumentSnapshot } = await import("./lib/state/document");
+        if (!doc.id) return;
+        try {
+          applyDocumentSnapshot(
+            await ApplyFilter("invert", "", "{}", 0, ""),
+          );
+        } catch (err) {
+          console.warn("反相失败", err);
+        }
+      })();
+      return;
+    }
+    const target = map[key];
+    if (target) void beginFilter(target.kind, target.label, true);
+  }
 
   onMount(() => {
     void (async () => {
@@ -82,9 +124,12 @@
   }
 </script>
 
+<svelte:window onkeydown={onKeydown} />
+
 <div class="app">
   <header class="toolbar">
     <div class="brand">Compositor</div>
+    <MenuBar />
     <TabStrip onnew={newCanvas} />
     <div class="spacer"></div>
     <div class="file-actions">
@@ -169,6 +214,8 @@
     sheetOpen = false;
   }}
 />
+
+<FilterDialog />
 
 <style>
   .app {

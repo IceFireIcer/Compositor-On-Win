@@ -81,9 +81,9 @@
 
 | # | 命令 | 快捷键 | 故事# | 里程碑 | 状态 |
 | --- | --- | --- | --- | --- | --- |
-| C32 | Curves… / Levels… / Hue-Saturation…（作用于像素） | ⌘M/⌘L/⌘U | 38 | M5 | ☐ |
-| C33 | Black & White / Color Balance / Exposure / Gradient Map / Grain（像素版） | — | 38 | M5 | ☐ |
-| C34 | Invert ⌘I（选中蒙版时为 Invert Mask） | ⌘I | 38 | M5 | ☐ |
+| C32 | Curves… / Levels… / Hue-Saturation…（作用于像素） | ⌘M/⌘L/⌘U | 38 | M5 | ☑ 票31 |
+| C33 | Black & White / Color Balance / Exposure / Gradient Map / Grain（像素版） | — | 38 | M5 | ☑ 票31 |
+| C34 | Invert ⌘I（选中蒙版时为 Invert Mask） | ⌘I | 38 | M5 | ☑ 票31 |
 | C35 | Canvas Size… / Image Size… / Trim… | ⌥⌘C/⌥⌘I | 50 | M7 | ☐ |
 | C36 | Flip Canvas Horizontal / Vertical | — | 33 | M3 | ☐ |
 
@@ -91,10 +91,10 @@
 
 | # | 命令 | 故事# | 里程碑 | 状态 |
 | --- | --- | --- | --- | --- |
-| C37 | Gaussian Blur / Motion Blur | 40 | M5 | ☐ |
-| C38 | Add Noise / Vignette / Bloom-Glow | 40 | M5 | ☐ |
+| C37 | Gaussian Blur / Motion Blur | 40 | M5 | ☑ 票32 |
+| C38 | Add Noise / Vignette / Bloom-Glow | 40 | M5 | ☑ 票32（滤镜菜单） |
 | C39 | Dither（11 种风格） | 40 | M6 | ☐ |
-| C40 | Tonal Contrast / Lens Correction | 40 | M5 | ☐ |
+| C40 | Tonal Contrast / Lens Correction | 40 | M5 | ☑ 票32 |
 | C41 | Camera Raw Filter（全参数面板） | 39 | M5 | ☐ |
 | C42 | Remove Background | 28 | M6 | ☐ |
 

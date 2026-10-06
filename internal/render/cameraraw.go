@@ -2036,6 +2036,10 @@ func perspectiveWarp(src *Bitmap, dst [4]cameraCorner) *Bitmap {
 	return out
 }
 
+// AlphaBounds reports the opaque bounds as [left, top, right, bottom]
+// (right/bottom exclusive; all zero when fully transparent).
+func AlphaBounds(b *Bitmap) [4]int { return bitmapAlphaBounds(b) }
+
 // bitmapAlphaBounds ports brush_alpha_bounds: [left, top, right, bottom]
 // with right/bottom exclusive, all zero when fully transparent.
 func bitmapAlphaBounds(b *Bitmap) [4]int {

@@ -19,6 +19,7 @@
   } from "../state/viewport";
   import { Modifier, applyKey, clearModifiers, modifierBits } from "../state/modifiers";
   import { activeTool } from "../state/tools";
+  import { eyedropperClick } from "../state/filters";
   import { document as documentState, reloadDocument } from "../state/document";
   import { BeginStroke, EndStroke, StrokePoint } from "../../../wailsjs/go/bridge/Service";
   import { cursorForTool } from "./cursors";
@@ -47,7 +48,9 @@
   // until the next rev.
   const docState = $derived($documentState);
   const renderSrc = $derived(
-    docState.docId === doc.id ? `/render/${doc.id}.png?v=${docState.rev}` : null,
+    docState.docId === doc.id
+      ? `/render/${doc.id}.png?v=${docState.rev}-${docState.filterRev}`
+      : null,
   );
   let renderBroken = $state(false);
   $effect(() => {
@@ -186,6 +189,14 @@
   });
 
   function onPointerDown(e: PointerEvent): void {
+    // An armed Levels eyedropper swallows plain clicks before any tool.
+    if (e.button === 0 && !panDrag && !painting) {
+      const p = docPixelOf(e);
+      if (eyedropperClick(Math.floor(p.x), Math.floor(p.y))) {
+        e.preventDefault();
+        return;
+      }
+    }
     const spaceHeld = ($modifierBits & Modifier.Space) !== 0;
     if (e.button === 1 || ((spaceHeld || $activeTool === "hand") && e.button === 0)) {
       panDrag = { x: e.clientX, y: e.clientY };

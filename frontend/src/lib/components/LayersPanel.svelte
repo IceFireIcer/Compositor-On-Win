@@ -6,6 +6,7 @@
     layerOps,
     type DocLayer,
   } from "../state/document";
+  import { beginFilter, filterSession } from "../state/filters";
 
   /**
    * The layer panel (ticket 20 shell + bridge wiring). Rows render top→bottom
@@ -141,6 +142,23 @@
           />
           <span class="opacity-value">{Math.round(layer.opacity * 100)}%</span>
         </label>
+        {#if layer.adjustment}
+          <button
+            class="edit-adjustment"
+            title="编辑调整（Edit Adjustment）"
+            disabled={$filterSession !== null}
+            onclick={() =>
+              void beginFilter(
+                `adjust:${String(layer.adjustment?.kind ?? "")}`,
+                `编辑调整 · ${String(layer.adjustment?.kind ?? "")}`,
+                false,
+                layer.id,
+                layer.adjustment ?? undefined,
+              )}
+          >
+            编辑
+          </button>
+        {/if}
       </div>
     {:else}
       <div class="panel-empty">暂无图层</div>

@@ -33,6 +33,8 @@ export interface DocLayer {
   /** Version 5 clipping mask source. */
   maskSourceID: string | null;
   imageFile: string | null;
+  /** Version 7 adjustment record (adjustment layers); null = pixel layer. */
+  adjustment: Record<string, unknown> | null;
 }
 
 export interface DocumentState {
@@ -40,6 +42,9 @@ export interface DocumentState {
   docId: string | null;
   /** Bumps on every document mutation; drives the /render cache buster. */
   rev: number;
+  /** Bumps on every landed filter preview (0 = no dialog open); joins the
+   * cache buster so the canvas refetches when a preview renders. */
+  filterRev: number;
   width: number;
   height: number;
   resolution: number;
@@ -51,6 +56,7 @@ export interface DocumentState {
 export const EMPTY_DOCUMENT: DocumentState = {
   docId: null,
   rev: 0,
+  filterRev: 0,
   width: 0,
   height: 0,
   resolution: 72,
@@ -120,6 +126,7 @@ interface RawLayer {
   parentID?: unknown;
   maskSourceID?: unknown;
   imageFile?: unknown;
+  adjustment?: unknown;
 }
 
 interface RawDocument {
@@ -132,6 +139,7 @@ interface RawDocument {
 }
 
 interface RawSnapshot {
+  filterRev?: number;
   rev?: unknown;
   doc?: RawDocument | null;
 }
@@ -155,6 +163,7 @@ function parseLayer(raw: RawLayer): DocLayer {
     parentID: asString(raw.parentID),
     maskSourceID: asString(raw.maskSourceID),
     imageFile: asString(raw.imageFile),
+    adjustment: raw.adjustment == null ? null : (raw.adjustment as Record<string, unknown>),
   };
 }
 
@@ -168,6 +177,7 @@ export function parseDocumentSnapshot(raw: string): DocumentState {
   return {
     docId: asString(doc.documentID),
     rev: asNumber(parsed.rev, 0),
+    filterRev: asNumber(parsed.filterRev, 0),
     width: asNumber(doc.width, 0),
     height: asNumber(doc.height, 0),
     resolution: asNumber(doc.resolution, 72),
@@ -233,6 +243,7 @@ export type LayerOpName =
   | "setVisible"
   | "rename"
   | "setOpacity"
+  | "setAdjustment"
   | "setBlendMode"
   | "deleteLayer"
   | "addLayer"

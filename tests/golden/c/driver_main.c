@@ -33,6 +33,11 @@
 //                 vignetteAmount vignetteMidpoint scale
 //   camera_raw_calibration  shadowTint redHue redSaturation greenHue
 //                 greenSaturation blueHue blueSaturation processVersion
+//   colored_vignette  frameX frameY frameWidth frameHeight fillsClear amount
+//                 midpoint roundness feather highlights red green blue
+//   tonal_contrast  blurRadius amount shadows midtones highlights
+//                 (the blurred base is built here with box_blur_rgba,
+//                 mirrored in golden_test.go's buildTonalBase)
 //   content_fill  maskPath
 //   dither        style levels diffusion density contrast cell angle lightOnDark
 //                 originalColors darkR darkG darkB lightR lightG lightB dots wobble
@@ -292,6 +297,43 @@ static void gray_to_rgba(const uint8_t *gray, size_t count, uint8_t *out) {
     }
 }
 
+// RGBA box blur for tonal_contrast's blurred base (edge-clamped window,
+// double sums, lround output) — mirrored exactly in golden_test.go.
+static void box_blur_rgba(const uint8_t *src, uint8_t *dst, size_t width, size_t height, int radius) {
+    size_t window = (size_t)(radius * 2 + 1);
+    uint8_t *temp = malloc(width * height * 4);
+    if (!temp) die("out of memory");
+    for (size_t y = 0; y < height; ++y) {
+        for (size_t x = 0; x < width; ++x) {
+            double sums[4] = {0, 0, 0, 0};
+            for (int k = -radius; k <= radius; ++k) {
+                long cx = (long)x + k;
+                if (cx < 0) cx = 0;
+                if (cx >= (long)width) cx = (long)width - 1;
+                const uint8_t *p = src + y * width * 4 + (size_t)cx * 4;
+                for (int c = 0; c < 4; ++c) sums[c] += p[c];
+            }
+            uint8_t *o = temp + (y * width + x) * 4;
+            for (int c = 0; c < 4; ++c) o[c] = (uint8_t)lround(sums[c] / (double)window);
+        }
+    }
+    for (size_t y = 0; y < height; ++y) {
+        for (size_t x = 0; x < width; ++x) {
+            double sums[4] = {0, 0, 0, 0};
+            for (int k = -radius; k <= radius; ++k) {
+                long cy = (long)y + k;
+                if (cy < 0) cy = 0;
+                if (cy >= (long)height) cy = (long)height - 1;
+                const uint8_t *p = temp + ((size_t)cy * width + x) * 4;
+                for (int c = 0; c < 4; ++c) sums[c] += p[c];
+            }
+            uint8_t *o = dst + (y * width + x) * 4;
+            for (int c = 0; c < 4; ++c) o[c] = (uint8_t)lround(sums[c] / (double)window);
+        }
+    }
+    free(temp);
+}
+
 int main(int argc, char **argv) {
     if (argc < 5) die("usage: golden_driver <command> <in.raw> <out.raw> <width> <height> [params...]");
     const char *command = argv[1], *in_path = argv[2], *out_path = argv[3];
@@ -440,6 +482,23 @@ int main(int argc, char **argv) {
                                       arg_double(argv[argi + 2]), arg_double(argv[argi + 3]),
                                       arg_double(argv[argi + 4]), arg_double(argv[argi + 5]),
                                       arg_double(argv[argi + 6]), (int)arg_long(argv[argi + 7]));
+    } else if (!strcmp(command, "colored_vignette")) {
+        if (argc < argi + 13) die("colored_vignette needs 4 frame + 1 flag + 9 doubles");
+        double f[13];
+        for (int i = 0; i < 13; i++) f[i] = arg_double(argv[argi + i]);
+        adjust_colored_vignette(pixels, (size_t)width, (size_t)height, (size_t)width * 4,
+                                f[0], f[1], f[2], f[3], (int)f[4],
+                                f[5], f[6], f[7], f[8], f[9], f[10], f[11], f[12]);
+    } else if (!strcmp(command, "tonal_contrast")) {
+        if (argc < argi + 5) die("tonal_contrast needs blurRadius amount shadows midtones highlights");
+        double t[5];
+        for (int i = 0; i < 5; i++) t[i] = arg_double(argv[argi + i]);
+        uint8_t *base = malloc(count * 4);
+        if (!base) die("out of memory");
+        box_blur_rgba(pixels, base, (size_t)width, (size_t)height, (int)t[0]);
+        adjust_tonal_contrast(pixels, base, (size_t)width, (size_t)height,
+                              (size_t)width * 4, (size_t)width * 4, t[1], t[2], t[3], t[4]);
+        free(base);
     } else if (!strcmp(command, "content_fill")) {
         if (argc < argi + 1) die("content_fill needs a mask path");
         size_t mask_length;

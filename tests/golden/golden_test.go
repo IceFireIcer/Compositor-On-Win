@@ -2,6 +2,7 @@ package golden
 
 import (
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -180,6 +181,18 @@ func goPort(c Case, px []byte) error {
 	case "lens":
 		src := bmp.Clone()
 		render.LensDistort(src, bmp, p["k"].(float64))
+	case "colored_vignette":
+		num := func(key string) float64 { return p[key].(float64) }
+		render.ApplyColoredVignette(bmp, num("frameX"), num("frameY"), num("frameWidth"),
+			num("frameHeight"), num("fillsClear") != 0, num("amount"), num("midpoint"),
+			num("roundness"), num("feather"), num("highlights"),
+			num("red"), num("green"), num("blue"))
+	case "tonal_contrast":
+		num := func(key string) float64 { return p[key].(float64) }
+		base := render.NewBitmap(bmp.W, bmp.H)
+		buildTonalBase(bmp, base, int(num("blurRadius")))
+		render.ApplyTonalContrast(bmp, base, num("amount"), num("shadows"),
+			num("midtones"), num("highlights"))
 	default:
 		return errNotPorted
 	}
@@ -214,6 +227,58 @@ func grayToRGBA(mask, px []byte) {
 		px[i*4+1] = g
 		px[i*4+2] = g
 		px[i*4+3] = 255
+	}
+}
+
+// buildTonalBase mirrors the driver's box_blur_rgba: an edge-clamped RGBA
+// box blur whose lround output feeds adjust_tonal_contrast's `blurred`
+// argument identically on both sides.
+func buildTonalBase(src, dst *render.Bitmap, radius int) {
+	window := float64(radius*2 + 1)
+	temp := make([]uint8, len(src.Pix))
+	for y := 0; y < src.H; y++ {
+		for x := 0; x < src.W; x++ {
+			var sums [4]float64
+			for k := -radius; k <= radius; k++ {
+				cx := x + k
+				if cx < 0 {
+					cx = 0
+				}
+				if cx >= src.W {
+					cx = src.W - 1
+				}
+				i := (y*src.W + cx) * 4
+				for c := 0; c < 4; c++ {
+					sums[c] += float64(src.Pix[i+c])
+				}
+			}
+			o := (y*src.W + x) * 4
+			for c := 0; c < 4; c++ {
+				temp[o+c] = uint8(math.Round(sums[c] / window))
+			}
+		}
+	}
+	for y := 0; y < src.H; y++ {
+		for x := 0; x < src.W; x++ {
+			var sums [4]float64
+			for k := -radius; k <= radius; k++ {
+				cy := y + k
+				if cy < 0 {
+					cy = 0
+				}
+				if cy >= src.H {
+					cy = src.H - 1
+				}
+				i := (cy*src.W + x) * 4
+				for c := 0; c < 4; c++ {
+					sums[c] += float64(temp[i+c])
+				}
+			}
+			o := (y*src.W + x) * 4
+			for c := 0; c < 4; c++ {
+				dst.Pix[o+c] = uint8(math.Round(sums[c] / window))
+			}
+		}
 	}
 }
 
@@ -343,7 +408,7 @@ func TestGoldenReferencesMatchGoPorts(t *testing.T) {
 	for _, k := range []string{"levels", "exposure", "gradient_map", "cube", "wand",
 		"grain", "black_white", "color_balance", "noise", "camera_raw", "camera_raw_curve",
 		"camera_raw_effects", "camera_raw_detail", "camera_raw_optics", "camera_raw_calibration",
-		"lens"} {
+		"lens", "colored_vignette", "tonal_contrast"} {
 		if ran[k] && !compared[k] {
 			t.Errorf("kernel %q has a Go port in goPort but was not compared", k)
 		}

@@ -1,0 +1,12 @@
+{
+  "kernel": "colored_vignette",
+  "input": "blend",
+  "width": 48, "height": 48,
+  "epsilon": 1,
+  "params": {
+    "frameX": 0, "frameY": 0, "frameWidth": 48, "frameHeight": 48, "fillsClear": 1,
+    "amount": 60, "midpoint": 50, "roundness": 20, "feather": 60, "highlights": 25,
+    "red": 0, "green": 0, "blue": 0
+  },
+  "note": "adjust_colored_vignette：画布框暗角（fillsClear 路径覆盖透明像素）+高光保护；vignette_mask 的 hypot 跨库 → ε=1。"
+}

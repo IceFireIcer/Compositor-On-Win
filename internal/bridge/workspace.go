@@ -246,7 +246,9 @@ func (w *Workspace) EditActive(name string, fn func(*session) error) (string, er
 }
 
 // UndoActive rolls the active document back one history entry and returns
-// the envelope. Undo is itself an observable change, so rev bumps.
+// the envelope. Undo is itself an observable change, so rev bumps. Filter
+// commits restore their pixels through the raster journal at the revision
+// being left.
 func (w *Workspace) UndoActive() (string, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -254,6 +256,7 @@ func (w *Workspace) UndoActive() (string, error) {
 	if sess == nil {
 		return "", errNoDocument
 	}
+	leaving := sess.hist.Revision()
 	snap, ok := sess.hist.Undo()
 	if !ok {
 		return "", fmt.Errorf("没有可撤销的操作")
@@ -261,6 +264,7 @@ func (w *Workspace) UndoActive() (string, error) {
 	doc := snap.Document
 	doc.ActiveLayerID = snap.ActiveLayerID
 	sess.doc = &doc
+	sess.applyRasterJournal(leaving, false)
 	sess.rev++
 	w.setTabDirtyLocked(w.active, sess.path == "" || sess.hist.IsModified())
 	return marshalEnvelope(sess.rev, sess.doc)
@@ -281,6 +285,7 @@ func (w *Workspace) RedoActive() (string, error) {
 	doc := snap.Document
 	doc.ActiveLayerID = snap.ActiveLayerID
 	sess.doc = &doc
+	sess.applyRasterJournal(snap.Revision, true)
 	sess.rev++
 	w.setTabDirtyLocked(w.active, sess.path == "" || sess.hist.IsModified())
 	return marshalEnvelope(sess.rev, sess.doc)
@@ -402,7 +407,10 @@ func (w *Workspace) EndStroke() (string, error) {
 
 // RenderPNG composes the document identified by tab ID or domain
 // documentID into PNG bytes, served from the per-session cache until rev
-// changes. ok=false means no such document.
+// (or the filter preview revision) changes. ok=false means no such
+// document. While a filter dialog is open the composite shows that
+// session's preview bitmap and grown transform in place of the layer's
+// stored pixels.
 func (w *Workspace) RenderPNG(docID string) (png []byte, ok bool, err error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -410,8 +418,29 @@ func (w *Workspace) RenderPNG(docID string) (png []byte, ok bool, err error) {
 	if sess == nil {
 		return nil, false, nil
 	}
-	if sess.renderPNG == nil || sess.renderRev != sess.rev {
-		bmp, err := render.Render(sess.doc, sess.pixelSource())
+	filterRev := 0
+	if sess.filter != nil {
+		filterRev = sess.filter.previewRev
+	}
+	if sess.renderPNG == nil || sess.renderRev != sess.rev || sess.renderFilterRev != filterRev {
+		doc, source := sess.doc, sess.pixelSource()
+		if sess.filter != nil {
+			f := sess.filter
+			if f.preview != nil {
+				doc = cloneDocForEdit(sess.doc)
+				if l, err := layerByID(doc, f.layerID); err == nil {
+					l.Transform = f.grownT
+				}
+				inner := source
+				source = func(name string) (*render.Bitmap, error) {
+					if name == f.assetKey {
+						return f.preview, nil
+					}
+					return inner(name)
+				}
+			}
+		}
+		bmp, err := render.Render(doc, source)
 		if err != nil {
 			return nil, true, err
 		}
@@ -421,6 +450,7 @@ func (w *Workspace) RenderPNG(docID string) (png []byte, ok bool, err error) {
 		}
 		sess.renderPNG = data
 		sess.renderRev = sess.rev
+		sess.renderFilterRev = filterRev
 	}
 	return sess.renderPNG, true, nil
 }

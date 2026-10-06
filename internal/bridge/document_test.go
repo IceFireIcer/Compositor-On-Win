@@ -123,7 +123,7 @@ func TestDocumentSnapshotWithoutDocument(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out != `{"rev":0,"doc":null}` {
+	if out != `{"rev":0,"filterRev":0,"doc":null}` {
 		t.Fatalf("空工作区快照 = %s，想要 {\"rev\":0,\"doc\":null}", out)
 	}
 }
@@ -401,7 +401,7 @@ func layerIDs(e envelope) []string {
 
 func TestLayerOpUnknownOpAndMissingDocument(t *testing.T) {
 	empty := NewService(NewWorkspace())
-	if out, err := empty.DocumentSnapshot(); err != nil || out != `{"rev":0,"doc":null}` {
+	if out, err := empty.DocumentSnapshot(); err != nil || out != `{"rev":0,"filterRev":0,"doc":null}` {
 		t.Fatalf("空快照 = %q err = %v", out, err)
 	}
 	if _, err := empty.LayerOp("addLayer", "{}"); err == nil {
@@ -678,7 +678,7 @@ func TestSaveProjectDialogAppendsCompExtension(t *testing.T) {
 }
 
 func TestOpenProjectDialogCancelAndFailure(t *testing.T) {
-	rev0 := `{"rev":0,"doc":null}`
+	rev0 := `{"rev":0,"filterRev":0,"doc":null}`
 	svc, _ := newTestService(t, 16, 16)
 	rev := mustDocumentSnapshot(t, svc).Rev
 
@@ -687,7 +687,7 @@ func TestOpenProjectDialogCancelAndFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := fmt.Sprintf(`{"rev":%d,"doc":null}`, rev); out != want {
+	if want := fmt.Sprintf(`{"rev":%d,"filterRev":0,"doc":null}`, rev); out != want {
 		t.Fatalf("取消打开 = %s，想要 %s", out, want)
 	}
 	if got := len(svc.ws.Snapshot().Tabs); got != 1 {

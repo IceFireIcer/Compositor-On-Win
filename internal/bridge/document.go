@@ -11,10 +11,13 @@ import (
 )
 
 // documentEnvelope is the JSON shape every document endpoint returns:
-// {"rev":N,"doc":{…domain.Document…}}. doc is null when no tab is open.
+// {"rev":N,"filterRev":M,"doc":{…domain.Document…}}. doc is null when no
+// tab is open; filterRev counts preview renders while a filter dialog is
+// open (0 otherwise) so the canvas refetches when one lands.
 type documentEnvelope struct {
-	Rev int              `json:"rev"`
-	Doc *domain.Document `json:"doc"`
+	Rev       int              `json:"rev"`
+	FilterRev int              `json:"filterRev"`
+	Doc       *domain.Document `json:"doc"`
 }
 
 // saveResult is SaveProjectDialog's reply: {"path":"…","rev":N}.
@@ -25,6 +28,20 @@ type saveResult struct {
 
 func marshalEnvelope(rev int, doc *domain.Document) (string, error) {
 	b, err := json.Marshal(documentEnvelope{Rev: rev, Doc: doc})
+	if err != nil {
+		return "", fmt.Errorf("无法编码文档快照: %w", err)
+	}
+	return string(b), nil
+}
+
+// envelope marshals the session's document state including the filter
+// preview revision.
+func (sess *session) envelope() (string, error) {
+	filterRev := 0
+	if sess.filter != nil {
+		filterRev = sess.filter.previewRev
+	}
+	b, err := json.Marshal(documentEnvelope{Rev: sess.rev, FilterRev: filterRev, Doc: sess.doc})
 	if err != nil {
 		return "", fmt.Errorf("无法编码文档快照: %w", err)
 	}
@@ -75,12 +92,13 @@ func (s *Service) Redo() (string, error) {
 // layerOpPayload is the union of every op's fields; each op picks what it
 // needs and rejects the request when a required field is missing.
 type layerOpPayload struct {
-	LayerID string   `json:"id"`
-	Visible *bool    `json:"visible"`
-	Name    *string  `json:"name"`
-	Opacity *float64 `json:"opacity"`
-	Mode    string   `json:"mode"`
-	To      *int     `json:"to"`
+	LayerID    string             `json:"id"`
+	Visible    *bool              `json:"visible"`
+	Name       *string            `json:"name"`
+	Opacity    *float64           `json:"opacity"`
+	Mode       string             `json:"mode"`
+	To         *int               `json:"to"`
+	Adjustment *domain.Adjustment `json:"adjustment"`
 }
 
 // planLayerOp parses and fully validates a LayerOp request, returning the
@@ -200,6 +218,26 @@ func planLayerOp(op string, payload string) (string, func(*session) error, error
 			sess.doc.Layers = append(sess.doc.Layers, l) // bottom-to-top: append is on top
 			id := l.ID
 			sess.doc.ActiveLayerID = &id
+			return nil
+		}, nil
+
+	case "setAdjustment":
+		if p.LayerID == "" {
+			return "", nil, fmt.Errorf("setAdjustment 缺少 id")
+		}
+		if p.Adjustment == nil {
+			return "", nil, fmt.Errorf("setAdjustment 缺少 adjustment")
+		}
+		adj := *p.Adjustment
+		return "编辑调整图层", func(sess *session) error {
+			l, err := layerByID(sess.doc, p.LayerID)
+			if err != nil {
+				return err
+			}
+			if l.IsGroupLayer() {
+				return fmt.Errorf("编组不能携带调整")
+			}
+			l.Adjustment = &adj
 			return nil
 		}, nil
 

@@ -389,6 +389,28 @@ func (c Case) DriverArgs() ([]string, error) {
 			}
 			args = add(args, f)
 		}
+	case "colored_vignette":
+		keys := []string{"frameX", "frameY", "frameWidth", "frameHeight", "fillsClear",
+			"amount", "midpoint", "roundness", "feather", "highlights",
+			"red", "green", "blue"}
+		args = make([]string, 0, len(keys))
+		for _, k := range keys {
+			f, e := num(k)
+			if e != nil {
+				return nil, e
+			}
+			args = add(args, f)
+		}
+	case "tonal_contrast":
+		keys := []string{"blurRadius", "amount", "shadows", "midtones", "highlights"}
+		args = make([]string, 0, len(keys))
+		for _, k := range keys {
+			f, e := num(k)
+			if e != nil {
+				return nil, e
+			}
+			args = add(args, f)
+		}
 	case "dither":
 		singles := []string{"style", "levels", "diffusion", "density", "contrast", "cell", "angle",
 			"lightOnDark", "originalColors"}

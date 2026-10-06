@@ -202,6 +202,35 @@ func (h *History) End(document domain.Document, activeLayerID *string) {
 	h.trim(document)
 }
 
+// EndForced closes the outermost transaction and records the entry even
+// when the document ended unchanged — for edits whose payload lives outside
+// the document model (filter commits swap pixels in the bitmap library).
+// The revision still stays put for a true no-op when the caller detects
+// one and uses End instead.
+func (h *History) EndForced(document domain.Document, activeLayerID *string) {
+	if h.depth <= 0 {
+		return
+	}
+	h.depth--
+	if h.depth != 0 || h.pending == nil {
+		return
+	}
+	before := *h.pending
+	h.pending = nil
+	h.revision = newRevision()
+	h.past = append(h.past, entry{
+		name:   h.pendingName,
+		before: before,
+		after: Snapshot{
+			Document:      cloneDocument(document),
+			ActiveLayerID: copyString(activeLayerID),
+			Revision:      h.revision,
+		},
+	})
+	h.future = nil
+	h.trim(document)
+}
+
 // Undo moves the newest past entry onto the future stack and returns its
 // before-snapshot; the current revision rewinds to it.
 func (h *History) Undo() (Snapshot, bool) {

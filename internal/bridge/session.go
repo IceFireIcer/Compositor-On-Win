@@ -34,11 +34,18 @@ type session struct {
 	stroke    *render.Stroke
 	strokeKey string
 
+	// Filter session: one open filter/adjustment dialog (its preview bitmap
+	// substitutes the layer's asset in the composite), plus the raster undo
+	// journal pairing filter commits with history revisions.
+	filter        *filterSession
+	rasterJournal []rasterJournalEntry
+
 	// Render cache, invalidated by rev: renderPNG holds the composed PNG of
 	// the document at renderRev. EncodePNG never returns empty bytes, so a
 	// nil slice means "not cached yet".
-	renderPNG []byte
-	renderRev int
+	renderPNG       []byte
+	renderRev       int
+	renderFilterRev int
 }
 
 // newSession wraps a parsed/created document into a fresh session with an

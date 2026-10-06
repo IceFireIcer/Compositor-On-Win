@@ -14,6 +14,12 @@ import "compositor-win/internal/domain"
 // only once the user edits, and the render path's pass-through contract
 // pins this).
 
+// ApplyAdjustment adjusts `b` in place; it reports whether the kind has a
+// kernel yet, so callers can pass unsupported kinds through untouched.
+func ApplyAdjustment(a *domain.Adjustment, b *Bitmap) bool {
+	return applyAdjustment(a, b)
+}
+
 // applyAdjustment adjusts `b` in place; it reports whether the kind has a
 // kernel yet, so callers can pass unsupported kinds through untouched.
 func applyAdjustment(a *domain.Adjustment, b *Bitmap) bool {

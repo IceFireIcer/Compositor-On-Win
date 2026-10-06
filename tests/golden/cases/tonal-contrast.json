@@ -1,0 +1,8 @@
+{
+  "kernel": "tonal_contrast",
+  "input": "blend",
+  "width": 48, "height": 48,
+  "epsilon": 1,
+  "params": { "blurRadius": 2, "amount": 50, "shadows": 40, "midtones": 60, "highlights": 30 },
+  "note": "adjust_tonal_contrast：盒模糊基准上的局部亮度对比（阴影/中间调/高光分权）；tanh 跨库 → ε=1。模糊基准由 driver 的 box_blur_rgba 与 Go 的 buildTonalBase 镜像生成。"
+}
