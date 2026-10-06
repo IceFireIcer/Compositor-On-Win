@@ -198,7 +198,7 @@
 | I02 | 导入 HEIC（libheif/cgo） | `ImageImporter` | 46 | M7 | ☐ |
 | I03 | 导入 SVG（光栅化） | `decodeSVG` | 46 | M7 | ☐ |
 | I04 | 相机 RAW + develop 步骤 + asShot 默认 | `RawImporter`/LibRaw | 46 | M7 | ☐ |
-| I05 | PSD/PSB 导入：层/组/蒙版/混合/`levl``curv``hue2`/填充形状/水平文本；超大层裁剪；转换报告 | `PSD/*` | 47 | M7 | ☐ |
+| I05 | PSD/PSB 导入：层/组/蒙版/混合/`levl``curv``hue2`/填充形状/水平文本；超大层裁剪；转换报告 | `PSD/*` | 47 | M7 | ◐ 票38：解析/调整/蒙版/剪贴/裁剪/报告已落地；实时文字与矢量随文字批次 |
 | I06 | 导出 PNG/JPEG + JPEG 实时预览 | `ImageExporter` | 48 | M7 | ☐ |
 | I07 | `.comp` v11 读写/校验/原子保存/包内预览图 | `ProjectStore`（ADR-0002） | 1/49 | M1 | ☐ |
 | I08 | 保存不阻塞编辑（后台写） | `finishWriting` | 49 | M1 | ☐ |

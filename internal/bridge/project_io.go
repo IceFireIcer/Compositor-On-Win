@@ -6,17 +6,22 @@ import (
 	"encoding/json"
 	"fmt"
 	"image/png"
+	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
 	"compositor-win/internal/domain"
+	"compositor-win/internal/psd"
 	"compositor-win/internal/render"
 )
 
 // projectFilter is the file-dialog filter for .comp packages.
 var projectFilter = runtime.FileFilter{DisplayName: "Compositor 项目", Pattern: "*.comp"}
+
+// photoshopFilter accepts Photoshop files for import (ticket 38).
+var photoshopFilter = runtime.FileFilter{DisplayName: "Photoshop 文件", Pattern: "*.psd;*.psb"}
 
 // defaultOpenDialog wraps the Wails file picker; replaced in tests.
 func defaultOpenDialog(ctx context.Context) (string, error) {
@@ -25,7 +30,7 @@ func defaultOpenDialog(ctx context.Context) (string, error) {
 	}
 	return runtime.OpenFileDialog(ctx, runtime.OpenDialogOptions{
 		Title:   "打开项目",
-		Filters: []runtime.FileFilter{projectFilter},
+		Filters: []runtime.FileFilter{projectFilter, photoshopFilter},
 	})
 }
 
@@ -57,14 +62,54 @@ func (s *Service) OpenProjectDialog() (string, error) {
 	if path == "" {
 		return marshalEnvelope(s.ws.ActiveRev(), nil)
 	}
-	doc, bitmaps, err := s.loadProject(path)
+	conversions, doc, bitmaps, err := s.loadAny(path)
 	if err != nil {
 		return "", err
 	}
 	if _, err := s.ws.OpenDocument(path, doc, bitmaps); err != nil {
 		return "", err
 	}
+	if len(conversions) > 0 {
+		// The conversion report rides an event: the tab is already open and
+		// the notes are informational, not a failure.
+		if s.ctx != nil {
+			if payload, merr := json.Marshal(conversions); merr == nil {
+				runtime.EventsEmit(s.ctx, "psdConversions", payload)
+			}
+		}
+	}
 	return s.ws.ActiveDocumentJSON()
+}
+
+// loadAny opens .comp packages and .psd/.psb files, dispatching by
+// extension; the reply carries the conversion report for Photoshop files.
+func (s *Service) loadAny(path string) ([]psd.Conversion, *domain.Document, map[string]*render.Bitmap, error) {
+	isPhotoshop := strings.EqualFold(filepath.Ext(path), ".psd") ||
+		strings.EqualFold(filepath.Ext(path), ".psb")
+	if isPhotoshop {
+		doc, bitmaps, conversions, err := s.loadPhotoshop(path)
+		return conversions, doc, bitmaps, err
+	}
+	doc, bitmaps, err := s.loadProject(path)
+	return nil, doc, bitmaps, err
+}
+
+// loadPhotoshop imports a .psd/.psb through the hand-written reader
+// (internal/psd) into a fresh document + bitmap library.
+func (s *Service) loadPhotoshop(path string) (*domain.Document, map[string]*render.Bitmap, []psd.Conversion, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("读取 Photoshop 文件失败: %w", err)
+	}
+	parsed, err := psd.Read(data, domain.MaxSurfacePixels)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	built, err := psd.Build(parsed)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	return built.Document, built.Assets, built.Conversions, nil
 }
 
 // loadProject opens the package and decodes every referenced asset (layer
