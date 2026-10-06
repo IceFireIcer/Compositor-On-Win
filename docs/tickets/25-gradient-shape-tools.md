@@ -4,10 +4,12 @@
 
 **Blocked by:** 21 — 笔刷引擎核心.
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] 渐变层创建后可重新打开编辑（GradientTests 语义）
-- [ ] 形状为可编辑样式对象（ShapeToolTests 语义）；圆角矩形大半径为胶囊
-- [ ] 两类图层参与合成（蒙版/混合模式/特效叠加正确）
+- [x] 渐变层创建后可重新打开编辑（GradientTests 语义）
+- [x] 形状为可编辑样式对象（ShapeToolTests 语义）；圆角矩形大半径为胶囊
+- [x] 两类图层参与合成（蒙版/混合模式/特效叠加正确）
 
 对等矩阵：T10、T11、故事 23/24。
+
+**实现说明（2026-10-07，子代理，功能优先）：** `internal/render/gradient.go`（GradientFill 线性/径向+多色标+端外延伸+选区 mask）、`shapelayer.go`（矩形/圆角→胶囊/椭圆/线段，2×2 旋转网格超采样）、composite.go 接线（ShapeStyle 存在则按 transform.size 重绘，优先于 imageFile，蒙版/剪贴/组衰减走既有路径）。**关键发现：.comp v11 无渐变 manifest 记录**——原版语义即渐变在提交时烙进普通像素（Gradient.swift:111-119），故渐变实现为无状态栅格化原语，供编辑会话拖拽预览与提交调用；不变量 1 未动。会话/桥接接线属 UI 集成。

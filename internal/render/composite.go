@@ -2,6 +2,7 @@ package render
 
 import (
 	"fmt"
+	"math"
 
 	"compositor-win/internal/domain"
 )
@@ -198,7 +199,19 @@ func children(doc *domain.Document, parentID string) []int {
 
 func renderLayer(doc *domain.Document, l *domain.Layer, target *Bitmap, sc *scope, src PixelSource) error {
 	var placed *Bitmap
-	if l.ImageFile != nil {
+	if l.Shape != nil {
+		// A live shape layer redraws from its style at the current box size —
+		// the manifest keeps the style "so it redraws cleanly when scaled"
+		// (project-format.md:44), redrawShape's semantic (ShapeTool.swift:
+		// 161-174). The stored PNG is the same raster at the saved size, so
+		// drawing from the style is faithful and keeps rounded corners
+		// crisp under a scaled transform. Style metadata is dropped once
+		// anything else edits the pixels (domain.ShapeStyle), which falls
+		// such layers back to the ordinary image path below.
+		boxW := int(math.Round(l.Transform.Size[0]))
+		boxH := int(math.Round(l.Transform.Size[1]))
+		placed = Place(RenderShape(*l.Shape, boxW, boxH), l.Transform, doc.Width, doc.Height)
+	} else if l.ImageFile != nil {
 		pixels, err := src(*l.ImageFile)
 		if err != nil {
 			return fmt.Errorf("图层 %s 加载 %s 失败: %w", l.ID, *l.ImageFile, err)
