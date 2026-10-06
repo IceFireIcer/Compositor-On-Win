@@ -22,12 +22,28 @@ export function OpenProjectDialog() {
   return window['go']['bridge']['Service']['OpenProjectDialog']();
 }
 
+export function Redo() {
+  return window['go']['bridge']['Service']['Redo']();
+}
+
+export function RenderHandler() {
+  return window['go']['bridge']['Service']['RenderHandler']();
+}
+
 export function SaveProjectDialog() {
   return window['go']['bridge']['Service']['SaveProjectDialog']();
 }
 
+export function Startup(arg1) {
+  return window['go']['bridge']['Service']['Startup'](arg1);
+}
+
 export function StrokePoint(arg1, arg2) {
   return window['go']['bridge']['Service']['StrokePoint'](arg1, arg2);
+}
+
+export function Undo() {
+  return window['go']['bridge']['Service']['Undo']();
 }
 
 export function Version() {
