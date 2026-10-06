@@ -1,6 +1,5 @@
 <script lang="ts">
-  import { NewDocument } from "../../../wailsjs/go/bridge/Workspace";
-  import { applySnapshot, type Snapshot } from "../state/workspace";
+  import { newDocument } from "../state/workspace";
 
   let {
     open,
@@ -22,8 +21,9 @@
     submitting = true;
     error = "";
     try {
-      const snapshot: Snapshot = await NewDocument(width, height, resolution);
-      applySnapshot(snapshot);
+      // workspace.newDocument applies the tab snapshot and loads the new
+      // tab's document state (layer panel + render).
+      await newDocument(width, height, resolution);
       onclose();
     } catch (err) {
       error = String(err)

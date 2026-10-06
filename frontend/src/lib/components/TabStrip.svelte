@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { SelectTab, CloseTab } from "../../../wailsjs/go/bridge/Workspace";
-  import { applySnapshot, workspace, type DocTab } from "../state/workspace";
+  import { SelectTab } from "../../../wailsjs/go/bridge/Workspace";
+  import { applySnapshot, closeTab, workspace, type DocTab } from "../state/workspace";
   import { pendingClose, requestClose, resolveClose } from "../state/confirm";
   import ConfirmDialog from "./ConfirmDialog.svelte";
 
@@ -11,7 +11,8 @@
   }
 
   async function doClose(doc: DocTab): Promise<void> {
-    applySnapshot(await CloseTab(doc.id));
+    // workspace.closeTab clears the document state when the last tab goes.
+    await closeTab(doc.id);
   }
 
   // window.confirm is unsupported in Wails/WebView2 (review I1): dirty tabs

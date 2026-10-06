@@ -40,13 +40,14 @@ func init() {
 
 func main() {
 	workspace := bridge.NewWorkspace()
+	service := bridge.NewService(workspace)
 	windowStore, err := bridge.DefaultWindowStore()
 	if err != nil {
 		log.Printf("窗口状态将不持久化: %v", err)
 		windowStore = nil
 	}
 
-	bind := []interface{}{&bridge.Service{}, workspace}
+	bind := []interface{}{service, workspace}
 	if windowStore != nil {
 		bind = append(bind, windowStore)
 	}
@@ -57,7 +58,7 @@ func main() {
 		Height:           780,
 		MinWidth:         960,
 		MinHeight:        640,
-		AssetServer:      &assetserver.Options{Assets: assets},
+		AssetServer:      &assetserver.Options{Assets: assets, Handler: service.RenderHandler()},
 		BackgroundColour: &options.RGBA{R: 30, G: 30, B: 32, A: 255},
 		OnStartup: func(ctx context.Context) {
 			if windowStore != nil {

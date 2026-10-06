@@ -9,19 +9,35 @@
     applySnapshot,
     activeTab,
     hasDocument,
+    openProject,
+    saveProject,
   } from "./lib/state/workspace";
+  import { clearDocument, loadDocument } from "./lib/state/document";
+  import { keyboardZoom, viewport, zoomToValue } from "./lib/state/viewport";
   import TabStrip from "./lib/components/TabStrip.svelte";
   import NewCanvasSheet from "./lib/components/NewCanvasSheet.svelte";
   import CanvasSurface from "./lib/components/CanvasSurface.svelte";
+  import LayersPanel from "./lib/components/LayersPanel.svelte";
 
   let version = $state("…");
   let sheetOpen = $state(false);
 
   const current = $derived(activeTab($workspace));
+  // The zoom readout subscribes to the viewport store (device px per doc px).
+  const zoomPct = $derived(Math.round($viewport.zoom * 100));
 
   // Welcome screen whenever the workspace empties (first launch or last tab closed).
   $effect(() => {
     if (!hasDocument($workspace)) sheetOpen = true;
+  });
+
+  // Keep the document store (layers + render rev) in sync with the active
+  // tab: load on tab switch / new document / open project, clear when the
+  // last tab closes. Redundant loads dedupe on the store's rev cache.
+  $effect(() => {
+    const id = current?.id;
+    if (id) void loadDocument(id);
+    else clearDocument();
   });
 
   onMount(() => {
@@ -55,6 +71,15 @@
   function newCanvas(): void {
     sheetOpen = true;
   }
+
+  // Bridge errors (plain `vite dev` has no window.go) stay non-fatal.
+  function openProjectSafe(): void {
+    void openProject().catch((err) => console.warn("打开项目失败", err));
+  }
+
+  function saveProjectSafe(): void {
+    void saveProject().catch((err) => console.warn("保存项目失败", err));
+  }
 </script>
 
 <div class="app">
@@ -62,10 +87,33 @@
     <div class="brand">Compositor</div>
     <TabStrip onnew={newCanvas} />
     <div class="spacer"></div>
+    <div class="file-actions">
+      <button title="打开 .comp 项目" onclick={openProjectSafe}>打开</button>
+      <button title="保存项目" onclick={saveProjectSafe}>保存</button>
+    </div>
     <div class="zoom-controls">
-      <button title="缩小（票 13 实装）">−</button>
-      <span class="zoom-value">100%</span>
-      <button title="放大（票 13 实装）">＋</button>
+      <button
+        title="缩小"
+        disabled={!current}
+        onclick={() => current && keyboardZoom(-1, current.width, current.height)}
+      >
+        −
+      </button>
+      <button
+        class="zoom-value"
+        title="实际像素：点击回到 100%"
+        disabled={!current}
+        onclick={() => current && zoomToValue(1, current.width, current.height)}
+      >
+        {zoomPct}%
+      </button>
+      <button
+        title="放大"
+        disabled={!current}
+        onclick={() => current && keyboardZoom(1, current.width, current.height)}
+      >
+        ＋
+      </button>
     </div>
   </header>
 
@@ -89,19 +137,14 @@
       {:else}
         <div class="welcome">
           <p class="welcome-title">Compositor for Windows</p>
-          <p class="hint">新建画布开始创作，或打开 .comp 项目（票 05）</p>
+          <p class="hint">新建画布开始创作，或打开 .comp 项目</p>
           <button class="welcome-new" onclick={newCanvas}>新建画布…</button>
         </div>
       {/if}
     </main>
 
     <aside class="layers-panel">
-      <div class="panel-title">图层</div>
-      {#if current}
-        <div class="panel-empty">「{current.name}」尚无图层内容（票 04 接域模型）</div>
-      {:else}
-        <div class="panel-empty">没有打开的文档</div>
-      {/if}
+      <LayersPanel />
     </aside>
   </div>
 
@@ -160,10 +203,35 @@
     padding: 0;
   }
 
-  .zoom-value {
-    min-width: 44px;
-    text-align: center;
+  .zoom-controls button:disabled {
+    opacity: 0.45;
+    cursor: default;
+  }
+
+  /* The readout is a button (click = 100%) styled as plain text. */
+  .zoom-controls .zoom-value {
+    width: auto;
+    min-width: 48px;
+    padding: 0 4px;
+    background: transparent;
+    border: none;
     color: var(--text-dim);
+    text-align: center;
+  }
+
+  .zoom-value:hover {
+    background: transparent;
+    color: var(--text);
+  }
+
+  .file-actions {
+    display: flex;
+    gap: 6px;
+  }
+
+  .file-actions button {
+    height: 24px;
+    padding: 0 10px;
   }
 
   .body {
@@ -225,15 +293,6 @@
     background: var(--bg-panel);
     border-left: 1px solid var(--border);
     overflow-y: auto;
-  }
-
-  .panel-title {
-    font-weight: 600;
-    margin-bottom: 6px;
-  }
-
-  .panel-empty {
-    color: var(--text-dim);
   }
 
   .status-bar {

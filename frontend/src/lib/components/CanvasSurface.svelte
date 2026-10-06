@@ -3,7 +3,9 @@
   import { untrack } from "svelte";
   import type { DocTab } from "../state/workspace";
   import {
+    CRISP_ZOOM,
     PIXEL_GRID_ZOOM,
+    documentPoint,
     documentRect,
     fitViewport,
     keyboardZoom,
@@ -17,6 +19,8 @@
   } from "../state/viewport";
   import { Modifier, applyKey, clearModifiers, modifierBits } from "../state/modifiers";
   import { activeTool } from "../state/tools";
+  import { document as documentState, reloadDocument } from "../state/document";
+  import { BeginStroke, EndStroke, StrokePoint } from "../../../wailsjs/go/bridge/Service";
   import { cursorForTool } from "./cursors";
 
   let { doc }: { doc: DocTab } = $props();
@@ -36,6 +40,20 @@
   const cursor = $derived(
     cursorForTool({ tool: $activeTool, bits: $modifierBits, panning }),
   );
+
+  // The composited document image, rendered Go-side at /render/{id}.png and
+  // cache-busted by the document rev. Only shown while this tab is the
+  // document the store holds; a 404 (e.g. an empty new document) hides it
+  // until the next rev.
+  const docState = $derived($documentState);
+  const renderSrc = $derived(
+    docState.docId === doc.id ? `/render/${doc.id}.png?v=${docState.rev}` : null,
+  );
+  let renderBroken = $state(false);
+  $effect(() => {
+    void renderSrc;
+    renderBroken = false;
+  });
 
   // Report the measured view size (and refit while followsFit). doc.id is a
   // dependency too: a fresh document starts from a fresh, fit-centered view.
@@ -122,6 +140,51 @@
   // Pan drag state: Space (any tool), the hand tool, or the middle button.
   let panDrag: { x: number; y: number } | null = null;
 
+  // Brush strokes: the bridge paints into the active layer's image; the
+  // frontend streams document-space points and reloads the render (rev bump)
+  // when the stroke ends. Left-drag paints for the brush and the default
+  // move tool (no canvas transform is wired yet); pan/zoom keep their own
+  // press behavior above.
+  const PAINT_TOOLS: ReadonlySet<string> = new Set(["move", "brush"]);
+
+  let painting = false;
+  let strokeQueued = 0; // pending requestAnimationFrame handle
+  let strokePending: { x: number; y: number } | null = null;
+
+  /** Pointer position clamped into document pixel space (integer contract). */
+  function docPixelOf(e: PointerEvent): { x: number; y: number } {
+    const r = stage!.getBoundingClientRect();
+    const p = documentPoint(
+      get(viewport),
+      e.clientX - r.left,
+      e.clientY - r.top,
+      doc.width,
+      doc.height,
+    );
+    return {
+      x: Math.min(doc.width, Math.max(0, Math.round(p.x))),
+      y: Math.min(doc.height, Math.max(0, Math.round(p.y))),
+    };
+  }
+
+  /** Coalesce move floods into one StrokePoint per animation frame. */
+  function queueStrokePoint(p: { x: number; y: number }): void {
+    strokePending = p;
+    if (strokeQueued) return;
+    strokeQueued = requestAnimationFrame(() => {
+      strokeQueued = 0;
+      const pt = strokePending;
+      strokePending = null;
+      if (painting && pt) void StrokePoint(pt.x, pt.y);
+    });
+  }
+
+  $effect(() => {
+    return () => {
+      if (strokeQueued) cancelAnimationFrame(strokeQueued);
+    };
+  });
+
   function onPointerDown(e: PointerEvent): void {
     const spaceHeld = ($modifierBits & Modifier.Space) !== 0;
     if (e.button === 1 || ((spaceHeld || $activeTool === "hand") && e.button === 0)) {
@@ -138,16 +201,46 @@
       const target = keyboardZoomTarget(get(viewport), dir);
       const r = stage!.getBoundingClientRect();
       zoomAt(target, e.clientX - r.left, e.clientY - r.top, doc.width, doc.height);
+      return;
+    }
+    if (e.button === 0 && PAINT_TOOLS.has($activeTool)) {
+      painting = true;
+      stage?.setPointerCapture(e.pointerId);
+      e.preventDefault();
+      const p = docPixelOf(e);
+      void BeginStroke(p.x, p.y);
     }
   }
 
   function onPointerMove(e: PointerEvent): void {
-    if (!panDrag) return;
-    panByStore(e.clientX - panDrag.x, e.clientY - panDrag.y);
-    panDrag = { x: e.clientX, y: e.clientY };
+    if (panDrag) {
+      panByStore(e.clientX - panDrag.x, e.clientY - panDrag.y);
+      panDrag = { x: e.clientX, y: e.clientY };
+      return;
+    }
+    if (painting) queueStrokePoint(docPixelOf(e));
   }
 
   function onPointerEnd(e: PointerEvent): void {
+    if (painting) {
+      painting = false;
+      if (strokeQueued) {
+        cancelAnimationFrame(strokeQueued);
+        strokeQueued = 0;
+      }
+      const last = strokePending;
+      strokePending = null;
+      void (async () => {
+        try {
+          if (last) await StrokePoint(last.x, last.y);
+          await EndStroke();
+        } finally {
+          // The rev only moves if the stroke landed; an unchanged rev is a
+          // no-op in the document store's rev cache (no img reload).
+          void reloadDocument();
+        }
+      })();
+    }
     if (panDrag) stage?.releasePointerCapture(e.pointerId);
     panDrag = null;
     panning = false;
@@ -159,8 +252,9 @@
 </script>
 
 <!--
-  Ticket 13: the document rendered through the viewport store — anchored
-  zoom, pan, pixel grid from 800%, checkerboard and document bounds.
+  The document lives Go-side (internal/domain + render); the canvas maps it
+  through the viewport store — anchored zoom, pan, pixel grid from 800%,
+  checkerboard and document bounds — and streams brush strokes back.
 -->
 <div
   class="canvas-stage"
@@ -176,8 +270,10 @@
   onpointercancel={onPointerEnd}
   oncontextmenu={onContextMenu}
 >
-  <!-- The document: checkerboard (transparency) + document bounds, placed by
-       the viewport mapping (center + pan), sized zoom * document pixels. -->
+  <!-- The document: checkerboard (transparency) + Go-rendered composite +
+       document bounds, placed by the viewport mapping (center + pan), sized
+       zoom * document pixels. The img keeps transparency so the checkerboard
+       shows through. -->
   <div
     class="doc"
     style:left="{rect.x}px"
@@ -185,6 +281,16 @@
     style:width="{doc.width * ppp}px"
     style:height="{doc.height * ppp}px"
   >
+    {#if renderSrc && !renderBroken}
+      <img
+        class="render"
+        class:crisp={vp.zoom >= CRISP_ZOOM}
+        src={renderSrc}
+        alt=""
+        draggable="false"
+        onerror={() => (renderBroken = true)}
+      />
+    {/if}
     {#if showGrid}
       <div
         class="pixel-grid"
@@ -210,6 +316,20 @@
     background: repeating-conic-gradient(#3c3c41 0% 25%, #4a4a50 0% 50%) 0 0 / 16px 16px;
     border: 1px solid #141416;
     box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08), 0 8px 32px rgba(0, 0, 0, 0.45);
+  }
+
+  /* The Go-rendered composite fills the document rect. */
+  .render {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    display: block;
+  }
+
+  /* Hard-edged document pixels from 200% (EditorCanvas.swift:923 crispZoom). */
+  .render.crisp {
+    image-rendering: pixelated;
   }
 
   /* Per-document-pixel grid: one hairline per pixel, tone from the original
