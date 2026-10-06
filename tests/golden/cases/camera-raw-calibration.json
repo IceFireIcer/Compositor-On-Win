@@ -1,0 +1,11 @@
+{
+  "kernel": "camera_raw_calibration",
+  "input": "patches",
+  "width": 48, "height": 48,
+  "epsilon": 0,
+  "params": {
+    "shadowTint": 30, "redHue": 20, "redSaturation": 15, "greenHue": -10,
+    "greenSaturation": 10, "blueHue": 0, "blueSaturation": -15, "processVersion": 6
+  },
+  "note": "adjust_camera_raw_calibration：阴影染色(l<0.35)+按主色三向 hue/sat 偏移，Version 6 全强度；HSL 纯算术 → ε=0。"
+}

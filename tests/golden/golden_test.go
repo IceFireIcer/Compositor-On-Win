@@ -165,6 +165,21 @@ func goPort(c Case, px []byte) error {
 			num("sharpenDetail"), num("sharpenMasking"), num("noiseLuminance"),
 			num("noiseLuminanceDetail"), num("noiseLuminanceContrast"), num("noiseColor"),
 			num("noiseColorDetail"), num("noiseColorSmoothness"), num("scale"))
+	case "camera_raw_optics":
+		num := func(key string) float64 { return p[key].(float64) }
+		render.ApplyCameraRawOptics(bmp, num("removeChromatic") != 0, num("lensProfile") != 0,
+			num("profileDistortion"), num("profileVignetting"), num("distortionK"),
+			num("purpleAmount"), num("purpleHueLow"), num("purpleHueHigh"),
+			num("greenAmount"), num("greenHueLow"), num("greenHueHigh"),
+			num("vignetteAmount"), num("vignetteMidpoint"), num("scale"))
+	case "camera_raw_calibration":
+		num := func(key string) float64 { return p[key].(float64) }
+		render.ApplyCameraRawCalibration(bmp, num("shadowTint"), num("redHue"),
+			num("redSaturation"), num("greenHue"), num("greenSaturation"),
+			num("blueHue"), num("blueSaturation"), int(num("processVersion")))
+	case "lens":
+		src := bmp.Clone()
+		render.LensDistort(src, bmp, p["k"].(float64))
 	default:
 		return errNotPorted
 	}
@@ -327,7 +342,8 @@ func TestGoldenReferencesMatchGoPorts(t *testing.T) {
 	// but only when their case was part of this run (go test -run may filter).
 	for _, k := range []string{"levels", "exposure", "gradient_map", "cube", "wand",
 		"grain", "black_white", "color_balance", "noise", "camera_raw", "camera_raw_curve",
-		"camera_raw_effects", "camera_raw_detail"} {
+		"camera_raw_effects", "camera_raw_detail", "camera_raw_optics", "camera_raw_calibration",
+		"lens"} {
 		if ran[k] && !compared[k] {
 			t.Errorf("kernel %q has a Go port in goPort but was not compared", k)
 		}

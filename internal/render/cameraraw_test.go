@@ -460,3 +460,251 @@ func TestApplyCameraRawSharpenMaskOverlayGrays(t *testing.T) {
 		}
 	}
 }
+
+// Ticket 30's geometry has no C kernel (it is Swift/CoreImage side), so the
+// corner math and warp are pinned here; the optics/calibration/lens kernels
+// are accepted against the golden references.
+
+func TestLensDistortZeroKIdentity(t *testing.T) {
+	bmp := cameraRawTestBitmap()
+	out := NewBitmap(bmp.W, bmp.H)
+	LensDistort(bmp, out, 0)
+	for i := range bmp.Pix {
+		if bmp.Pix[i] != out.Pix[i] {
+			t.Fatalf("k=0 must be identity, byte %d: %v → %v", i, bmp.Pix[i], out.Pix[i])
+		}
+	}
+}
+
+func TestLensDistortPositiveKPullsEdgesIn(t *testing.T) {
+	bmp := NewBitmap(32, 32)
+	for y := 0; y < 32; y++ {
+		for x := 0; x < 32; x++ {
+			i := (y*32 + x) * 4
+			v := uint8(x * 8)
+			bmp.Pix[i], bmp.Pix[i+1], bmp.Pix[i+2], bmp.Pix[i+3] = v, v, v, 255
+		}
+	}
+	out := NewBitmap(32, 32)
+	LensDistort(bmp, out, 0.4)
+	// Center column keeps its value (scale ≈ 1 there); the right edge shows
+	// values sampled from further left, so it darkens for k > 0.
+	if out.Pix[(16*32+16)*4] != 128 {
+		t.Fatalf("center shifted: %v", out.Pix[(16*32+16)*4])
+	}
+	if out.Pix[(16*32+31)*4] >= 248 {
+		t.Fatalf("edge must sample inward for k>0, got %v", out.Pix[(16*32+31)*4])
+	}
+}
+
+func TestGuidedCorrections(t *testing.T) {
+	if v, h, r := guidedCorrections(nil); v != 0 || h != 0 || r != 0 {
+		t.Fatal("no guides, no corrections")
+	}
+	// A horizontal guide straightens nothing; a 10°-down one rotates +10.
+	_, _, r := guidedCorrections([]CameraRawGeometryGuide{
+		{StartX: 0.1, StartY: 0.5, EndX: 0.9, EndY: 0.5}})
+	if r != 0 {
+		t.Fatalf("horizontal guide rotate = %v, want 0", r)
+	}
+	_, _, r = guidedCorrections([]CameraRawGeometryGuide{
+		{StartX: 0.1, StartY: 0.4, EndX: 0.9, EndY: 0.5}}) // rises ~7.1° in y-up coords
+	if math.Abs(r+7.125) > 0.1 {
+		t.Fatalf("rising guide rotate = %v, want ≈−7.1", r)
+	}
+	// 58° steep guide: rotate −58 wraps to +32.
+	_, _, r = guidedCorrections([]CameraRawGeometryGuide{
+		{StartX: 0.2, StartY: 0.1, EndX: 0.7, EndY: 0.9}})
+	if math.Abs(r-32.0) > 0.1 {
+		t.Fatalf("steep guide rotate = %v, want ≈+32", r)
+	}
+	// A second, vertical guide tips vertical perspective +25.
+	v, _, _ := guidedCorrections([]CameraRawGeometryGuide{
+		{StartX: 0.1, StartY: 0.5, EndX: 0.9, EndY: 0.5},
+		{StartX: 0.5, StartY: 0.1, EndX: 0.5, EndY: 0.9}})
+	if v != 25 {
+		t.Fatalf("vertical second guide = %v, want 25", v)
+	}
+}
+
+func TestOutputCornersVerticalSlider(t *testing.T) {
+	var s CameraRawGeometrySettings
+	s.Projection = "Perspective"
+	corners := s.outputCorners(100, 100, 50, 0, 0)
+	// vertical 50 → v = 0.5*100*0.18 = 9: the top edge widens symmetrically.
+	if math.Abs(corners[0].x-(-9)) > 1e-9 || math.Abs(corners[1].x-109) > 1e-9 {
+		t.Fatalf("vertical slider corners = %v/%v, want −9/109", corners[0].x, corners[1].x)
+	}
+	if corners[0].y != 0 || corners[2].y != 100 {
+		t.Fatalf("vertical slider must not move edges vertically: %v/%v", corners[0].y, corners[2].y)
+	}
+	// Rectilinear softens the strength.
+	s.Projection = "Rectilinear"
+	corners = s.outputCorners(100, 100, 50, 0, 0)
+	if math.Abs(corners[0].x-(-4.95)) > 1e-9 {
+		t.Fatalf("rectilinear corner = %v, want −4.95", corners[0].x)
+	}
+}
+
+func TestSolveHomographyRoundTrip(t *testing.T) {
+	// Any quad: forward maps the input corners onto it, inverse undoes it.
+	dst := [4]cameraCorner{{-3, 1}, {50, -2}, {48, 60}, {-4, 55}}
+	m := solveHomography(40, 30, dst)
+	if m == nil {
+		t.Fatal("non-degenerate quad must solve")
+	}
+	src := [4]cameraCorner{{0, 0}, {40, 0}, {40, 30}, {0, 30}}
+	for i, c := range src {
+		u, v := homographyApply(m, c.x, c.y)
+		if math.Abs(u-dst[i].x) > 1e-9 || math.Abs(v-dst[i].y) > 1e-9 {
+			t.Fatalf("corner %d mapped to (%v,%v), want (%v,%v)", i, u, v, dst[i].x, dst[i].y)
+		}
+	}
+	inv := homographyInvert(m)
+	if inv == nil {
+		t.Fatal("invertible quad must invert")
+	}
+	// inverse∘forward is the identity on arbitrary input points.
+	for _, c := range []cameraCorner{{20, 15}, {7, 3}, {39, 29}, {0.5, 12}} {
+		u, v := homographyApply(m, c.x, c.y)
+		u2, v2 := homographyApply(inv, u, v)
+		if math.Abs(u2-c.x) > 1e-6 || math.Abs(v2-c.y) > 1e-6 {
+			t.Fatalf("round trip of (%v,%v) landed at (%v,%v)", c.x, c.y, u2, v2)
+		}
+	}
+}
+
+func TestPerspectiveWarpIdentity(t *testing.T) {
+	bmp := cameraRawTestBitmap()
+	var s CameraRawGeometrySettings
+	corners := s.outputCorners(bmp.W, bmp.H, 0, 0, 0)
+	out := perspectiveWarp(bmp, corners)
+	for i := range bmp.Pix {
+		if bmp.Pix[i] != out.Pix[i] {
+			t.Fatalf("identity corners must reproduce input, byte %d: %v → %v", i, bmp.Pix[i], out.Pix[i])
+		}
+	}
+}
+
+func TestApplyCameraRawGeometryRotateMovesCorners(t *testing.T) {
+	bmp := NewBitmap(32, 32)
+	for y := 0; y < 32; y++ {
+		for x := 0; x < 32; x++ {
+			i := (y*32 + x) * 4
+			if x < 8 {
+				bmp.Pix[i], bmp.Pix[i+3] = 255, 255 // a left stripe
+			}
+		}
+	}
+	var s CameraRawGeometrySettings
+	s.Rotate = 45
+	out := ApplyCameraRawGeometry(bmp, s)
+	if out == bmp {
+		t.Fatal("rotated geometry must produce a new bitmap")
+	}
+	// The output quad is a diamond: all four frame corners fall outside it
+	// (transparent) and the stripe — hugging the input's left edge — shows
+	// along the diamond's left corner, the middle of the frame edge.
+	for _, c := range [][2]int{{0, 0}, {31, 0}, {0, 31}, {31, 31}} {
+		if a := out.Pix[(c[1]*32+c[0])*4+3]; a != 0 {
+			t.Fatalf("frame corner (%d,%d) must fall outside the rotated quad, alpha %v", c[0], c[1], a)
+		}
+	}
+	if out.Pix[(16*32+0)*4] == 0 {
+		t.Fatal("left-edge middle must still show the stripe after 45° rotation")
+	}
+	if out.Pix[(16*32+16)*4] != 0 {
+		t.Fatal("center must sample non-stripe content")
+	}
+}
+
+func TestApplyCameraRawGeometryConstrainCropRefits(t *testing.T) {
+	bmp := NewBitmap(32, 32)
+	for y := 8; y < 24; y++ {
+		for x := 8; x < 24; x++ {
+			i := (y*32 + x) * 4
+			bmp.Pix[i], bmp.Pix[i+1], bmp.Pix[i+2], bmp.Pix[i+3] = 200, 200, 200, 255
+		}
+	}
+	var s CameraRawGeometrySettings
+	s.Rotate = 12
+	s.ConstrainCrop = true
+	out := ApplyCameraRawGeometry(bmp, s)
+	// The 16×16 content refits to the full 32×32 frame.
+	bounds := bitmapAlphaBounds(out)
+	if bounds[0] != 0 || bounds[1] != 0 || bounds[2] != 32 || bounds[3] != 32 {
+		t.Fatalf("constrain crop bounds = %v, want full frame", bounds)
+	}
+}
+
+func TestApplyCameraRawFilterIdentityShortCircuit(t *testing.T) {
+	bmp := cameraRawTestBitmap()
+	var zero CameraRawSettings
+	out := ApplyCameraRawFilter(bmp, zero, CameraRawOptions{})
+	if out != bmp {
+		t.Fatal("identity settings must return the input bitmap unchanged")
+	}
+}
+
+func TestApplyCameraRawFilterFullPipelineKeepsAlpha(t *testing.T) {
+	bmp := cameraRawTestBitmap()
+	bmp.Pix[3] = 100 // partial coverage in the first pixel
+	s := CameraRawSettings{
+		Temperature: 15, Exposure: 0.4, Contrast: 10, Highlights: -15,
+		Shadows: 20, Whites: 5, Blacks: -5, Vibrance: 15, Saturation: 5,
+		Texture: 10, Clarity: 10, Dehaze: 8,
+		VignetteAmount: -30, VignetteMidpoint: 50, VignetteFeather: 50,
+		GrainAmount: 20, GrainSize: 25, GrainRoughness: 50,
+		Curve:       CameraRawCurveSettings{Shadows: -20, ShadowSplit: 25, DarkSplit: 50, LightSplit: 75},
+		Mixer:       CameraRawMixerSettings{Saturation: [8]float64{10}},
+		Grading:     CameraRawGradingSettings{Shadows: CameraRawGradeWheel{Hue: 120, Saturation: 30}},
+		Detail:      CameraRawDetailSettings{SharpenAmount: 60, SharpenRadius: 10, SharpenDetail: 25},
+		Optics:      CameraRawOpticsSettings{Distortion: 20, PurpleAmount: 30},
+		Calibration: CameraRawCalibrationSettings{Process: 6, RedSaturation: 10},
+	}
+	original := bmp.Clone()
+	out := ApplyCameraRawFilter(bmp, s, CameraRawOptions{Scale: 1, Seed: 7, VisualizePointColor: -1})
+	changed := 0
+	for i := 3; i < len(out.Pix); i += 4 {
+		if out.Pix[i] != original.Pix[i] {
+			t.Fatalf("pipeline must keep alpha at byte %d: %v → %v", i, original.Pix[i], out.Pix[i])
+		}
+	}
+	for i := 0; i < len(out.Pix); i += 4 {
+		if out.Pix[i] != original.Pix[i] {
+			changed++
+		}
+	}
+	if changed == 0 {
+		t.Fatal("full pipeline must change pixels")
+	}
+}
+
+func TestApplyCameraRawCalibrationShadowTintAffectsShadows(t *testing.T) {
+	bmp := NewBitmap(2, 2)
+	for i := 0; i < len(bmp.Pix); i += 4 {
+		bmp.Pix[i], bmp.Pix[i+1], bmp.Pix[i+2], bmp.Pix[i+3] = 80, 30, 30, 255
+	}
+	ApplyCameraRawCalibration(bmp, 100, 0, 0, 0, 0, 0, 0, 6)
+	for i := 0; i < len(bmp.Pix); i += 4 {
+		if bmp.Pix[i+1] <= 30 {
+			t.Fatalf("positive shadow tint must rotate dark hues (toward yellow-green), got rgb %v,%v,%v",
+				bmp.Pix[i], bmp.Pix[i+1], bmp.Pix[i+2])
+		}
+	}
+}
+
+func TestApplyCameraRawOpticsDefringeDesaturatesPurple(t *testing.T) {
+	bmp := NewBitmap(2, 2)
+	for i := 0; i < len(bmp.Pix); i += 4 {
+		bmp.Pix[i], bmp.Pix[i+1], bmp.Pix[i+2], bmp.Pix[i+3] = 160, 40, 200, 255
+	}
+	ApplyCameraRawOptics(bmp, false, false, 100, 100, 0, 100, 270, 310, 0, 60, 120, 0, 50, 1)
+	for i := 0; i < len(bmp.Pix); i += 4 {
+		maxc := math.Max(float64(bmp.Pix[i]), math.Max(float64(bmp.Pix[i+1]), float64(bmp.Pix[i+2])))
+		minc := math.Min(float64(bmp.Pix[i]), math.Min(float64(bmp.Pix[i+1]), float64(bmp.Pix[i+2])))
+		if maxc-minc >= 160 {
+			t.Fatalf("purple defringe must desaturate, chroma now %v", maxc-minc)
+		}
+	}
+}

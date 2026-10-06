@@ -1500,3 +1500,743 @@ func ApplyCameraRawSharpenMaskOverlay(b *Bitmap, sharpenRadius, sharpenDetail, s
 		}
 	}
 }
+
+// ---------------------------------------------------------------------------
+// lens_distort — radial distortion shared with the Lens Correction filter
+// ---------------------------------------------------------------------------
+
+// LensDistort ports lens_distort: radial barrel/pincushion correction with
+// bilinear sampling in premultiplied space; samples outside the frame are
+// transparent. The destination may be the source (the optics kernel copies
+// first, as the C caller does).
+func LensDistort(source, destination *Bitmap, k float64) {
+	w, h := source.W, source.H
+	cx := float64(w) * 0.5
+	cy := float64(h) * 0.5
+	halfDiagonal2 := cx*cx + cy*cy
+	for y := 0; y < h; y++ {
+		dy := float64(y) + 0.5 - cy
+		for x := 0; x < w; x++ {
+			dx := float64(x) + 0.5 - cx
+			scale := 1.0 - k*(dx*dx+dy*dy)/halfDiagonal2
+			// Source position in pixel-center coordinates.
+			sx := cx + dx*scale - 0.5
+			sy := cy + dy*scale - 0.5
+			fx0, fy0 := math.Floor(sx), math.Floor(sy)
+			fx, fy := sx-fx0, sy-fy0
+			x0, y0 := int64(fx0), int64(fy0)
+			var sums [4]float64
+			for j := 0; j < 2; j++ {
+				row := y0 + int64(j)
+				if row < 0 || row >= int64(h) {
+					continue
+				}
+				wy := 1 - fy
+				if j == 1 {
+					wy = fy
+				}
+				if wy == 0 {
+					continue
+				}
+				line := source.Pix[int64(row)*int64(w)*4:]
+				for i := 0; i < 2; i++ {
+					column := x0 + int64(i)
+					if column < 0 || column >= int64(w) {
+						continue
+					}
+					weight := wy * (1 - fx)
+					if i == 1 {
+						weight = wy * fx
+					}
+					if weight == 0 {
+						continue
+					}
+					sp := line[int64(column)*4:]
+					for c := 0; c < 4; c++ {
+						sums[c] += weight * float64(sp[c])
+					}
+				}
+			}
+			out := destination.Pix[(y*w+x)*4:]
+			for c := 0; c < 4; c++ {
+				out[c] = uint8(math.Round(sums[c]))
+			}
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// adjust_camera_raw_optics — chromatic aberration, distortion, defringe,
+// lens-vignetting correction
+// ---------------------------------------------------------------------------
+
+func camPixelHueDeg(r, g, b float64) float64 {
+	maxc := math.Max(r, math.Max(g, b))
+	minc := math.Min(r, math.Min(g, b))
+	chroma := maxc - minc
+	if chroma < 1e-6 {
+		return 0
+	}
+	var hue float64
+	if maxc == r {
+		hue = math.Mod((g-b)/chroma, 6.0)
+	} else if maxc == g {
+		hue = (b-r)/chroma + 2.0
+	} else {
+		hue = (r-g)/chroma + 4.0
+	}
+	hue *= 60.0
+	if hue < 0 {
+		hue += 360.0
+	}
+	return hue
+}
+
+func camHueInRange(hue, low, high float64) bool {
+	if low <= high {
+		return hue >= low && hue <= high
+	}
+	return hue >= low || hue <= high
+}
+
+func camOpticsDefringe(r, g, b *float64, purpleAmount, purpleLow, purpleHigh,
+	greenAmount, greenLow, greenHigh float64) {
+	hue := camPixelHueDeg(*r, *g, *b)
+	maxc := math.Max(*r, math.Max(*g, *b))
+	minc := math.Min(*r, math.Min(*g, *b))
+	chroma := maxc - minc
+	if chroma < 1e-6 {
+		return
+	}
+	sat := chroma / maxc
+	reduce := 0.0
+	if purpleAmount > 0 && camHueInRange(hue, purpleLow, purpleHigh) {
+		reduce = math.Max(reduce, purpleAmount/100.0)
+	}
+	if greenAmount > 0 && camHueInRange(hue, greenLow, greenHigh) {
+		reduce = math.Max(reduce, greenAmount/100.0)
+	}
+	if reduce <= 0 {
+		return
+	}
+	lum := camRec709(*r, *g, *b)
+	factor := 1.0 - reduce*sat
+	*r = cameraClamp(lum + (*r-lum)*factor)
+	*g = cameraClamp(lum + (*g-lum)*factor)
+	*b = cameraClamp(lum + (*b-lum)*factor)
+}
+
+// camOpticsChromatic ports optics_chromatic: red shifts inward and blue
+// outward by a radial quadratic, sampled from the copy.
+func camOpticsChromatic(b *Bitmap, strength float64) {
+	if strength <= 0 {
+		return
+	}
+	w, h := b.W, b.H
+	src := b.Clone()
+	cx := float64(w) * 0.5
+	cy := float64(h) * 0.5
+	maxR := math.Hypot(cx, cy)
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			i := (y*w + x) * 4
+			alpha := float64(b.Pix[i+3])
+			if alpha == 0 {
+				continue
+			}
+			dx := float64(x) + 0.5 - cx
+			dy := float64(y) + 0.5 - cy
+			radial := math.Hypot(dx, dy) / maxR
+			shift := strength * radial * radial * 2.5
+			rx := int64(math.Round(float64(x) - shift))
+			bx := int64(math.Round(float64(x) + shift))
+			pr := src.Pix[int64(y*w+clampedIndex(int(rx), w))*4:]
+			pb := src.Pix[int64(y*w+clampedIndex(int(bx), w))*4:]
+			g := math.Min(1.0, float64(src.Pix[i+1])/alpha)
+			r := math.Min(1.0, float64(pr[0])/math.Max(1.0, float64(pr[3])))
+			bl := math.Min(1.0, float64(pb[2])/math.Max(1.0, float64(pb[3])))
+			writePremulD(b.Pix[i:i+4], r, g, bl, alpha)
+		}
+	}
+}
+
+func camOpticsVignetteCorrect(r, g, b *float64, x, y, width, height int, amount, midpoint float64) {
+	if amount == 0 || width == 0 || height == 0 {
+		return
+	}
+	nx := (float64(x)+0.5)/float64(width)*2.0 - 1.0
+	ny := (float64(y)+0.5)/float64(height)*2.0 - 1.0
+	dist := math.Hypot(nx, ny) / math.Sqrt(2.0)
+	start := (midpoint / 100.0) * 0.85
+	t := cameraClamp((dist - start) / 0.35)
+	mask := t * t * (3.0 - 2.0*t)
+	lift := (amount / 100.0) * mask
+	if lift > 0 {
+		*r = cameraClamp(*r + (1.0-*r)*lift)
+		*g = cameraClamp(*g + (1.0-*g)*lift)
+		*b = cameraClamp(*b + (1.0-*b)*lift)
+	} else {
+		factor := 1.0 + lift
+		*r *= factor
+		*g *= factor
+		*b *= factor
+	}
+}
+
+// ApplyCameraRawOptics ports adjust_camera_raw_optics: lens distortion
+// (distortionK matches lens_distort), chromatic aberration removal, purple/
+// green defringe, and lens-vignetting correction (the profile adds 35% of
+// its strength). scale maps the radii to preview pixels.
+func ApplyCameraRawOptics(b *Bitmap, removeChromatic, lensProfile bool, profileDistortion,
+	profileVignetting, distortionK, purpleAmount, purpleHueLow, purpleHueHigh,
+	greenAmount, greenHueLow, greenHueHigh, vignetteAmount, vignetteMidpoint, scale float64) {
+	if b.W == 0 || b.H == 0 {
+		return
+	}
+	profileVignette := 0.0
+	if lensProfile {
+		profileVignette = profileVignetting / 100.0
+	}
+	vignette := vignetteAmount + profileVignette*35.0
+	if distortionK != 0 {
+		src := b.Clone()
+		LensDistort(src, b, distortionK)
+	}
+	if removeChromatic {
+		camOpticsChromatic(b, 0.45)
+	}
+	if purpleAmount == 0 && greenAmount == 0 && vignette == 0 {
+		return
+	}
+	for y := 0; y < b.H; y++ {
+		for x := 0; x < b.W; x++ {
+			i := (y*b.W + x) * 4
+			alpha := float64(b.Pix[i+3])
+			if alpha == 0 {
+				continue
+			}
+			r := math.Min(1.0, float64(b.Pix[i])/alpha)
+			g := math.Min(1.0, float64(b.Pix[i+1])/alpha)
+			bl := math.Min(1.0, float64(b.Pix[i+2])/alpha)
+			camOpticsDefringe(&r, &g, &bl, purpleAmount, purpleHueLow, purpleHueHigh,
+				greenAmount, greenHueLow, greenHueHigh)
+			camOpticsVignetteCorrect(&r, &g, &bl, x, y, b.W, b.H, vignette, vignetteMidpoint)
+			writePremulD(b.Pix[i:i+4], r, g, bl, alpha)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// adjust_camera_raw_calibration — camera calibration before the main grade
+// ---------------------------------------------------------------------------
+
+// ApplyCameraRawCalibration ports adjust_camera_raw_calibration: shadow tint
+// plus per-primary hue/saturation shifts, scaled by the process version.
+func ApplyCameraRawCalibration(b *Bitmap, shadowTint, redHue, redSaturation,
+	greenHue, greenSaturation, blueHue, blueSaturation float64, processVersion int) {
+	if b.W == 0 || b.H == 0 {
+		return
+	}
+	versionScale := 1.0
+	switch {
+	case processVersion <= 1:
+		versionScale = 0.55
+	case processVersion == 2:
+		versionScale = 0.65
+	case processVersion == 3:
+		versionScale = 0.75
+	case processVersion == 4:
+		versionScale = 0.85
+	case processVersion == 5:
+		versionScale = 0.92
+	}
+	tint := shadowTint / 100.0 * versionScale
+	rh := redHue / 100.0 * (15.0 / 360.0) * versionScale
+	rs := redSaturation / 100.0 * 0.45 * versionScale
+	gh := greenHue / 100.0 * (15.0 / 360.0) * versionScale
+	gs := greenSaturation / 100.0 * 0.45 * versionScale
+	bh := blueHue / 100.0 * (15.0 / 360.0) * versionScale
+	bs := blueSaturation / 100.0 * 0.45 * versionScale
+	for y := 0; y < b.H; y++ {
+		for x := 0; x < b.W; x++ {
+			i := (y*b.W + x) * 4
+			alpha := float64(b.Pix[i+3])
+			if alpha == 0 {
+				continue
+			}
+			r := math.Min(1.0, float64(b.Pix[i])/alpha)
+			g := math.Min(1.0, float64(b.Pix[i+1])/alpha)
+			bl := math.Min(1.0, float64(b.Pix[i+2])/alpha)
+			h, s, l := camRgbToHsl(r, g, bl)
+			if l < 0.35 && tint != 0 {
+				h += tint * 0.06
+				if h < 0 {
+					h += 1
+				}
+				if h >= 1 {
+					h -= 1
+				}
+			}
+			maxc := math.Max(r, math.Max(g, bl))
+			minc := math.Min(r, math.Min(g, bl))
+			if maxc-minc > 1e-5 {
+				if r >= g && r >= bl {
+					h += rh
+					s = cameraClamp(s * (1 + rs))
+				} else if g >= r && g >= bl {
+					h += gh
+					s = cameraClamp(s * (1 + gs))
+				} else {
+					h += bh
+					s = cameraClamp(s * (1 + bs))
+				}
+				if h < 0 {
+					h += 1
+				}
+				if h >= 1 {
+					h -= 1
+				}
+			}
+			r, g, bl = camHslToRgb(h, s, l)
+			writePremulD(b.Pix[i:i+4], r, g, bl, alpha)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Geometry — CameraRawGeometrySettings.apply (Swift/CoreImage side; there is
+// no C kernel for geometry, so the corner math is unit-pinned and the warp
+// reproduces CIPerspectiveTransform's semantics)
+// ---------------------------------------------------------------------------
+
+// guidedCorrections ports CameraRawGeometrySettings.guidedCorrections: the
+// first guide's angle straightens the picture; a second guide tips vertical
+// or horizontal perspective by ±25.
+func guidedCorrections(guides []CameraRawGeometryGuide) (vertical, horizontal, rotate float64) {
+	if len(guides) == 0 {
+		return 0, 0, 0
+	}
+	first := guides[0]
+	dx := first.EndX - first.StartX
+	dy := first.EndY - first.StartY
+	length := math.Hypot(dx, dy)
+	if length <= 1e-4 {
+		return 0, 0, 0
+	}
+	angle := math.Atan2(dy, dx) * 180 / math.Pi
+	rotate = -angle
+	if rotate > 45 {
+		rotate -= 90
+	} else if rotate < -45 {
+		rotate += 90
+	}
+	vertical, horizontal = 0, 0
+	if len(guides) > 1 {
+		second := guides[1]
+		sx := second.EndX - second.StartX
+		sy := second.EndY - second.StartY
+		sl := math.Hypot(sx, sy)
+		if sl > 1e-4 {
+			a2 := math.Atan2(sy, sx) * 180 / math.Pi
+			switch {
+			case math.Abs(a2) > 45 && a2 > 0:
+				vertical = 25
+			case math.Abs(a2) > 45:
+				vertical = -25
+			case a2 > 0:
+				horizontal = 25
+			default:
+				horizontal = -25
+			}
+		}
+	}
+	return vertical, horizontal, rotate
+}
+
+func (s CameraRawGeometrySettings) effectiveCorrections() (vertical, horizontal, rotate float64) {
+	if s.Upright != "Guided" {
+		return s.Vertical, s.Horizontal, s.Rotate
+	}
+	gv, gh, gr := guidedCorrections(s.Guides)
+	return s.Vertical + gv, s.Horizontal + gh, s.Rotate + gr
+}
+
+type cameraCorner struct{ x, y float64 }
+
+// outputCorners ports CameraRawGeometrySettings.outputCorners. The Swift
+// corners are measured upward from the bottom (Core Image); the returned
+// values are in top-down pixel coordinates so the warp reads them directly.
+func (s CameraRawGeometrySettings) outputCorners(width, height int, vertical, horizontal, rotation float64) [4]cameraCorner {
+	w, h := float64(width), float64(height)
+	strength := 1.0
+	if s.Projection != "Perspective" {
+		strength = 0.55
+	}
+	v := vertical / 100 * w * 0.18 * strength
+	hz := horizontal / 100 * h * 0.18 * strength
+	aspectScale := 1 + s.Aspect/200
+	zoom := 1 + s.Scale/100
+	shiftX := s.OffsetX / 100 * w * 0.15
+	shiftY := s.OffsetY / 100 * h * 0.15
+	// Swift (bottom-up y): topLeft (-v+shiftX, h+shiftY), topRight
+	// (w+v+shiftX, h+shiftY), bottomRight (w+hz+shiftX, -shiftY),
+	// bottomLeft (-hz+shiftX, -shiftY) — flipped here to top-down.
+	corners := [4]cameraCorner{
+		{-v + shiftX, -shiftY},
+		{w + v + shiftX, -shiftY},
+		{w + hz + shiftX, h + shiftY},
+		{-hz + shiftX, h + shiftY},
+	}
+	center := cameraCorner{w/2 + shiftX, h/2 + shiftY}
+	radians := rotation * math.Pi / 180
+	cos, sin := math.Cos(radians), math.Sin(radians)
+	var rotated [4]cameraCorner
+	for i, p := range corners {
+		dx, dy := p.x-center.x, p.y-center.y
+		rotated[i] = cameraCorner{center.x + dx*cos - dy*sin, center.y + dx*sin + dy*cos}
+	}
+	if aspectScale != 1 {
+		for i, p := range rotated {
+			rotated[i] = cameraCorner{center.x + (p.x-center.x)*aspectScale, center.y + (p.y-center.y)/aspectScale}
+		}
+	}
+	if zoom != 1 {
+		for i, p := range rotated {
+			rotated[i] = cameraCorner{center.x + (p.x-center.x)*zoom, center.y + (p.y-center.y)*zoom}
+		}
+	}
+	return rotated
+}
+
+// solveHomography finds the 3×3 projective map taking the input rectangle's
+// corners (0,0) (w,0) (w,h) (0,h) to the given destinations, in the same
+// TL TR BR BL order. Returns nil for degenerate quads.
+func solveHomography(w, h int, dst [4]cameraCorner) *[9]float64 {
+	sw, sh := float64(w), float64(h)
+	src := [4]cameraCorner{{0, 0}, {sw, 0}, {sw, sh}, {0, sh}}
+	// dst = H·src with h33 = 1: an 8×8 system for the other entries, solved
+	// by Gaussian elimination with partial pivoting.
+	var a [8][9]float64
+	for i := 0; i < 4; i++ {
+		x, y := src[i].x, src[i].y
+		u, v := dst[i].x, dst[i].y
+		a[i*2] = [9]float64{x, y, 1, 0, 0, 0, -u * x, -u * y, u}
+		a[i*2+1] = [9]float64{0, 0, 0, x, y, 1, -v * x, -v * y, v}
+	}
+	for col := 0; col < 8; col++ {
+		pivot := col
+		for row := col + 1; row < 8; row++ {
+			if math.Abs(a[row][col]) > math.Abs(a[pivot][col]) {
+				pivot = row
+			}
+		}
+		if math.Abs(a[pivot][col]) < 1e-12 {
+			return nil
+		}
+		a[col], a[pivot] = a[pivot], a[col]
+		for row := 0; row < 8; row++ {
+			if row == col {
+				continue
+			}
+			f := a[row][col] / a[col][col]
+			for k := col; k < 9; k++ {
+				a[row][k] -= f * a[col][k]
+			}
+		}
+	}
+	var m [9]float64
+	for i := 0; i < 8; i++ {
+		m[i] = a[i][8] / a[i][i]
+	}
+	m[8] = 1
+	return &m
+}
+
+func homographyApply(m *[9]float64, x, y float64) (float64, float64) {
+	denom := m[6]*x + m[7]*y + m[8]
+	return (m[0]*x + m[1]*y + m[2]) / denom, (m[3]*x + m[4]*y + m[5]) / denom
+}
+
+func homographyInvert(m *[9]float64) *[9]float64 {
+	a, b, c, d, e, f, g, i, j := m[0], m[1], m[2], m[3], m[4], m[5], m[6], m[7], m[8]
+	det := a*(e*j-f*i) - b*(d*j-f*g) + c*(d*i-e*g)
+	if math.Abs(det) < 1e-15 {
+		return nil
+	}
+	return &[9]float64{
+		(e*j - f*i) / det, (c*i - b*j) / det, (b*f - c*e) / det,
+		(f*g - d*j) / det, (a*j - c*g) / det, (c*d - a*f) / det,
+		(d*i - e*g) / det, (b*g - a*i) / det, (a*e - b*d) / det,
+	}
+}
+
+// perspectiveWarp samples the source through the inverse homography that
+// maps the input rectangle onto the corner quad; bilinear, out-of-frame
+// transparent, mirroring CIPerspectiveTransform's geometry.
+func perspectiveWarp(src *Bitmap, dst [4]cameraCorner) *Bitmap {
+	w, h := src.W, src.H
+	forward := solveHomography(w, h, dst)
+	if forward == nil {
+		return src.Clone()
+	}
+	inverse := homographyInvert(forward)
+	if inverse == nil {
+		return src.Clone()
+	}
+	out := NewBitmap(w, h)
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			// The corners live in pixel-corner space, so the output pixel's
+			// center maps back through the homography and then drops into
+			// index space for the bilinear neighborhood.
+			sx, sy := homographyApply(inverse, float64(x)+0.5, float64(y)+0.5)
+			sx -= 0.5
+			sy -= 0.5
+			fx0, fy0 := math.Floor(sx), math.Floor(sy)
+			fx, fy := sx-fx0, sy-fy0
+			x0, y0 := int64(fx0), int64(fy0)
+			var sums [4]float64
+			for j := 0; j < 2; j++ {
+				row := y0 + int64(j)
+				if row < 0 || row >= int64(h) {
+					continue
+				}
+				wy := 1 - fy
+				if j == 1 {
+					wy = fy
+				}
+				if wy == 0 {
+					continue
+				}
+				line := src.Pix[int64(row)*int64(w)*4:]
+				for i := 0; i < 2; i++ {
+					column := x0 + int64(i)
+					if column < 0 || column >= int64(w) {
+						continue
+					}
+					weight := wy * (1 - fx)
+					if i == 1 {
+						weight = wy * fx
+					}
+					if weight == 0 {
+						continue
+					}
+					sp := line[int64(column)*4:]
+					for c := 0; c < 4; c++ {
+						sums[c] += weight * float64(sp[c])
+					}
+				}
+			}
+			outPix := out.Pix[(y*w+x)*4:]
+			for c := 0; c < 4; c++ {
+				outPix[c] = uint8(math.Round(sums[c]))
+			}
+		}
+	}
+	return out
+}
+
+// bitmapAlphaBounds ports brush_alpha_bounds: [left, top, right, bottom]
+// with right/bottom exclusive, all zero when fully transparent.
+func bitmapAlphaBounds(b *Bitmap) [4]int {
+	left, right, top, bottom := b.W, 0, b.H, 0
+	for y := 0; y < b.H; y++ {
+		row := b.Pix[y*b.W*4:]
+		first := 0
+		for first < b.W && row[first*4+3] == 0 {
+			first++
+		}
+		if first == b.W {
+			continue
+		}
+		last := b.W
+		for last > first && row[(last-1)*4+3] == 0 {
+			last--
+		}
+		if first < left {
+			left = first
+		}
+		if last > right {
+			right = last
+		}
+		if y < top {
+			top = y
+		}
+		bottom = y + 1
+	}
+	if right == 0 {
+		return [4]int{0, 0, 0, 0}
+	}
+	return [4]int{left, top, right, bottom}
+}
+
+// ApplyCameraRawGeometry ports CameraRawGeometrySettings.apply: perspective
+// and affine geometry on the pixel grid, output matches the input size
+// unless ConstrainCrop trims the empty edges and refits them.
+func ApplyCameraRawGeometry(src *Bitmap, s CameraRawGeometrySettings) *Bitmap {
+	n := s.Normalized()
+	if !n.Adjusts() {
+		return src
+	}
+	vertical, horizontal, rotate := n.effectiveCorrections()
+	corners := n.outputCorners(src.W, src.H, vertical, horizontal, rotate)
+	result := perspectiveWarp(src, corners)
+	if !n.ConstrainCrop {
+		return result
+	}
+	edges := bitmapAlphaBounds(result)
+	cropW, cropH := edges[2]-edges[0], edges[3]-edges[1]
+	if cropW < 1 || cropH < 1 || (cropW == src.W && cropH == src.H) {
+		return result
+	}
+	scale := math.Min(float64(src.W)/float64(cropW), float64(src.H)/float64(cropH))
+	fitted := NewBitmap(src.W, src.H)
+	drawW := float64(cropW) * scale
+	drawH := float64(cropH) * scale
+	ox := (float64(src.W) - drawW) / 2
+	oy := (float64(src.H) - drawH) / 2
+	for y := 0; y < fitted.H; y++ {
+		for x := 0; x < fitted.W; x++ {
+			cx := (float64(x) + 0.5 - ox) / scale
+			cy := (float64(y) + 0.5 - oy) / scale
+			if cx < 0 || cy < 0 || cx >= float64(cropW) || cy >= float64(cropH) {
+				continue
+			}
+			sx, sy := float64(edges[0])+cx, float64(edges[1])+cy
+			fx0, fy0 := math.Floor(sx), math.Floor(sy)
+			fx, fy := sx-fx0, sy-fy0
+			x0, y0 := int(fx0), int(fy0)
+			var sums [4]float64
+			for j := 0; j < 2; j++ {
+				row := y0 + j
+				if row < edges[1] || row >= edges[3] {
+					continue
+				}
+				wy := 1 - fy
+				if j == 1 {
+					wy = fy
+				}
+				if wy == 0 {
+					continue
+				}
+				for i := 0; i < 2; i++ {
+					column := x0 + i
+					if column < edges[0] || column >= edges[2] {
+						continue
+					}
+					weight := wy * (1 - fx)
+					if i == 1 {
+						weight = wy * fx
+					}
+					if weight == 0 {
+						continue
+					}
+					sp := result.Pix[(row*result.W+column)*4:]
+					for c := 0; c < 4; c++ {
+						sums[c] += weight * float64(sp[c])
+					}
+				}
+			}
+			out := fitted.Pix[(y*fitted.W+x)*4:]
+			for c := 0; c < 4; c++ {
+				out[c] = uint8(math.Round(sums[c]))
+			}
+		}
+	}
+	return fitted
+}
+
+// ---------------------------------------------------------------------------
+// The filter pipeline (CameraRawSettings.apply)
+// ---------------------------------------------------------------------------
+
+// CameraRawOptions carries the preview knobs Swift passes around the filter.
+type CameraRawOptions struct {
+	Clipping            int // 0 grade; 1 highlight-clip view; 2 shadow-clip view
+	Scale               float64
+	Seed                uint32 // grain seed, so the pattern stays put while open
+	VisualizePointColor int    // -1 off, else the mixer point index
+	SharpenMask         bool
+}
+
+// ApplyCameraRawFilter ports CameraRawSettings.apply — the whole pipeline in
+// the original's order: geometry → calibration → light & color → curve,
+// mixer & grading → effects → grain → detail & optics. The bitmap may be
+// replaced (geometry) and is returned; ≤2048px previews and full-size
+// commits run this same function with a different Scale.
+func ApplyCameraRawFilter(b *Bitmap, settings CameraRawSettings, opts CameraRawOptions) *Bitmap {
+	s := settings.Normalized()
+	if s.IsIdentity() && opts.Clipping == 0 && opts.VisualizePointColor < 0 && !opts.SharpenMask {
+		return b
+	}
+	pixelScale := opts.Scale
+	if pixelScale <= 0 {
+		pixelScale = 1
+	}
+	gainsR, gainsG, gainsB := s.Gains()
+	paintColor := opts.Clipping == 0 && !opts.SharpenMask &&
+		(s.Curve.Adjusts() || s.Mixer.Adjusts() || s.Grading.Adjusts() || opts.VisualizePointColor >= 0)
+	paintEffects := opts.Clipping == 0 && !opts.SharpenMask && s.adjustsEffects()
+	paintDetailOptics := opts.Clipping == 0 && (s.Detail.Adjusts() || s.Optics.Adjusts() || opts.SharpenMask)
+	src := b
+	if opts.Clipping == 0 && !opts.SharpenMask && opts.VisualizePointColor < 0 && s.Geometry.Adjusts() {
+		src = ApplyCameraRawGeometry(src, s.Geometry)
+	}
+	if opts.Clipping == 0 && !opts.SharpenMask && s.Calibration.Adjusts() {
+		c := s.Calibration
+		ApplyCameraRawCalibration(src, c.ShadowTint, c.RedHue, c.RedSaturation,
+			c.GreenHue, c.GreenSaturation, c.BlueHue, c.BlueSaturation, c.Process)
+	}
+	if s.adjustsLight() || s.adjustsColor() || opts.Clipping != 0 {
+		ApplyCameraRaw(src, gainsR, gainsG, gainsB, s.Exposure, s.Contrast, s.Highlights,
+			s.Shadows, s.Whites, s.Blacks, s.Vibrance, s.Saturation, opts.Clipping)
+	}
+	if paintColor {
+		curve := s.Curve
+		tone := BuildCameraRawToneTable(curve)
+		red := BuildCameraRawChannelTable(curve.Red)
+		green := BuildCameraRawChannelTable(curve.Green)
+		blue := BuildCameraRawChannelTable(curve.Blue)
+		mixer := s.Mixer.Normalized()
+		points := mixer.PointFloats()
+		ApplyCameraRawCurveColor(src, tone[:], red[:], green[:], blue[:],
+			curve.RefineSaturation/100, mixer.MixerFloats(), len(mixer.Points), points,
+			s.Grading.GradeFloats(), s.Grading.Blending/100, s.Grading.Balance/100,
+			opts.VisualizePointColor)
+	}
+	if paintEffects {
+		if s.Texture != 0 || s.Clarity != 0 || s.Dehaze != 0 || s.Glow != 0 || s.VignetteAmount != 0 {
+			ApplyCameraRawEffects(src, s.Texture, s.Clarity, s.Dehaze,
+				s.Glow, s.GlowStyle, s.GlowRange, s.GlowSpread, s.GlowWarmth,
+				s.VignetteAmount, s.VignetteMidpoint, s.VignetteRoundness,
+				s.VignetteFeather, s.VignetteHighlights, s.VignetteStyle, pixelScale)
+		}
+		if s.GrainAmount > 0 {
+			ApplyGrain(src, s.GrainAmount, s.GrainKernelSize(), s.GrainRoughness,
+				opts.Seed, 0, 0, 1/pixelScale)
+		}
+	}
+	if paintDetailOptics {
+		if opts.SharpenMask {
+			ApplyCameraRawSharpenMaskOverlay(src, s.Detail.SharpenRadius, s.Detail.SharpenDetail,
+				s.Detail.SharpenMasking, pixelScale)
+		} else {
+			if s.Optics.Adjusts() {
+				o := s.Optics
+				ApplyCameraRawOptics(src, o.RemoveChromaticAberration, o.EnableLensProfile,
+					o.ProfileDistortion, o.ProfileVignetting, o.DistortionK(0.0),
+					o.PurpleAmount, o.PurpleHueLow, o.PurpleHueHigh,
+					o.GreenAmount, o.GreenHueLow, o.GreenHueHigh,
+					o.VignetteAmount, o.VignetteMidpoint, pixelScale)
+			}
+			if s.Detail.Adjusts() {
+				d := s.Detail
+				ApplyCameraRawDetail(src, d.SharpenAmount, d.SharpenRadius, d.SharpenDetail,
+					d.SharpenMasking, d.NoiseLuminance, d.NoiseLuminanceDetail,
+					d.NoiseLuminanceContrast, d.NoiseColor, d.NoiseColorDetail,
+					d.NoiseColorSmoothness, pixelScale)
+			}
+		}
+	}
+	return src
+}

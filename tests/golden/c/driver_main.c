@@ -27,6 +27,12 @@
 //   camera_raw_detail  sharpenAmount sharpenRadius sharpenDetail sharpenMasking
 //                 noiseLuminance noiseLuminanceDetail noiseLuminanceContrast
 //                 noiseColor noiseColorDetail noiseColorSmoothness scale
+//   camera_raw_optics  removeChromatic lensProfile profileDistortion
+//                 profileVignetting distortionK purpleAmount purpleHueLow
+//                 purpleHueHigh greenAmount greenHueLow greenHueHigh
+//                 vignetteAmount vignetteMidpoint scale
+//   camera_raw_calibration  shadowTint redHue redSaturation greenHue
+//                 greenSaturation blueHue blueSaturation processVersion
 //   content_fill  maskPath
 //   dither        style levels diffusion density contrast cell angle lightOnDark
 //                 originalColors darkR darkG darkB lightR lightG lightB dots wobble
@@ -417,6 +423,23 @@ int main(int argc, char **argv) {
         adjust_camera_raw_detail(pixels, (size_t)width, (size_t)height, (size_t)width * 4,
                                  d[0], d[1], d[2], d[3], d[4], d[5], d[6], d[7], d[8], d[9],
                                  d[10]);
+    } else if (!strcmp(command, "camera_raw_optics")) {
+        if (argc < argi + 14) die("camera_raw_optics needs 2 flags + 11 doubles + scale");
+        adjust_camera_raw_optics(pixels, (size_t)width, (size_t)height, (size_t)width * 4,
+                                 (int)arg_long(argv[argi]), (int)arg_long(argv[argi + 1]),
+                                 arg_double(argv[argi + 2]), arg_double(argv[argi + 3]),
+                                 arg_double(argv[argi + 4]), arg_double(argv[argi + 5]),
+                                 arg_double(argv[argi + 6]), arg_double(argv[argi + 7]),
+                                 arg_double(argv[argi + 8]), arg_double(argv[argi + 9]),
+                                 arg_double(argv[argi + 10]), arg_double(argv[argi + 11]),
+                                 arg_double(argv[argi + 12]), arg_double(argv[argi + 13]));
+    } else if (!strcmp(command, "camera_raw_calibration")) {
+        if (argc < argi + 8) die("camera_raw_calibration needs 7 doubles + processVersion");
+        adjust_camera_raw_calibration(pixels, (size_t)width, (size_t)height, (size_t)width * 4,
+                                      arg_double(argv[argi]), arg_double(argv[argi + 1]),
+                                      arg_double(argv[argi + 2]), arg_double(argv[argi + 3]),
+                                      arg_double(argv[argi + 4]), arg_double(argv[argi + 5]),
+                                      arg_double(argv[argi + 6]), (int)arg_long(argv[argi + 7]));
     } else if (!strcmp(command, "content_fill")) {
         if (argc < argi + 1) die("content_fill needs a mask path");
         size_t mask_length;
