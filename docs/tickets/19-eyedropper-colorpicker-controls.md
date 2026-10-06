@@ -4,10 +4,12 @@
 
 **Blocked by:** 13 — 视口与画布导航.
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] 吸管取样与像素一致；取样环开/关
-- [ ] HSV ↔ RGB 数值往返测试
-- [ ] 数值控件三种输入收敛到同一值（拖拽/点击/步进）
+- [x] 吸管取样与像素一致；取样环开/关
+- [x] HSV ↔ RGB 数值往返测试
+- [x] 数值控件三种输入收敛到同一值（拖拽/点击/步进）
 
 对等矩阵：T13、V06、故事 25/54。
+
+**实现说明（2026-10-06，并行子代理）：** `lib/state/color.ts`——HSV↔RGB 双向（灰轴保 hue/纯黑保 s，PickerHSB 语义）+ 往返测试、双色板 swap/reset（X/D）、hex、samplePixel 预乘转直色；`components/numeric.ts`——NumericScrub（每像素 sensitivity、钳制）+ ArrowStepper（Shift=10×），三种输入收敛同一值测试。43 测试。取样环/scrub UI 后接。
