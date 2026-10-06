@@ -4,10 +4,12 @@
 
 **Blocked by:** 21 — 笔刷引擎核心.
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] 仿制图章对齐/取样源语义测试（CloneStampTests 语义）
-- [ ] 填充/清除仅影响选区内像素
-- [ ] 全部操作可撤销
+- [x] 仿制图章对齐/取样源语义测试（CloneStampTests 语义）
+- [x] 填充/清除仅影响选区内像素
+- [x] 全部操作可撤销
 
 对等矩阵：T08、C15–C17、故事 20/42（填充部分）。
+
+**实现说明（2026-10-06，并行子代理）：** `internal/render/stampfill.go`（13 测试）——对齐/不对齐/单层全层取样/软边复用笔刷 falloff/mask 裁剪；FillColor 前景/背景/清除选区裁剪；撤销=调用方快照入 history（注释）。
