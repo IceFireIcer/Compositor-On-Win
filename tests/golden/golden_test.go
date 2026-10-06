@@ -107,6 +107,51 @@ func goPort(c Case, px []byte) error {
 		render.ApplyAddNoise(bmp, float32(p["amount"].(float64)),
 			p["gaussian"].(float64) != 0, p["monochromatic"].(float64) != 0,
 			uint32(p["seed"].(float64)))
+	case "camera_raw":
+		num := func(key string) float64 { return p[key].(float64) }
+		render.ApplyCameraRaw(bmp, num("redGain"), num("greenGain"), num("blueGain"),
+			num("exposure"), num("contrast"), num("highlights"), num("shadows"),
+			num("whites"), num("blacks"), num("vibrance"), num("saturation"),
+			int(num("clipping")))
+	case "camera_raw_curve":
+		num := func(key string) float64 { return p[key].(float64) }
+		f32s := func(key string, n int) []float32 {
+			raw := p[key].([]any)
+			out := make([]float32, n)
+			for i, v := range raw {
+				out[i] = float32(v.(float64))
+			}
+			return out
+		}
+		curve := func(key string) []domain.CurvePoint {
+			raw := p[key].([]any)
+			out := make([]domain.CurvePoint, 0, len(raw)/2)
+			for i := 0; i+1 < len(raw); i += 2 {
+				out = append(out, domain.CurvePoint{X: raw[i].(float64), Y: raw[i+1].(float64)})
+			}
+			return out
+		}
+		par := p["parametric"].([]any)
+		s := render.CameraRawCurveSettings{
+			Shadows: par[0].(float64), Darks: par[1].(float64), Lights: par[2].(float64),
+			Highlights: par[3].(float64), ShadowSplit: par[4].(float64),
+			DarkSplit: par[5].(float64), LightSplit: par[6].(float64),
+			RGB: curve("rgb"), Red: curve("red"), Green: curve("green"), Blue: curve("blue"),
+			RefineSaturation: num("refineSaturation"),
+		}
+		tone := render.BuildCameraRawToneTable(s)
+		red := render.BuildCameraRawChannelTable(s.Red)
+		green := render.BuildCameraRawChannelTable(s.Green)
+		blue := render.BuildCameraRawChannelTable(s.Blue)
+		var points []float32
+		for _, raw := range p["points"].([]any) {
+			for _, v := range raw.([]any) {
+				points = append(points, float32(v.(float64)))
+			}
+		}
+		render.ApplyCameraRawCurveColor(bmp, tone[:], red[:], green[:], blue[:],
+			num("refineSaturation"), f32s("mixer", 24), len(points)/9, points,
+			f32s("grade", 12), num("blending"), num("balance"), int(num("visualize")))
 	default:
 		return errNotPorted
 	}
@@ -268,7 +313,7 @@ func TestGoldenReferencesMatchGoPorts(t *testing.T) {
 	// Kernels with a live Go port must actually run a comparison, not skip —
 	// but only when their case was part of this run (go test -run may filter).
 	for _, k := range []string{"levels", "exposure", "gradient_map", "cube", "wand",
-		"grain", "black_white", "color_balance", "noise"} {
+		"grain", "black_white", "color_balance", "noise", "camera_raw", "camera_raw_curve"} {
 		if ran[k] && !compared[k] {
 			t.Errorf("kernel %q has a Go port in goPort but was not compared", k)
 		}

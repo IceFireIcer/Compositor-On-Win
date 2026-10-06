@@ -17,6 +17,9 @@
 //   black_white   r y g c b m tint tintHue tintSaturation
 //   color_balance 9 shifts then preserveLuminosity
 //   camera_raw    11 grade doubles then clipping
+//   camera_raw_curve  4 point curves (count + x y each), 7 parametric sliders,
+//                 refineSaturation, 24 mixer floats, pointCount + 9 floats per
+//                 point, 12 grade floats, blending, balance, visualize
 //   content_fill  maskPath
 //   dither        style levels diffusion density contrast cell angle lightOnDark
 //                 originalColors darkR darkG darkB lightR lightG lightB dots wobble
@@ -183,6 +186,91 @@ static float *build_synthetic_cube(int dimension) {
     return cube;
 }
 
+// ---- Camera Raw curve table builders (mirror CameraRawCurveSettings) ----
+// toneTable/channelTable route the camera's 0…1 coordinates through the
+// CurvesSettings.value math at the 0…255 scale, exactly as the Go port in
+// internal/render/lut.go (curveValue) does; both sides of the comparison
+// build their tables with these mirrored builders.
+
+static double cam_curve_value(const double *xs, const double *ys, int n, double x) {
+    int i = -1;
+    for (int j = n - 1; j >= 0; --j) {
+        if (xs[j] <= x) { i = j; break; }
+    }
+    if (i < 0) i = 0;
+    if (i > n - 2) i = n - 2;
+    double *d = malloc((size_t)(n - 1) * sizeof(double));
+    if (!d) die("out of memory");
+    for (int j = 0; j + 1 < n; ++j) d[j] = (ys[j + 1] - ys[j]) / (xs[j + 1] - xs[j]);
+    double slope[2];
+    for (int k = 0; k < 2; ++k) {
+        int j = i + k;
+        if (j == 0) slope[k] = d[0];
+        else if (j == n - 1) slope[k] = d[n - 2];
+        else if (d[j - 1] * d[j] <= 0) slope[k] = 0;
+        else slope[k] = 2 / (1 / d[j - 1] + 1 / d[j]);
+    }
+    double h = xs[i + 1] - xs[i];
+    double t = (x - xs[i]) / h;
+    if (t < 0) t = 0;
+    if (t > 1) t = 1;
+    double t2 = t * t, t3 = t2 * t;
+    double y = (2 * t3 - 3 * t2 + 1) * ys[i] + (t3 - 2 * t2 + t) * h * slope[0]
+        + (-2 * t3 + 3 * t2) * ys[i + 1] + (t3 - t2) * h * slope[1];
+    free(d);
+    return y < 0 ? 0 : y > 255 ? 255 : y;
+}
+
+static double cam_curve_point(const double *xs, const double *ys, int n, double x) {
+    if (n < 2) return x;
+    double *sx = malloc((size_t)n * sizeof(double));
+    double *sy = malloc((size_t)n * sizeof(double));
+    if (!sx || !sy) die("out of memory");
+    for (int j = 0; j < n; ++j) {
+        sx[j] = xs[j] * 255;
+        sy[j] = ys[j] * 255;
+    }
+    double v = cam_curve_value(sx, sy, n, x * 255) / 255.0;
+    free(sx);
+    free(sy);
+    return v;
+}
+
+static double cam_bend(double tone, double lower, double low, double upper, double high) {
+    double strength = 1.66;
+    if (tone < lower && lower > 0) return lower * pow(tone / lower, pow(2, -low / 100 * strength));
+    if (tone > upper && upper < 1) {
+        double rest = 1 - upper;
+        return 1 - rest * pow((1 - tone) / rest, pow(2, high / 100 * strength));
+    }
+    return tone;
+}
+
+#define CAM_CURVE_MAX 128
+
+static void build_camera_raw_tables(const double *par7, const double *cx[4], const double *cy[4],
+                                    const int cn[4], float *tables /* 4×256 */) {
+    int hasParam = par7[0] != 0 || par7[1] != 0 || par7[2] != 0 || par7[3] != 0;
+    for (int i = 0; i < 256; ++i) {
+        double x = (double)i / 255;
+        double tone = x;
+        if (hasParam) {
+            double ax[33], ay[33];
+            for (int k = 0; k <= 32; ++k) {
+                double ak = (double)k / 32;
+                ax[k] = ak;
+                ay[k] = cam_bend(cam_bend(ak, par7[4] / 100, par7[0], par7[6] / 100, par7[3]),
+                                 par7[5] / 100, par7[1], par7[5] / 100, par7[2]);
+            }
+            tone = cam_curve_point(ax, ay, 33, x);
+        }
+        tables[0 * 256 + i] = (float)cam_curve_point(cx[0], cy[0], cn[0], tone);
+        tables[1 * 256 + i] = (float)cam_curve_point(cx[1], cy[1], cn[1], x);
+        tables[2 * 256 + i] = (float)cam_curve_point(cx[2], cy[2], cn[2], x);
+        tables[3 * 256 + i] = (float)cam_curve_point(cx[3], cy[3], cn[3], x);
+    }
+}
+
 // Gray output (masks) expanded to RGBA so every command writes one layout.
 static void gray_to_rgba(const uint8_t *gray, size_t count, uint8_t *out) {
     for (size_t i = 0; i < count; i++) {
@@ -252,6 +340,58 @@ int main(int argc, char **argv) {
         adjust_camera_raw(pixels, (size_t)width, (size_t)height, (size_t)width * 4,
                           p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7], p[8], p[9], p[10],
                           (int)arg_long(argv[argi + 11]));
+    } else if (!strcmp(command, "camera_raw_curve")) {
+        // argv: rgbN (x y)*, redN (x y)*, greenN (x y)*, blueN (x y)*, then
+        // shadows darks lights highlights shadowSplit darkSplit lightSplit
+        // refineSaturation, mixer[24], pointCount (9 floats)×n, grade[12],
+        // blending balance visualize.
+        const double *cx[4], *cy[4];
+        int cn[4];
+        double *xs[4], *ys[4];
+        int argi2 = argi;
+        int ok = 1;
+        for (int c = 0; c < 4 && ok; ++c) {
+            if (argi2 >= argc) { die("camera_raw_curve: curve count missing"); }
+            cn[c] = (int)arg_long(argv[argi2++]);
+            if (cn[c] < 0 || cn[c] > CAM_CURVE_MAX) die("camera_raw_curve: bad curve count");
+            xs[c] = malloc((size_t)(cn[c] ? cn[c] : 1) * sizeof(double));
+            ys[c] = malloc((size_t)(cn[c] ? cn[c] : 1) * sizeof(double));
+            if (!xs[c] || !ys[c]) die("out of memory");
+            for (int j = 0; j < cn[c]; ++j) {
+                xs[c][j] = arg_double(argv[argi2++]);
+                ys[c][j] = arg_double(argv[argi2++]);
+            }
+            cx[c] = xs[c];
+            cy[c] = ys[c];
+        }
+        if (ok) {
+            double par7[7];
+            for (int i = 0; i < 7; ++i) par7[i] = arg_double(argv[argi2++]);
+            double refineSaturation = arg_double(argv[argi2++]);
+            float mixer[24];
+            for (int i = 0; i < 24; ++i) mixer[i] = (float)arg_double(argv[argi2++]);
+            int pointCount = (int)arg_long(argv[argi2++]);
+            if (pointCount < 0) die("camera_raw_curve: bad point count");
+            float *points = malloc((size_t)(pointCount ? pointCount * 9 : 1) * sizeof(float));
+            if (!points) die("out of memory");
+            for (int i = 0; i < pointCount * 9; ++i) points[i] = (float)arg_double(argv[argi2++]);
+            float grade[12];
+            for (int i = 0; i < 12; ++i) grade[i] = (float)arg_double(argv[argi2++]);
+            double blending = arg_double(argv[argi2++]);
+            double balance = arg_double(argv[argi2++]);
+            int visualize = (int)arg_long(argv[argi2++]);
+            float tables[4 * 256];
+            build_camera_raw_tables(par7, cx, cy, cn, tables);
+            adjust_camera_raw_curve_color(pixels, (size_t)width, (size_t)height, (size_t)width * 4,
+                                          tables, tables + 256, tables + 512, tables + 768,
+                                          refineSaturation, mixer, pointCount, points,
+                                          grade, blending, balance, visualize);
+            free(points);
+        }
+        for (int c = 0; c < 4; ++c) {
+            free(xs[c]);
+            free(ys[c]);
+        }
     } else if (!strcmp(command, "content_fill")) {
         if (argc < argi + 1) die("content_fill needs a mask path");
         size_t mask_length;

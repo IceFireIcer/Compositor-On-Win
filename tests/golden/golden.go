@@ -279,6 +279,69 @@ func (c Case) DriverArgs() ([]string, error) {
 			}
 			args = add(args, f)
 		}
+	case "camera_raw_curve":
+		// Driver order: four point curves (count + x y each), the seven
+		// parametric sliders, refineSaturation, 24 mixer floats, the picked
+		// points (9 floats each), 12 grade floats, blending, balance, visualize.
+		for _, key := range []string{"rgb", "red", "green", "blue"} {
+			raw, ok := c.Params[key].([]any)
+			if !ok || len(raw)%2 != 0 {
+				return nil, fmt.Errorf("case %s: param %q must be x,y pairs", c.CaseName, key)
+			}
+			args = append(args, strconv.Itoa(len(raw)/2))
+			for _, v := range raw {
+				f, ok := v.(float64)
+				if !ok {
+					return nil, fmt.Errorf("case %s: %q entries must be numbers", c.CaseName, key)
+				}
+				args = add(args, f)
+			}
+		}
+		par, err := list("parametric", 7)
+		if err != nil {
+			return nil, err
+		}
+		args = add(args, par...)
+		refine, e := num("refineSaturation")
+		if e != nil {
+			return nil, e
+		}
+		args = add(args, refine)
+		mixer, e := list("mixer", 24)
+		if e != nil {
+			return nil, e
+		}
+		args = add(args, mixer...)
+		pointList, ok := c.Params["points"].([]any)
+		if !ok {
+			return nil, fmt.Errorf("case %s: param %q must be a point array", c.CaseName, "points")
+		}
+		args = append(args, strconv.Itoa(len(pointList)))
+		for _, raw := range pointList {
+			vals, ok := raw.([]any)
+			if !ok || len(vals) != 9 {
+				return nil, fmt.Errorf("case %s: each point must hold 9 numbers", c.CaseName)
+			}
+			for _, v := range vals {
+				f, ok := v.(float64)
+				if !ok {
+					return nil, fmt.Errorf("case %s: point entries must be numbers", c.CaseName)
+				}
+				args = add(args, f)
+			}
+		}
+		grade, e := list("grade", 12)
+		if e != nil {
+			return nil, e
+		}
+		args = add(args, grade...)
+		for _, k := range []string{"blending", "balance", "visualize"} {
+			f, e := num(k)
+			if e != nil {
+				return nil, e
+			}
+			args = add(args, f)
+		}
 	case "dither":
 		singles := []string{"style", "levels", "diffusion", "density", "contrast", "cell", "angle",
 			"lightOnDark", "originalColors"}

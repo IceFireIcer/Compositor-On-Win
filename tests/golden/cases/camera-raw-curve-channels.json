@@ -1,0 +1,19 @@
+{
+  "kernel": "camera_raw_curve",
+  "input": "patches",
+  "width": 48, "height": 48,
+  "epsilon": 0,
+  "params": {
+    "parametric": [0, 0, 0, 0, 25, 50, 75],
+    "rgb": [0, 0, 1, 1],
+    "red": [0, 0, 0.5, 0.62, 1, 1],
+    "green": [0, 0, 0.5, 0.42, 1, 1],
+    "blue": [0, 0, 0.3, 0.2, 1, 1],
+    "refineSaturation": 0,
+    "mixer": [0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0],
+    "points": [],
+    "grade": [0,0,0, 0,0,0, 0,0,0, 0,0,0],
+    "blending": 50, "balance": 0, "visualize": -1
+  },
+  "note": "adjust_camera_raw_curve_color 彩色点曲线组：红/绿/蓝通道曲线各弯一段，纯 Hermite/lerp 无跨库函数 → ε=0 逐位一致（含 HSL 零移位往返）。"
+}
