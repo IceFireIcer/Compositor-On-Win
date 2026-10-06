@@ -24,6 +24,7 @@
 //   lens          k
 //   noise         amount gaussian monochromatic seed
 //   wand          seedX seedY radius tolerance contiguous
+//   color_range   includeCount (r g b)×n excludeCount (r g b)×m fuzziness invert
 //   brush         — (layer_unpremultiply_opaque)
 //
 // The table builders below (build_levels_tables, build_exposure_table,
@@ -317,7 +318,29 @@ int main(int argc, char **argv) {
         if (selected < 0) die("wand_mask failed");
         gray_to_rgba(mask, count, pixels);
         free(mask);
-    } else if (!strcmp(command, "brush")) {
+    } else if (!strcmp(command, "color_range")) {
+    // params: includeCount (r g b)×n excludeCount (r g b)×m fuzziness invert
+    if (argc < argi + 2) die("color_range needs counts");
+    long includeCount = arg_long(argv[argi]);
+    long excludeCount = arg_long(argv[argi + 1]);
+    if (argc < argi+2+(includeCount+excludeCount)*3+2) die("color_range color tables short");
+    size_t tableBytes = (size_t)(includeCount + excludeCount) * 3;
+    uint8_t *colors = malloc(tableBytes ? tableBytes : 1);
+    if (!colors) die("out of memory");
+    long v = argi + 2;
+    for (long i = 0; i < (includeCount + excludeCount) * 3; i++) colors[i] = (uint8_t)arg_long(argv[v++]);
+    long fuzziness = arg_long(argv[v++]);
+    long invert = arg_long(argv[v++]);
+    uint8_t *mask = malloc(count);
+    if (!mask) die("out of memory");
+    if (color_range_mask(pixels, (size_t)width, (size_t)height, (size_t)width * 4,
+                         colors, (int)includeCount, colors + includeCount * 3, (int)excludeCount,
+                         (int)fuzziness, (int)invert, mask) < 0)
+      die("color_range_mask failed");
+    gray_to_rgba(mask, count, pixels);
+    free(mask);
+    free(colors);
+  } else if (!strcmp(command, "brush")) {
         layer_unpremultiply_opaque(pixels, (size_t)width * 4, (size_t)width, (size_t)height);
     } else {
         die("unknown command");

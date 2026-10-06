@@ -1,0 +1,13 @@
+{
+  "kernel": "color_range",
+  "input": "patches",
+  "width": 48, "height": 48,
+  "epsilon": 0,
+  "params": {
+    "include": [200, 30, 30, 40, 60, 230],
+    "exclude": [30, 200, 60],
+    "fuzziness": 40,
+    "invert": 0
+  },
+  "note": "color_range_mask：include 两色（红块/蓝块）+ exclude 绿色半透明块、fuzziness 40、不反转。整数直化与容差比较逐位一致——票 16 色彩范围验收。"
+}

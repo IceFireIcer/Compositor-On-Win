@@ -46,6 +46,24 @@ func goPort(c Case, px []byte) error {
 			Reversed:   p["reversed"].(float64) != 0,
 		}
 		render.ApplyGradientMap(bmp, render.BuildGradientMapTable(s))
+	case "color_range":
+		include := intList(p["include"])
+		exclude := intList(p["exclude"])
+		includeBytes := make([]byte, len(include))
+		excludeBytes := make([]byte, len(exclude))
+		for i, v := range include {
+			includeBytes[i] = byte(v)
+		}
+		for i, v := range exclude {
+			excludeBytes[i] = byte(v)
+		}
+		mask := make([]byte, c.Width*c.Height)
+		n := render.ColorRangeMask(bmp.Pix, c.Width, c.Height, c.Width*4,
+			includeBytes, excludeBytes, int(p["fuzziness"].(float64)), p["invert"].(float64) != 0, mask)
+		if n < 0 {
+			return fmt.Errorf("ColorRangeMask failed")
+		}
+		grayToRGBA(mask, bmp.Pix)
 	case "cube":
 		cube := buildSyntheticCube(render.HueCubeDimension)
 		render.ApplyCube(bmp, cube)
@@ -77,6 +95,25 @@ var errNotPorted = skipf("Go port lands with its M5 ticket")
 
 func rgb(v []any) domain.RGB {
 	return domain.RGB{Red: v[0].(float64), Green: v[1].(float64), Blue: v[2].(float64)}
+}
+
+func intList(v any) []int {
+	raw, _ := v.([]any)
+	out := make([]int, len(raw))
+	for i, x := range raw {
+		out[i] = int(x.(float64))
+	}
+	return out
+}
+
+// grayToRGBA expands a 0/255 mask into RGBA gray (driver gray_to_rgba).
+func grayToRGBA(mask, px []byte) {
+	for i, g := range mask {
+		px[i*4] = g
+		px[i*4+1] = g
+		px[i*4+2] = g
+		px[i*4+3] = 255
+	}
 }
 
 // buildSyntheticCube mirrors the driver's build_synthetic_cube exactly

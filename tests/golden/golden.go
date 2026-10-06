@@ -325,6 +325,38 @@ func (c Case) DriverArgs() ([]string, error) {
 			}
 			args = add(args, f)
 		}
+	case "color_range":
+		// Driver order: includeCount excludeCount, then all colors, then
+		// fuzziness invert.
+		tables := map[string][]int{}
+		counts := []string{}
+		for _, k := range []string{"include", "exclude"} {
+			raw, ok := c.Params[k].([]any)
+			if !ok {
+				return nil, fmt.Errorf("case %s: param %q must be a color array", c.CaseName, k)
+			}
+			counts = append(counts, strconv.Itoa(len(raw)/3))
+			for _, v := range raw {
+				f, ok := v.(float64)
+				if !ok {
+					return nil, fmt.Errorf("case %s: %q entries must be numbers", c.CaseName, k)
+				}
+				tables[k] = append(tables[k], int(f))
+			}
+		}
+		args = append(args, counts...)
+		for _, k := range []string{"include", "exclude"} {
+			for _, v := range tables[k] {
+				args = append(args, strconv.Itoa(v))
+			}
+		}
+		for _, k := range []string{"fuzziness", "invert"} {
+			f, e := num(k)
+			if e != nil {
+				return nil, e
+			}
+			args = append(args, strconv.Itoa(int(f)))
+		}
 	case "wand":
 		keys := []string{"seedX", "seedY", "radius", "tolerance", "contiguous"}
 		args = make([]string, 0, len(keys))

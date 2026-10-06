@@ -27,6 +27,8 @@ export interface Region {
 export interface Selection extends Region {
   /** Present-but-empty stays distinct from null (no selection). */
   active: boolean;
+  /** Feather radius in pixels (ticket 16): a scalar, applied at render time. */
+  feather?: number;
 }
 
 /** replace / shift-click add / option-click subtract. */
