@@ -40,6 +40,9 @@ type session struct {
 	filter        *filterSession
 	rasterJournal []rasterJournalEntry
 
+	// In-flight spot-healing stroke.
+	heal *healBrush
+
 	// Render cache, invalidated by rev: renderPNG holds the composed PNG of
 	// the document at renderRev. EncodePNG never returns empty bytes, so a
 	// nil slice means "not cached yet".

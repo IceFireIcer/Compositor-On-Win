@@ -1,0 +1,12 @@
+{
+  "kernel": "dither",
+  "input": "blend",
+  "width": 48, "height": 48,
+  "epsilon": 1,
+  "params": {
+    "style": 10, "levels": 2, "diffusion": 1, "density": 0, "contrast": 0,
+    "cell": 4, "angle": 0, "lightOnDark": 0, "originalColors": 0,
+    "dark": [0, 0, 0], "light": [200, 255, 200], "dots": 0.6, "wobble": 2
+  },
+  "note": "dither_apply：CRT 扫描线（行均色 + 珠点 + 抖动波 + 荧光增亮）；sinf/cosf/fmodf 跨库 → ε=1。"
+}

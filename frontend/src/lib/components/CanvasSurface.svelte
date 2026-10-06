@@ -20,8 +20,27 @@
   import { Modifier, applyKey, clearModifiers, modifierBits } from "../state/modifiers";
   import { activeTool } from "../state/tools";
   import { eyedropperClick } from "../state/filters";
+  import { currentSelection } from "../state/selection";
+
+  /** One marching-ants loop as an SVG path (doc pixel coordinates). */
+  function loopPath(loop: { x: number; y: number }[]): string {
+    if (loop.length === 0) return "";
+    let d = `M ${loop[0].x} ${loop[0].y}`;
+    for (let i = 1; i < loop.length; i++) {
+      d += ` L ${loop[i].x} ${loop[i].y}`;
+    }
+    return d + " Z";
+  }
   import { document as documentState, reloadDocument } from "../state/document";
-  import { BeginStroke, EndStroke, StrokePoint } from "../../../wailsjs/go/bridge/Service";
+  import {
+    BeginStroke,
+    EndStroke,
+    StrokePoint,
+    BeginHealStroke,
+    HealPoint,
+    EndHealStroke,
+  } from "../../../wailsjs/go/bridge/Service";
+  import { healSettings } from "../state/tools";
   import { cursorForTool } from "./cursors";
 
   let { doc }: { doc: DocTab } = $props();
@@ -151,6 +170,7 @@
   const PAINT_TOOLS: ReadonlySet<string> = new Set(["move", "brush"]);
 
   let painting = false;
+  let healing = false;
   let strokeQueued = 0; // pending requestAnimationFrame handle
   let strokePending: { x: number; y: number } | null = null;
 
@@ -214,6 +234,22 @@
       zoomAt(target, e.clientX - r.left, e.clientY - r.top, doc.width, doc.height);
       return;
     }
+    if (e.button === 0 && $activeTool === "spotHealing") {
+      healing = true;
+      stage?.setPointerCapture(e.pointerId);
+      e.preventDefault();
+      const hs = get(healSettings);
+      void BeginHealStroke(
+        hs.mode,
+        hs.diameter,
+        hs.hardness,
+        hs.smoothing,
+        get(viewport).zoom,
+        hs.opacity,
+        Math.floor(Math.random() * 0xffffffff),
+      );
+      return;
+    }
     if (e.button === 0 && PAINT_TOOLS.has($activeTool)) {
       painting = true;
       stage?.setPointerCapture(e.pointerId);
@@ -230,9 +266,18 @@
       return;
     }
     if (painting) queueStrokePoint(docPixelOf(e));
+    if (healing) {
+      const p = docPixelOf(e);
+      void HealPoint(p.x, p.y);
+    }
   }
 
   function onPointerEnd(e: PointerEvent): void {
+    if (healing) {
+      healing = false;
+      void EndHealStroke();
+      return;
+    }
     if (painting) {
       painting = false;
       if (strokeQueued) {
@@ -302,6 +347,13 @@
         onerror={() => (renderBroken = true)}
       />
     {/if}
+    {#if $currentSelection && $currentSelection.active}
+      <svg class="ants" viewBox="0 0 {doc.width} {doc.height}" preserveAspectRatio="none">
+        {#each $currentSelection.loops as loop, li (li)}
+          <path d={loopPath(loop)} />
+        {/each}
+      </svg>
+    {/if}
     {#if showGrid}
       <div
         class="pixel-grid"
@@ -346,6 +398,22 @@
   /* Per-document-pixel grid: one hairline per pixel, tone from the original
      pixel grid painter (EditorCanvas.swift:1429: white 0.55, alpha 0.45).
      background-size is set inline to `ppp` px, so lines sit on real pixels. */
+  .ants {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+  }
+
+  .ants path {
+    fill: none;
+    stroke: #fff;
+    stroke-width: 1;
+    vector-effect: non-scaling-stroke;
+    stroke-dasharray: 4 4;
+  }
+
   .pixel-grid {
     position: absolute;
     inset: 0;

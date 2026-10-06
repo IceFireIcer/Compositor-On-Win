@@ -1,0 +1,12 @@
+{
+  "kernel": "dither",
+  "input": "blend",
+  "width": 48, "height": 48,
+  "epsilon": 0,
+  "params": {
+    "style": 1, "levels": 3, "diffusion": 0.85, "density": 0.2, "contrast": -0.3,
+    "cell": 4, "angle": 0, "lightOnDark": 0, "originalColors": 1,
+    "dark": [0, 0, 0], "light": [255, 255, 255], "dots": 0, "wobble": 0
+  },
+  "note": "dither_apply：Floyd–Steinberg 三色调、蛇形行序、密度 gamma + 对比度、Original 三平面扩散 → ε=0。"
+}

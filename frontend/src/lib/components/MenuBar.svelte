@@ -1,13 +1,13 @@
 <script lang="ts">
   import {
     FILTER_KINDS,
-    DITHER_PLACEHOLDER,
     ADJUSTMENT_KINDS,
     beginFilter,
     filterSession,
   } from "../state/filters";
   import { document, applyDocumentSnapshot } from "../state/document";
-  import { Undo, Redo, ApplyFilter } from "../../../wailsjs/go/bridge/Service";
+  import { Undo, Redo, ApplyFilter, SelectSubject, SelectObjectAt } from "../../../wailsjs/go/bridge/Service";
+  import { setSelectionFromMaskData } from "../state/selection";
 
   /**
    * The menu bar (CompositorApp.swift's menus): 文件 / 图像 / 滤镜. 图像
@@ -38,6 +38,27 @@
   // ⌘I semantics: a selected mask inverts the mask, otherwise the pixels.
   // Mask selection is not wired yet, so 反相 targets pixels and 反相蒙版
   // targets the mask (the Go side rejects layers without one).
+  /** Select Subject / Object Selection: the Go endpoint replies with a
+   * doc-space selection payload the store keeps for the ants + filters. */
+  async function runSelect(kind: "subject" | "object"): Promise<void> {
+    try {
+      const raw =
+        kind === "subject"
+          ? await SelectSubject()
+          : await SelectObjectAt(Math.floor($document.width / 2), Math.floor($document.height / 2));
+      const parsed = JSON.parse(raw) as {
+        selection: { x: number; y: number; w: number; h: number; mask: string };
+      };
+      const binary = atob(parsed.selection.mask);
+      const mask = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) mask[i] = binary.charCodeAt(i);
+      setSelectionFromMaskData(mask, parsed.selection.w, parsed.selection.h);
+    } catch (err) {
+      console.warn("主体选择失败", err);
+    }
+    close();
+  }
+
   async function runInvert(kind: "invert" | "invertMask"): Promise<void> {
     const doc = $document;
     if (!doc.docId || !doc.activeLayerID) return;
@@ -60,6 +81,22 @@
   }
 
   const menus = $derived<Menu[]>([
+    {
+      label: "选择",
+      items: [
+        {
+          label: "选择主体",
+          hint: "⌥⌘A",
+          disabled: !hasLayer || dialogOpen,
+          run: () => void runSelect("subject"),
+        },
+        {
+          label: "对象选择（画布中心）",
+          disabled: !hasLayer || dialogOpen,
+          run: () => void runSelect("object"),
+        },
+      ],
+    },
     {
       label: "文件",
       items: [
@@ -94,15 +131,10 @@
       items: [
         ...FILTER_KINDS.map((k) => ({
           label: k.label,
-          disabled: !hasLayer || dialogOpen || k.id === "removeBackground",
+          disabled: !hasLayer || dialogOpen,
           placeholder: k.placeholder,
           run: () => void beginFilter(k.id, k.label.replace(/…$/, ""), false),
         })),
-        {
-          label: "抖动…",
-          disabled: true,
-          placeholder: DITHER_PLACEHOLDER,
-        },
       ],
     },
   ]);

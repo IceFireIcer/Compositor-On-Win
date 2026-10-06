@@ -14,6 +14,10 @@ export function BeginFilterEdit(arg1, arg2, arg3, arg4, arg5) {
   return window['go']['bridge']['Service']['BeginFilterEdit'](arg1, arg2, arg3, arg4, arg5);
 }
 
+export function BeginHealStroke(arg1, arg2, arg3, arg4, arg5, arg6, arg7) {
+  return window['go']['bridge']['Service']['BeginHealStroke'](arg1, arg2, arg3, arg4, arg5, arg6, arg7);
+}
+
 export function CameraRawAutoWhiteBalance() {
   return window['go']['bridge']['Service']['CameraRawAutoWhiteBalance']();
 }
@@ -42,12 +46,20 @@ export function CommitFilter(arg1) {
   return window['go']['bridge']['Service']['CommitFilter'](arg1);
 }
 
+export function EndHealStroke() {
+  return window['go']['bridge']['Service']['EndHealStroke']();
+}
+
 export function DocumentSnapshot() {
   return window['go']['bridge']['Service']['DocumentSnapshot']();
 }
 
 export function EndStroke() {
   return window['go']['bridge']['Service']['EndStroke']();
+}
+
+export function HealPoint(arg1, arg2) {
+  return window['go']['bridge']['Service']['HealPoint'](arg1, arg2);
 }
 
 export function LayerHistogram() {
@@ -76,6 +88,14 @@ export function RenderHandler() {
 
 export function SampleLevelsPoint(arg1, arg2) {
   return window['go']['bridge']['Service']['SampleLevelsPoint'](arg1, arg2);
+}
+
+export function SelectObjectAt(arg1, arg2) {
+  return window['go']['bridge']['Service']['SelectObjectAt'](arg1, arg2);
+}
+
+export function SelectSubject() {
+  return window['go']['bridge']['Service']['SelectSubject']();
 }
 
 export function SaveProjectDialog() {

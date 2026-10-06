@@ -12,6 +12,8 @@ import (
 	"fmt"
 	"math"
 
+	"compositor-win/internal/ml"
+
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
 	"compositor-win/internal/domain"
@@ -49,6 +51,9 @@ type filterSession struct {
 	preview      *render.Bitmap
 	previewRev   int
 	generation   uint64
+	// Remove Background caches the raw model mask for the session's frozen
+	// grid — moving a slider only redoes the refining (MaskCache semantics).
+	subjectRaw *render.Bitmap
 }
 
 // rasterJournalEntry restores one filter commit's pixels on undo/redo. The
@@ -89,6 +94,23 @@ func (sess *session) applyRasterJournal(rev string, after bool) {
 	}
 }
 
+// ensureSubjectMask returns the session's cached raw model mask, running
+// the model once for the grid (Swift's MaskCache).
+func (sess *session) ensureSubjectMask(grid *render.Bitmap) *render.Bitmap {
+	if sess.filter == nil {
+		return nil
+	}
+	if sess.filter.subjectRaw != nil {
+		return sess.filter.subjectRaw
+	}
+	raw, err := ml.RunSubjectMaskRaw(grid)
+	if err != nil {
+		return nil // the caller's no-mask path leaves the preview untouched
+	}
+	sess.filter.subjectRaw = raw
+	return raw
+}
+
 // resolveFilterTarget locates the editable pixel layer and its bitmap.
 func resolveFilterTarget(sess *session, layerID string) (*domain.Layer, *render.Bitmap, error) {
 	if layerID == "" {
@@ -126,7 +148,8 @@ func validFilterKind(kind string) bool {
 // prepareFilterGrid grows the layer grid for blur spread and builds the
 // preview source (Filters.swift growForBlur + prepared). Full-size preview
 // for the pattern kinds (noise / adjustments) keeps their grain density.
-func prepareFilterGrid(kind string, base *render.Bitmap, baseT domain.Transform, p *filterParams) (*filterSession, error) {
+func prepareFilterGrid(kind string, base *render.Bitmap, baseT domain.Transform, p *filterParams,
+	sel *filterSelection) (*filterSession, error) {
 	margin := blurMargin(kind, p)
 	grown := padBitmap(base, margin)
 	grownT := baseT
@@ -137,9 +160,20 @@ func prepareFilterGrid(kind string, base *render.Bitmap, baseT domain.Transform,
 		}
 		grownT = expandTransform(baseT, base.W, base.H, grown.W, grown.H)
 	}
+	// Content-aware fill grows the grid to the selection so a fill can
+	// reach past the layer's edge (FilterEdit.growingTo).
+	if kind == FilterContentFill && sel != nil {
+		bounds := selectionLayerBounds(sel, grownT, grown.W, grown.H)
+		g, offX, offY := growBitmapTo(grown, bounds[0], bounds[1], bounds[2], bounds[3])
+		if g.W > domain.MaxSide || g.H > domain.MaxSide || g.W*g.H > domain.MaxSurfacePixels {
+			return nil, fmt.Errorf("填充网格超出文档限制")
+		}
+		grownT = expandTransformOffset(grownT, grown.W, grown.H, g.W, g.H, offX, offY)
+		grown = g
+	}
 	bounds := render.AlphaBounds(base)
 	emptyLayer := bounds[2] == 0
-	fullSize := kind == FilterAddNoise
+	fullSize := kind == FilterAddNoise || kind == FilterContentFill
 	if _, isAdjust := adjustmentKind(kind); isAdjust {
 		fullSize = true
 	}
@@ -160,7 +194,7 @@ func prepareFilterGrid(kind string, base *render.Bitmap, baseT domain.Transform,
 		if h < 1 {
 			h = 1
 		}
-		fs.previewSrc = DownscaleBitmap(grown, w, h)
+		fs.previewSrc = render.DownscaleBitmap(grown, w, h)
 		fs.previewScale = float64(w) / float64(grown.W)
 	} else {
 		fs.previewSrc = grown.Clone()
@@ -208,7 +242,7 @@ func (s *Service) BeginFilterEdit(kind, layerID, settingsJSON string, seed uint3
 	if err != nil {
 		return "", err
 	}
-	fs, err := prepareFilterGrid(kind, base, l.Transform, &p)
+	fs, err := prepareFilterGrid(kind, base, l.Transform, &p, sel)
 	if err != nil {
 		return "", err
 	}
@@ -251,13 +285,21 @@ func (s *Service) UpdateFilterPreview(settingsJSON string) (string, error) {
 	sel := f.sel
 	grownT := f.grownT
 	emptyLayer := f.emptyLayer
+	var fillMask []uint8
+	if kind == FilterContentFill {
+		fillMask = selectionLayerMask(sel, grownT, src.W, src.H)
+	}
+	var subjectRaw *render.Bitmap
+	if kind == FilterRemoveBackground {
+		subjectRaw = sess.ensureSubjectMask(src)
+	}
 	docW, docH := sess.doc.Width, sess.doc.Height
 	tabID := s.ws.active
 	s.ws.mu.Unlock()
 
 	go func() {
 		work := src.Clone()
-		runFilterJob(kind, work, &p, scale, seed, docW, docH, grownT, emptyLayer)
+		runFilterJob(kind, work, &p, scale, seed, docW, docH, grownT, emptyLayer, fillMask, subjectRaw)
 		blendThroughSelection(work, src, sel, grownT)
 		s.ws.mu.Lock()
 		defer s.ws.mu.Unlock()
@@ -302,7 +344,12 @@ func (s *Service) CommitFilter(settingsJSON string) (string, error) {
 		return "", fmt.Errorf("内存位图库缺少资产 %s", f.assetKey)
 	}
 	work := f.grown.Clone()
-	runFilterJob(f.kind, work, &p, 1, f.seed, sess.doc.Width, sess.doc.Height, f.grownT, f.emptyLayer)
+	var fillMask []uint8
+	if f.kind == FilterContentFill {
+		fillMask = selectionLayerMask(f.sel, f.grownT, f.grown.W, f.grown.H)
+	}
+	subjectRaw := sess.ensureSubjectMask(f.grown)
+	runFilterJob(f.kind, work, &p, 1, f.seed, sess.doc.Width, sess.doc.Height, f.grownT, f.emptyLayer, fillMask, subjectRaw)
 	blendThroughSelection(work, f.grown, f.sel, f.grownT)
 	// Trim back to alpha bounds (PixelFilter.trimmed); a fully empty result
 	// keeps the grown grid, as the Swift guard does.
@@ -392,16 +439,24 @@ func (s *Service) ApplyFilter(kind, layerID, settingsJSON string, seed uint32, s
 	if kind == FilterInvertMask {
 		return s.applyInvertMaskLocked(sess, layerID, sel)
 	}
+	if kind == FilterContentFill && sel == nil {
+		return "", fmt.Errorf("内容感知填充需要选区")
+	}
 	l, base, err := resolveFilterTarget(sess, layerID)
 	if err != nil {
 		return "", err
 	}
-	fs, err := prepareFilterGrid(kind, base, l.Transform, &p)
+	fs, err := prepareFilterGrid(kind, base, l.Transform, &p, sel)
 	if err != nil {
 		return "", err
 	}
 	work := fs.grown.Clone()
-	runFilterJob(kind, work, &p, 1, seed, sess.doc.Width, sess.doc.Height, fs.grownT, fs.emptyLayer)
+	var fillMask []uint8
+	if kind == FilterContentFill {
+		fillMask = selectionLayerMask(sel, fs.grownT, fs.grown.W, fs.grown.H)
+	}
+	subjectRaw := sess.ensureSubjectMask(fs.grown)
+	runFilterJob(kind, work, &p, 1, seed, sess.doc.Width, sess.doc.Height, fs.grownT, fs.emptyLayer, fillMask, subjectRaw)
 	blendThroughSelection(work, fs.grown, sel, fs.grownT)
 	newT := fs.grownT
 	result := work
@@ -850,4 +905,153 @@ func (s *Service) CameraRawDefringeSample(x, y int, settingsJSON string) (string
 		return "", err
 	}
 	return string(out), nil
+}
+
+// ---------------------------------------------------------------------------
+// Spot-healing brush — brush interaction (ticket 21) over the heal kernel
+// ---------------------------------------------------------------------------
+
+// healBrush is one in-flight healing stroke: gray coverage accumulated with
+// the brush's dab geometry, flushed through SpotHeal on end.
+type healBrush struct {
+	stroke   *render.HealStroke
+	assetKey string
+	mode     int
+	opacity  float64
+	seed     uint32
+}
+
+// BeginHealStroke starts a healing stroke on the active layer (the brush
+// interaction: BeginStroke/StrokePoint/EndStroke, coverage-only dabs).
+func (s *Service) BeginHealStroke(mode int, diameter, hardness, smoothing, zoom, opacity float64, seed uint32) (string, error) {
+	if s.ws == nil {
+		return "", errNoDocument
+	}
+	s.ws.mu.Lock()
+	defer s.ws.mu.Unlock()
+	sess := s.ws.activeSessionLocked()
+	if sess == nil {
+		return "", errNoDocument
+	}
+	if sess.heal != nil {
+		return "", fmt.Errorf("已有进行中的修复笔刷")
+	}
+	if sess.doc.ActiveLayerID == nil {
+		return "", fmt.Errorf("没有活动图层")
+	}
+	l, base, err := resolveFilterTarget(sess, *sess.doc.ActiveLayerID)
+	if err != nil {
+		return "", err
+	}
+	st := render.NewHealStroke(base.W, base.H, render.HealStrokeSettings{
+		Diameter: diameter, Hardness: hardness, Smoothing: smoothing, Zoom: zoom,
+	})
+	sess.heal = &healBrush{stroke: st, assetKey: *l.ImageFile, mode: mode, opacity: opacity, seed: seed}
+	return sess.envelope()
+}
+
+// HealPoint extends the in-flight healing stroke.
+func (s *Service) HealPoint(x, y float64) (string, error) {
+	if s.ws == nil {
+		return "", errNoDocument
+	}
+	s.ws.mu.Lock()
+	defer s.ws.mu.Unlock()
+	sess := s.ws.activeSessionLocked()
+	if sess == nil || sess.heal == nil {
+		return "", fmt.Errorf("没有进行中的修复笔刷")
+	}
+	sess.heal.stroke.Append(render.Point{X: x, Y: y})
+	return sess.envelope()
+}
+
+// EndHealStroke runs spot_heal over the accumulated coverage and commits it
+// (raster journal + history, like the filters).
+func (s *Service) EndHealStroke() (string, error) {
+	if s.ws == nil {
+		return "", errNoDocument
+	}
+	s.ws.mu.Lock()
+	defer s.ws.mu.Unlock()
+	sess := s.ws.activeSessionLocked()
+	if sess == nil || sess.heal == nil {
+		return "", fmt.Errorf("没有进行中的修复笔刷")
+	}
+	h := sess.heal
+	sess.heal = nil
+	h.stroke.Finish()
+	base, ok := sess.bitmaps[h.assetKey]
+	if !ok || base == nil {
+		return "", fmt.Errorf("内存位图库缺少资产 %s", h.assetKey)
+	}
+	result := base.Clone()
+	render.SpotHeal(result, h.stroke.Coverage(), float32(h.opacity), h.mode, h.seed)
+	sess.hist.Begin("污点修复", *sess.doc, sess.doc.ActiveLayerID)
+	sess.bitmaps[h.assetKey] = result
+	sess.hist.EndForced(*sess.doc, sess.doc.ActiveLayerID)
+	sess.journalRasters(sess.hist.Revision(),
+		map[string]*render.Bitmap{h.assetKey: base},
+		map[string]*render.Bitmap{h.assetKey: result})
+	sess.rev++
+	s.ws.setTabDirtyLocked(s.ws.active, true)
+	return sess.envelope()
+}
+
+// ---------------------------------------------------------------------------
+// Select Subject / Object Selection (ticket 37) — the model runs over the
+// live composite and the reply is a doc-space selection payload
+// ---------------------------------------------------------------------------
+
+// subjectSelectionJSON runs the segmentation over the composed document,
+// applies the default refine chain, and — for object selection — keeps the
+// connected component under the click. The reply is a filterSelection.
+func (s *Service) subjectSelectionJSON(px, py int) (string, error) {
+	if s.ws == nil {
+		return "", errNoDocument
+	}
+	s.ws.mu.Lock()
+	sess := s.ws.activeSessionLocked()
+	if sess == nil {
+		s.ws.mu.Unlock()
+		return "", errNoDocument
+	}
+	doc := sess.doc
+	source := sess.pixelSource()
+	tabID := s.ws.active
+	s.ws.mu.Unlock()
+
+	composite, err := render.Render(doc, source)
+	if err != nil {
+		return "", err
+	}
+	raw, err := ml.RunSubjectMaskRaw(composite)
+	if err != nil {
+		return "", err
+	}
+	mask := render.RefineSubjectMask(raw, composite, 8, 0, 25, 1400)
+	if px >= 0 && !render.LargestSubjectAt(mask, px, py) {
+		return "", fmt.Errorf("点击处没有前景对象")
+	}
+	sel := &filterSelection{X: 0, Y: 0, W: mask.W, H: mask.H, Mask: make([]uint8, mask.W*mask.H)}
+	for i := range sel.Mask {
+		sel.Mask[i] = mask.Pix[i*4]
+	}
+	out, err := json.Marshal(map[string]any{
+		"selection": sel,
+		"tabId":     tabID,
+	})
+	if err != nil {
+		return "", err
+	}
+	return string(out), nil
+}
+
+// SelectSubject runs over the whole composite (Select → Subject, ⌥⌘A).
+func (s *Service) SelectSubject() (string, error) {
+	return s.subjectSelectionJSON(-1, -1)
+}
+
+// SelectObjectAt keeps only the object under the document pixel.
+func (s *Service) SelectObjectAt(x, y int) (string, error) {
+	return s.subjectSelectionJSON(x, y)
 }

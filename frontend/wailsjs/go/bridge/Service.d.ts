@@ -7,6 +7,8 @@ export function ApplyFilter(arg1:string,arg2:string,arg3:string,arg4:number,arg5
 
 export function BeginFilterEdit(arg1:string,arg2:string,arg3:string,arg4:number,arg5:string):Promise<string>;
 
+export function BeginHealStroke(arg1:number,arg2:number,arg3:number,arg4:number,arg5:number,arg6:number,arg7:number):Promise<string>;
+
 export function CameraRawAutoWhiteBalance():Promise<string>;
 
 export function CameraRawDefringeSample(arg1:number,arg2:number,arg3:string):Promise<string>;
@@ -20,6 +22,8 @@ export function BeginStroke(arg1:number,arg2:number):Promise<string>;
 export function ApplyLevelsSample(arg1:string,arg2:number,arg3:number,arg4:number):Promise<string>;
 
 export function BeginFilterEdit(arg1:string,arg2:string,arg3:string,arg4:number,arg5:string):Promise<string>;
+
+export function BeginHealStroke(arg1:number,arg2:number,arg3:number,arg4:number,arg5:number,arg6:number,arg7:number):Promise<string>;
 
 export function CameraRawAutoWhiteBalance():Promise<string>;
 
@@ -35,9 +39,13 @@ export function CancelFilterEdit():Promise<string>;
 
 export function CommitFilter(arg1:string):Promise<string>;
 
+export function EndHealStroke():Promise<string>;
+
 export function DocumentSnapshot():Promise<string>;
 
 export function EndStroke():Promise<string>;
+
+export function HealPoint(arg1:number,arg2:number):Promise<string>;
 
 export function LayerHistogram():Promise<string>;
 
@@ -54,6 +62,10 @@ export function RenderHandler():Promise<http.Handler>;
 export function SampleLevelsPoint(arg1:number,arg2:number):Promise<string>;
 
 export function SaveProjectDialog():Promise<string>;
+
+export function SelectObjectAt(arg1:number,arg2:number):Promise<string>;
+
+export function SelectSubject():Promise<string>;
 
 export function Startup(arg1:context.Context):Promise<void>;
 

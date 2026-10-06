@@ -193,6 +193,28 @@ func goPort(c Case, px []byte) error {
 		buildTonalBase(bmp, base, int(num("blurRadius")))
 		render.ApplyTonalContrast(bmp, base, num("amount"), num("shadows"),
 			num("midtones"), num("highlights"))
+	case "content_fill":
+		if !render.ContentFill(bmp, BuildMask(c)) {
+			return fmt.Errorf("content_fill: 没有可用供体")
+		}
+	case "heal":
+		num := func(key string) float64 { return p[key].(float64) }
+		render.SpotHeal(bmp, BuildMask(c), float32(num("opacity")),
+			int(num("mode")), uint32(num("seed")))
+	case "dither":
+		num := func(key string) float64 { return p[key].(float64) }
+		color := func(key string) [3]uint8 {
+			raw := p[key].([]any)
+			return [3]uint8{uint8(raw[0].(float64)), uint8(raw[1].(float64)), uint8(raw[2].(float64))}
+		}
+		render.DitherApply(bmp, &render.DitherParams{
+			Style: int(num("style")), Levels: int(num("levels")),
+			Diffusion: num("diffusion"), Density: num("density"), Contrast: num("contrast"),
+			Cell: int(num("cell")), Angle: num("angle"),
+			LightOnDark: num("lightOnDark") != 0, OriginalColors: num("originalColors") != 0,
+			Dark: color("dark"), Light: color("light"),
+			Dots: num("dots"), Wobble: num("wobble"),
+		})
 	default:
 		return errNotPorted
 	}
@@ -408,7 +430,7 @@ func TestGoldenReferencesMatchGoPorts(t *testing.T) {
 	for _, k := range []string{"levels", "exposure", "gradient_map", "cube", "wand",
 		"grain", "black_white", "color_balance", "noise", "camera_raw", "camera_raw_curve",
 		"camera_raw_effects", "camera_raw_detail", "camera_raw_optics", "camera_raw_calibration",
-		"lens", "colored_vignette", "tonal_contrast"} {
+		"lens", "colored_vignette", "tonal_contrast", "content_fill", "heal", "dither"} {
 		if ran[k] && !compared[k] {
 			t.Errorf("kernel %q has a Go port in goPort but was not compared", k)
 		}

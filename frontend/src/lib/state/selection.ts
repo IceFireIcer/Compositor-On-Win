@@ -34,6 +34,35 @@ export interface Selection extends Region {
 /** replace / shift-click add / option-click subtract. */
 export type SelectionMode = "replace" | "add" | "subtract";
 
+import { writable } from "svelte/store";
+
+/** The active document-space selection (marching ants + filter payloads).
+ * null = no selection; filters then run on the whole layer. */
+export const currentSelection = writable<Selection | null>(null);
+
+/** Builds the selection from a doc-space gray mask and stores it with its
+ * outlined loops (the model-backed Select Subject / Object Selection). */
+export function setSelectionFromMaskData(mask: Uint8Array, width: number, height: number): Selection {
+  const selection = selectionFromMask(mask, width, height);
+  currentSelection.set(selection);
+  return selection;
+}
+
+/** The bridge's selection payload: base64 gray mask over the doc rect. */
+export function selectionPayload(mask: Uint8Array, width: number, height: number): string {
+  let binary = "";
+  const chunk = 0x8000;
+  for (let i = 0; i < mask.length; i += chunk) {
+    binary += String.fromCharCode(...mask.subarray(i, i + chunk));
+  }
+  return JSON.stringify({ x: 0, y: 0, w: width, h: height, mask: btoa(binary) });
+}
+
+/** Clears the active selection. */
+export function clearSelection(): void {
+  currentSelection.set(null);
+}
+
 /** Scroll starts this many pixels from a viewport edge while dragging. */
 export const EDGE_SCROLL_MARGIN = 32;
 

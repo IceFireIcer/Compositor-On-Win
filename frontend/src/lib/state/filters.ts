@@ -6,6 +6,14 @@ import {
   runLayerOp,
 } from "./document";
 import { workspace } from "./workspace";
+import { currentSelection, selectionPayload } from "./selection";
+
+/** The active selection as the bridge's base64 payload ("" = none). */
+function activeSelectionJSON(): string {
+  const sel = get(currentSelection);
+  if (!sel || !sel.active) return "";
+  return selectionPayload(sel.mask, sel.width, sel.height);
+}
 
 /**
  * The filter/adjustment dialog session (Filters.swift's FilterEdit): the
@@ -35,11 +43,9 @@ export const FILTER_KINDS: readonly FilterKindDef[] = [
   { id: "tonalContrast", label: "色调对比…" },
   { id: "lensCorrection", label: "镜头校正…" },
   { id: "cameraRaw", label: "Camera Raw 滤镜…" },
-  { id: "removeBackground", label: "移除背景…", placeholder: "37 号票（ONNX 主体蒙版）" },
+  { id: "dither", label: "抖动…" },
+  { id: "removeBackground", label: "移除背景…" },
 ];
-
-/** Dither is a placeholder until ticket 36. */
-export const DITHER_PLACEHOLDER = "36 号票（抖动内核移植）";
 
 /** The image-menu adjustments (Filters.swift isImageAdjustment kinds). */
 export const ADJUSTMENT_KINDS: readonly FilterKindDef[] = [
@@ -75,8 +81,13 @@ export interface FilterSettings {
   tonalMidtones: number;
   tonalHighlights: number;
   distortion: number;
+  dither: Record<string, unknown>;
   cameraRaw: Record<string, unknown>;
   /** Camera Raw panel's per-group eyes (nil-equivalent = all show). */
+  backgroundQuality: string;
+  refineEdges: number;
+  matteContrast: number;
+  shiftEdge: number;
   cameraRawShows: Record<string, boolean>;
   /** Option-drag clipping view (1 highlights / 2 shadows); preview-only. */
   clipping: number;
@@ -106,6 +117,17 @@ export function defaultFilterSettings(kind: string): FilterSettings {
     tonalMidtones: 60,
     tonalHighlights: 30,
     distortion: 0,
+    backgroundQuality: "basic",
+    refineEdges: 12,
+    matteContrast: 25,
+    shiftEdge: 0,
+    dither: {
+      style: 0, pixelSize: 2, pixelShape: 0, cellSize: 8, textSize: 14,
+      lineSpacing: 4, glow: 35, dots: 0, wobble: 0, angle: 45, levels: 2,
+      diffusion: 100, density: 0, contrast: 0, colors: 0,
+      dark: [0, 0, 0], light: [255, 255, 255], lightOnDark: true,
+      characters: " .:-=+*#%@",
+    },
     cameraRaw: {},
     cameraRawShows: {},
     clipping: 0,
@@ -192,7 +214,7 @@ export async function beginFilter(
       layerId,
       settingsJSON(settings),
       seed,
-      "",
+      activeSelectionJSON(),
     );
     applyDocumentSnapshot(raw);
     filterSession.set({
@@ -236,7 +258,7 @@ export async function commitFilter(): Promise<void> {
         session.layerId,
         settingsJSON(session.settings),
         session.seed,
-        "",
+        activeSelectionJSON(),
       );
       applyDocumentSnapshot(raw);
       await BridgeService.CancelFilterEdit().catch(() => undefined);

@@ -1,0 +1,12 @@
+{
+  "kernel": "dither",
+  "input": "ramp",
+  "width": 48, "height": 48,
+  "epsilon": 0,
+  "params": {
+    "style": 3, "levels": 4, "diffusion": 1, "density": 0, "contrast": 0,
+    "cell": 4, "angle": 0, "lightOnDark": 0, "originalColors": 0,
+    "dark": [10, 10, 30], "light": [240, 240, 255], "dots": 0, "wobble": 0
+  },
+  "note": "dither_apply：Bayer 4×4 有序抖动、双色调映射 → ε=0。"
+}

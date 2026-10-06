@@ -415,6 +415,92 @@
               <input type="number" min="-100" max="100" value={s.tonalHighlights}
                 onchange={(e) => updateFilterSettings({ tonalHighlights: +e.currentTarget.value })} />
             </label>
+          {:else if kind === "dither" && s}
+            {@const d = s.dither as Record<string, number | boolean | (number[]) | string>}
+            <label class="row">
+              <span>风格</span>
+              <select value={String(d.style)} onchange={(e) => updateFilterSettings({ dither: { ...d, style: +e.currentTarget.value } })}>
+                {#each ["Atkinson (Classic Mac)", "Floyd–Steinberg", "Bayer 2 × 2", "Bayer 4 × 4", "Bayer 8 × 8", "Halftone Dots", "Halftone Lines", "Halftone Diamonds", "Mac Patterns", "ASCII", "Scanlines (CRT)"] as name, i (name)}
+                  <option value={i}>{name}</option>
+                {/each}
+              </select>
+            </label>
+            <label class="row">
+              <span>像素大小</span>
+              <input type="range" min="1" max="32" value={Number(d.pixelSize)}
+                oninput={(e) => updateFilterSettings({ dither: { ...d, pixelSize: +e.currentTarget.value } })} />
+              <input type="number" min="1" max="32" value={Number(d.pixelSize)}
+                onchange={(e) => updateFilterSettings({ dither: { ...d, pixelSize: +e.currentTarget.value } })} />
+            </label>
+            <label class="row">
+              <span>色调数</span>
+              <input type="range" min="2" max="8" value={Number(d.levels)}
+                oninput={(e) => updateFilterSettings({ dither: { ...d, levels: +e.currentTarget.value } })} />
+              <input type="number" min="2" max="8" value={Number(d.levels)}
+                onchange={(e) => updateFilterSettings({ dither: { ...d, levels: +e.currentTarget.value } })} />
+            </label>
+            <label class="row">
+              <span>扩散 %</span>
+              <input type="range" min="0" max="100" value={Number(d.diffusion)}
+                oninput={(e) => updateFilterSettings({ dither: { ...d, diffusion: +e.currentTarget.value } })} />
+            </label>
+            <label class="row">
+              <span>密度</span>
+              <input type="range" min="-100" max="100" value={Number(d.density)}
+                oninput={(e) => updateFilterSettings({ dither: { ...d, density: +e.currentTarget.value } })} />
+            </label>
+            <label class="row">
+              <span>对比度</span>
+              <input type="range" min="-100" max="100" value={Number(d.contrast)}
+                oninput={(e) => updateFilterSettings({ dither: { ...d, contrast: +e.currentTarget.value } })} />
+            </label>
+            <label class="row">
+              <span>网格大小</span>
+              <input type="range" min="4" max="64" value={Number(d.cellSize)}
+                oninput={(e) => updateFilterSettings({ dither: { ...d, cellSize: +e.currentTarget.value } })} />
+            </label>
+            <label class="row">
+              <span>角度 °</span>
+              <input type="range" min="-90" max="90" value={Number(d.angle)}
+                oninput={(e) => updateFilterSettings({ dither: { ...d, angle: +e.currentTarget.value } })} />
+            </label>
+            <label class="row">
+              <span>文字大小</span>
+              <input type="range" min="6" max="64" value={Number(d.textSize)}
+                oninput={(e) => updateFilterSettings({ dither: { ...d, textSize: +e.currentTarget.value } })} />
+              <input class="flex1" type="text" value={String(d.characters)}
+                onchange={(e) => updateFilterSettings({ dither: { ...d, characters: e.currentTarget.value } })} />
+            </label>
+            <label class="row">
+              <span>行间距</span>
+              <input type="range" min="2" max="32" value={Number(d.lineSpacing)}
+                oninput={(e) => updateFilterSettings({ dither: { ...d, lineSpacing: +e.currentTarget.value } })} />
+            </label>
+            <label class="row">
+              <span>辉光 %</span>
+              <input type="range" min="0" max="100" value={Number(d.glow)}
+                oninput={(e) => updateFilterSettings({ dither: { ...d, glow: +e.currentTarget.value } })} />
+            </label>
+            <label class="row">
+              <span>珠点 %</span>
+              <input type="range" min="0" max="100" value={Number(d.dots)}
+                oninput={(e) => updateFilterSettings({ dither: { ...d, dots: +e.currentTarget.value } })} />
+            </label>
+            <label class="row">
+              <span>波动 px</span>
+              <input type="range" min="0" max="64" value={Number(d.wobble)}
+                oninput={(e) => updateFilterSettings({ dither: { ...d, wobble: +e.currentTarget.value } })} />
+            </label>
+            <label class="row">
+              <span>颜色</span>
+              <select value={String(d.colors)} onchange={(e) => updateFilterSettings({ dither: { ...d, colors: +e.currentTarget.value } })}>
+                <option value="0">黑白</option>
+                <option value="1">双色调</option>
+                <option value="2">原始色</option>
+              </select>
+            </label>
+            <label class="check"><input type="checkbox" checked={Boolean(d.lightOnDark)}
+              onchange={(e) => updateFilterSettings({ dither: { ...d, lightOnDark: e.currentTarget.checked } })} /> 亮标记（暗底亮纹）</label>
           {:else if kind === "lensCorrection"}
             <label class="row">
               <span>移除扭曲</span>
@@ -423,6 +509,39 @@
               <input type="number" min="-100" max="100" value={s.distortion}
                 onchange={(e) => updateFilterSettings({ distortion: +e.currentTarget.value })} />
             </label>
+          {:else if kind === "removeBackground" && s}
+            <label class="row">
+              <span>质量</span>
+              <select
+                value={s.backgroundQuality || "basic"}
+                onchange={(e) => updateFilterSettings({ backgroundQuality: e.currentTarget.value })}
+              >
+                <option value="basic">基础（模型原掩码）</option>
+                <option value="advanced">精细（引导滤波抠边）</option>
+              </select>
+            </label>
+            <label class="row">
+              <span>抠边强度</span>
+              <input type="range" min="0" max="40" value={s.refineEdges}
+                oninput={(e) => updateFilterSettings({ refineEdges: +e.currentTarget.value })} />
+              <input type="number" min="0" max="40" value={s.refineEdges}
+                onchange={(e) => updateFilterSettings({ refineEdges: +e.currentTarget.value })} />
+            </label>
+            <label class="row">
+              <span>蒙版对比</span>
+              <input type="range" min="0" max="100" value={s.matteContrast}
+                oninput={(e) => updateFilterSettings({ matteContrast: +e.currentTarget.value })} />
+              <input type="number" min="0" max="100" value={s.matteContrast}
+                onchange={(e) => updateFilterSettings({ matteContrast: +e.currentTarget.value })} />
+            </label>
+            <label class="row">
+              <span>边缘偏移</span>
+              <input type="range" min="-10" max="10" value={s.shiftEdge}
+                oninput={(e) => updateFilterSettings({ shiftEdge: +e.currentTarget.value })} />
+              <input type="number" min="-10" max="10" value={s.shiftEdge}
+                onchange={(e) => updateFilterSettings({ shiftEdge: +e.currentTarget.value })} />
+            </label>
+            <p class="hint">首次使用会下载 4.6 MB 分割模型（u2netp，Apache-2.0）。</p>
           {/if}
         {:else if kind === "adjust:Levels" && s}
           <div class="hist-wrap">
@@ -790,6 +909,10 @@
     display: block;
     width: 100%;
     height: 72px;
+  }
+
+  .flex1 {
+    flex: 1;
   }
 
   .pip {

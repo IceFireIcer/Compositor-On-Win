@@ -1,0 +1,12 @@
+{
+  "kernel": "dither",
+  "input": "blend",
+  "width": 48, "height": 48,
+  "epsilon": 0,
+  "params": {
+    "style": 5, "levels": 2, "diffusion": 1, "density": 0, "contrast": 0,
+    "cell": 6, "angle": 0, "lightOnDark": 1, "originalColors": 0,
+    "dark": [0, 0, 0], "light": [255, 240, 200], "dots": 0, "wobble": 0
+  },
+  "note": "dither_apply：半调圆点（angle 0 避开 sinf/cosf 跨库）、lightOnDark 反相 → ε=0。"
+}

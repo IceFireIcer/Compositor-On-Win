@@ -21,31 +21,37 @@ import (
 // Filter kind names (Filters.swift FilterKind raw values plus the
 // image-menu adjustments this pipeline also carries).
 const (
-	FilterGaussian     = "gaussianBlur"
-	FilterMotion       = "motionBlur"
-	FilterAddNoise     = "addNoise"
-	FilterVignette     = "vignette"
-	FilterBloom        = "bloomGlow"
-	FilterTonal        = "tonalContrast"
-	FilterLens         = "lensCorrection"
-	FilterCameraRaw    = "cameraRaw"
-	FilterInvert       = "invert"
-	FilterInvertMask   = "invertMask"
-	FilterAdjustPrefix = "adjust:"
+	FilterGaussian         = "gaussianBlur"
+	FilterMotion           = "motionBlur"
+	FilterAddNoise         = "addNoise"
+	FilterVignette         = "vignette"
+	FilterBloom            = "bloomGlow"
+	FilterTonal            = "tonalContrast"
+	FilterLens             = "lensCorrection"
+	FilterCameraRaw        = "cameraRaw"
+	FilterInvert           = "invert"
+	FilterInvertMask       = "invertMask"
+	FilterContentFill      = "contentAwareFill"
+	FilterDither           = "dither"
+	FilterRemoveBackground = "removeBackground"
+	FilterAdjustPrefix     = "adjust:"
 )
 
 // filterNames maps kinds to their history entry names (undo menu labels).
 var filterNames = map[string]string{
-	FilterGaussian:   "高斯模糊",
-	FilterMotion:     "运动模糊",
-	FilterAddNoise:   "添加杂色",
-	FilterVignette:   "晕影",
-	FilterBloom:      "辉光",
-	FilterTonal:      "色调对比",
-	FilterLens:       "镜头校正",
-	FilterCameraRaw:  "Camera Raw",
-	FilterInvert:     "反相",
-	FilterInvertMask: "反相蒙版",
+	FilterGaussian:         "高斯模糊",
+	FilterMotion:           "运动模糊",
+	FilterAddNoise:         "添加杂色",
+	FilterVignette:         "晕影",
+	FilterBloom:            "辉光",
+	FilterTonal:            "色调对比",
+	FilterLens:             "镜头校正",
+	FilterCameraRaw:        "Camera Raw",
+	FilterInvert:           "反相",
+	FilterInvertMask:       "反相蒙版",
+	FilterContentFill:      "内容感知填充",
+	FilterDither:           "抖动",
+	FilterRemoveBackground: "移除背景",
 }
 
 // filterParams is the union of every filter's sliders; each kind reads its
@@ -77,15 +83,22 @@ type filterParams struct {
 
 	Distortion float64 `json:"distortion"` // lens correction, −100–100
 
-	CameraRaw  render.CameraRawSettings `json:"cameraRaw"`  // Camera Raw filter
+	Dither render.DitherSettings `json:"dither"` // dither filter
+	// Remove Background (SubjectRemoval): Basic keeps the raw model mask;
+	// Advanced runs the refine chain.
+	BackgroundQuality string                   `json:"backgroundQuality"`
+	RefineEdges       float64                  `json:"refineEdges"`
+	MatteContrast     float64                  `json:"matteContrast"`
+	ShiftEdge         float64                  `json:"shiftEdge"`
+	CameraRaw         render.CameraRawSettings `json:"cameraRaw"` // Camera Raw filter
 	// CameraRawShows carries the panel's per-group eyes (nil = all show);
 	// the grade skips hidden groups but the panel keeps its slider values.
 	CameraRawShows map[string]bool `json:"cameraRawShows,omitempty"`
 	// CameraRawClipping is the Option-drag preview view (1 highlights,
 	// 2 shadows); committing forces it back to 0.
-	CameraRawClipping *int              `json:"cameraRawClipping,omitempty"`
-	CameraRawSharpenMask bool           `json:"cameraRawSharpenMask,omitempty"`
-	Adjustment         *domain.Adjustment `json:"adjustment"` // image-menu adjustments
+	CameraRawClipping    *int               `json:"cameraRawClipping,omitempty"`
+	CameraRawSharpenMask bool               `json:"cameraRawSharpenMask,omitempty"`
+	Adjustment           *domain.Adjustment `json:"adjustment"` // image-menu adjustments
 }
 
 func clampF(v, lo, hi, fb float64) float64 {
@@ -267,43 +280,6 @@ func cropBitmap(src *render.Bitmap, bounds [4]int) *render.Bitmap {
 	return out
 }
 
-// DownscaleBitmap box-averages src into a w×h grid (the preview source;
-// deterministic, like BrushRaster.draw's interpolated downscale).
-func DownscaleBitmap(src *render.Bitmap, w, h int) *render.Bitmap {
-	if w >= src.W && h >= src.H {
-		return src.Clone()
-	}
-	out := render.NewBitmap(w, h)
-	for y := 0; y < h; y++ {
-		y0, y1 := y*src.H/h, (y+1)*src.H/h
-		if y1 <= y0 {
-			y1 = y0 + 1
-		}
-		for x := 0; x < w; x++ {
-			x0, x1 := x*src.W/w, (x+1)*src.W/w
-			if x1 <= x0 {
-				x1 = x0 + 1
-			}
-			var acc [4]float64
-			n := 0.0
-			for sy := y0; sy < y1 && sy < src.H; sy++ {
-				for sx := x0; sx < x1 && sx < src.W; sx++ {
-					i := (sy*src.W + sx) * 4
-					for c := 0; c < 4; c++ {
-						acc[c] += float64(src.Pix[i+c])
-					}
-					n++
-				}
-			}
-			o := (y*w + x) * 4
-			for c := 0; c < 4; c++ {
-				out.Pix[o+c] = uint8(math.Round(acc[c] / n))
-			}
-		}
-	}
-	return out
-}
-
 // ---------------------------------------------------------------------------
 // PixelFilter.run — one kernel application on a working grid
 // ---------------------------------------------------------------------------
@@ -337,7 +313,7 @@ func vignetteFrameFor(work *render.Bitmap, workT domain.Transform, docW, docH in
 // (PixelFilter.run). blur kernels receive the scaled slider so a
 // downscaled preview blurs proportionally less.
 func runFilterJob(kind string, work *render.Bitmap, p *filterParams, scale float64, seed uint32,
-	docW, docH int, workT domain.Transform, emptyLayer bool) {
+	docW, docH int, workT domain.Transform, emptyLayer bool, fillMask []uint8, subjectRaw *render.Bitmap) {
 	switch kind {
 	case FilterGaussian:
 		render.ApplyGaussianBlur(work, p.Radius*scale)
@@ -375,6 +351,21 @@ func runFilterJob(kind string, work *render.Bitmap, p *filterParams, scale float
 		})
 	case FilterInvert:
 		render.ApplyInvert(work)
+	case FilterContentFill:
+		if fillMask != nil {
+			render.ContentFill(work, fillMask)
+		}
+	case FilterDither:
+		render.ApplyDitherFilter(work, p.Dither)
+	case FilterRemoveBackground:
+		if subjectRaw != nil {
+			mask := render.RefineSubjectMask(subjectRaw, work, p.RefineEdges, p.ShiftEdge,
+				p.MatteContrast, float64(max(work.W, work.H)))
+			if p.BackgroundQuality != "advanced" {
+				mask = subjectRaw
+			}
+			render.ApplySubjectMask(work, mask)
+		}
 	default:
 		if _, ok := adjustmentKind(kind); ok && p.Adjustment != nil {
 			render.ApplyAdjustment(p.Adjustment, work)
@@ -388,6 +379,77 @@ func adjustmentKind(kind string) (domain.AdjustmentKind, bool) {
 		return "", false
 	}
 	return domain.AdjustmentKind(kind[len(FilterAdjustPrefix):]), true
+}
+
+// selectionLayerMask rasterizes the doc-space selection into a layer-space
+// gray coverage (the mask content_fill fills through).
+func selectionLayerMask(sel *filterSelection, workT domain.Transform, w, h int) []uint8 {
+	mask := make([]uint8, w*h)
+	if sel == nil {
+		return mask
+	}
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			dx, dy := layerIndexToDoc(workT, w, h, float64(x)+0.5, float64(y)+0.5)
+			mx := int(math.Floor(dx)) - sel.X
+			my := int(math.Floor(dy)) - sel.Y
+			if mx < 0 || my < 0 || mx >= sel.W || my >= sel.H {
+				continue
+			}
+			mask[y*w+x] = sel.Mask[my*sel.W+mx]
+		}
+	}
+	return mask
+}
+
+// selectionLayerBounds maps the selection rect into layer pixel space
+// (bounding box of the mapped corners, exclusive max).
+func selectionLayerBounds(sel *filterSelection, workT domain.Transform, w, h int) [4]int {
+	corners := [][2]float64{
+		{float64(sel.X), float64(sel.Y)},
+		{float64(sel.X + sel.W), float64(sel.Y)},
+		{float64(sel.X), float64(sel.Y + sel.H)},
+		{float64(sel.X + sel.W), float64(sel.Y + sel.H)},
+	}
+	minX, minY := math.Inf(1), math.Inf(1)
+	maxX, maxY := math.Inf(-1), math.Inf(-1)
+	for _, c := range corners {
+		ix, iy := docToLayerIndex(workT, w, h, c[0], c[1])
+		minX, minY = math.Min(minX, ix), math.Min(minY, iy)
+		maxX, maxY = math.Max(maxX, ix), math.Max(maxY, iy)
+	}
+	return [4]int{
+		int(math.Floor(minX)), int(math.Floor(minY)),
+		int(math.Ceil(maxX)), int(math.Ceil(maxY)),
+	}
+}
+
+// growBitmapTo copies src into a grid covering the union of the source and
+// the given rect (layer px, exclusive max); offX/offY = where the source's
+// (0,0) lands in the new grid.
+func growBitmapTo(src *render.Bitmap, rx0, ry0, rx1, ry1 int) (*render.Bitmap, int, int) {
+	x0 := min(min(rx0, 0), 0)
+	y0 := min(min(ry0, 0), 0)
+	x1 := max(max(rx1, src.W), 0)
+	y1 := max(max(ry1, src.H), 0)
+	out := render.NewBitmap(x1-x0, y1-y0)
+	for y := 0; y < src.H; y++ {
+		copy(out.Pix[((y-y0)*out.W+(0-x0))*4:((y-y0)*out.W+(0-x0))*4+src.W*4],
+			src.Pix[y*src.W*4:(y*src.W+src.W)*4])
+	}
+	return out, -x0, -y0
+}
+
+// expandTransformOffset places the grown grid: the source's (0,0) lands at
+// (offX, offY) in the new grid.
+func expandTransformOffset(t domain.Transform, oldW, oldH, newW, newH, offX, offY int) domain.Transform {
+	out := t
+	out.Size[0] = t.Size[0] * float64(newW) / float64(oldW)
+	out.Size[1] = t.Size[1] * float64(newH) / float64(oldH)
+	cx, cy := layerIndexToDoc(t, oldW, oldH, float64(newW)/2-float64(offX), float64(newH)/2-float64(offY))
+	out.Origin[0] = cx - out.Size[0]/2
+	out.Origin[1] = cy - out.Size[1]/2
+	return out
 }
 
 // blendThroughSelection overlays filtered with orig through the selection

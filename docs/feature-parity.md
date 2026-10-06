@@ -10,10 +10,10 @@
 | T01 | 移动/变换 (V) | `.move` | 33-35 | M3 | ☐ |
 | T02 | 选框 (M)：矩形/椭圆双模式 | `.marquee` | 26 | M3 | ☐ |
 | T03 | 套索 (L)：自由手/多边形双模式 | `.lasso` | 26 | M3 | ☐ |
-| T04 | 魔棒 (W)：颜色魔棒/对象选择，Tab 切换 | `.wand` | 27 | M3/M6 | ☐ |
+| T04 | 魔棒 (W)：颜色魔棒/对象选择，Tab 切换 | `.wand` | 27 | M3/M6 | ◐ 票15 颜色魔棒 + 票37 对象选择 |
 | T05 | 裁剪 (C)：比例/对称/选区起点 | `.crop` | 36 | M3 | ☐ |
 | T06 | 笔刷 (B) / 橡皮 (E)：大小/硬度/不透明度/平滑、Shift 直线 | `.brush` + `BrushStroke.swift` | 18-19 | M4 | ☐ |
-| T07 | 污点修复 (J)：内容感知/创建纹理/临近匹配 | `.spotHealing` + `HealPixels.c` | 21 | M6 | ☐ |
+| T07 | 污点修复 (J)：内容感知/创建纹理/临近匹配 | `.spotHealing` + `HealPixels.c` | 21 | M6 | ☑ 票35 |
 | T08 | 仿制图章 (S)：对齐开关、单层/全层取样、⌥点设源 | `.cloneStamp` | 20 | M4 | ☐ |
 | T09 | 涂抹 (R)：模糊/涂抹/液化三模式 | `.blur` + `MetalWarp` | 22 | M4 | ☐ |
 | T10 | 渐变 (G)：可再编辑渐变层 | `.gradient` | 23 | M4 | ☐ |
@@ -51,7 +51,7 @@
 | C14 | Keyboard Shortcuts…（重映射表单） | — | 52 | M9 | ☐ |
 | C15 | Fill with Foreground/Background Color | ⌥⌫ / ⌘⌫ | 42 | M4 | ☐ |
 | C16 | Clear Selection Pixels | — | 42 | M4 | ☐ |
-| C17 | Content-Aware Fill… | ⇧⌫ | 42 | M6 | ☐ |
+| C17 | Content-Aware Fill… | ⇧⌫ | 42 | M6 | ☑ 票35 |
 
 **View（画布组）**
 
@@ -72,7 +72,7 @@
 | --- | --- | --- | --- | --- | --- |
 | C26 | All / Deselect / Inverse | ⌘A/⌘D/⇧⌘I | 29 | M3 | ☐ |
 | C27 | Layer's Pixels（载入图层像素为选区） | — | 29 | M3 | ☐ |
-| C28 | Subject（选择主体） | ⌥⌘A | 28 | M6 | ☐ |
+| C28 | Subject（选择主体） | ⌥⌘A | 28 | M6 | ☑ 票37 |
 | C29 | Color Range…（色彩范围表单） | — | 29 | M3 | ☐ |
 | C30 | Mask's Black Areas（载入蒙版黑色区） | — | 29 | M3 | ☐ |
 | C31 | Expand… / Contract… / Feather… | — | 31 | M3 | ☐ |
@@ -93,10 +93,10 @@
 | --- | --- | --- | --- | --- |
 | C37 | Gaussian Blur / Motion Blur | 40 | M5 | ☑ 票32 |
 | C38 | Add Noise / Vignette / Bloom-Glow | 40 | M5 | ☑ 票32（滤镜菜单） |
-| C39 | Dither（11 种风格） | 40 | M6 | ☐ |
+| C39 | Dither（11 种风格） | 40 | M6 | ☑ 票36 |
 | C40 | Tonal Contrast / Lens Correction | 40 | M5 | ☑ 票32 |
 | C41 | Camera Raw Filter（全参数面板） | 39 | M5 | ☐ |
-| C42 | Remove Background | 28 | M6 | ☐ |
+| C42 | Remove Background | 28 | M6 | ☑ 票37 |
 
 **Layer**
 
@@ -178,8 +178,8 @@
 | S03 | 色彩范围（采样含/排除色+羽化度） | `color_range_mask` | 29 | M3 | ☐ |
 | S04 | 扩展/收缩/羽化（蒙版域操作） | `SelectionEdits.swift` | 31 | M3 | ☐ |
 | S05 | 选区剪贴板/选区内移动复制/边缘自动滚动 | `FloatingSelection` | 30 | M3 | ☐ |
-| S06 | 对象选择/主体/移除背景 + 引导滤波抠边 | Vision→ONNX（ADR-0005） | 28 | M6 | ☐ |
-| S07 | 内容感知填充（可延伸出画布） | `ContentFill.c` | 42 | M6 | ☐ |
+| S06 | 对象选择/主体/移除背景 + 引导滤波抠边 | Vision→ONNX（ADR-0005） | 28 | M6 | ☑ 票37 |
+| S07 | 内容感知填充（可延伸出画布） | `ContentFill.c` | 42 | M6 | ☑ 票35 |
 
 ## H. 文本（`TypeTool.swift`/`PSDText.swift`）
 

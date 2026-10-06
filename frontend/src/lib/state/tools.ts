@@ -35,3 +35,25 @@ export const activeTool = writable<string>("move");
 export function selectTool(id: string): void {
   activeTool.set(id);
 }
+
+/** The spot-healing brush's options (J): mode 0 Content-Aware / 1 Create
+ * Texture / 2 Proximity Match plus the stroke-shaping fields. */
+export interface HealSettings {
+  mode: number;
+  diameter: number;
+  hardness: number;
+  smoothing: number;
+  opacity: number;
+}
+
+export const healSettings = writable<HealSettings>({
+  mode: 0,
+  diameter: 30,
+  hardness: 0.5,
+  smoothing: 0,
+  opacity: 1,
+});
+
+export function updateHealSettings(patch: Partial<HealSettings>): void {
+  healSettings.update((s) => ({ ...s, ...patch }));
+}

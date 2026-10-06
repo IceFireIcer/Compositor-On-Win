@@ -22,6 +22,7 @@
   import FilterDialog from "./lib/components/FilterDialog.svelte";
   import CameraRawPanel from "./lib/components/CameraRawPanel.svelte";
   import { watchFilterPreviews, beginFilter, filterSession } from "./lib/state/filters";
+  import { healSettings, updateHealSettings } from "./lib/state/tools";
 
   let version = $state("…");
   let sheetOpen = $state(false);
@@ -204,6 +205,38 @@
           {tool.shortcut}
         </button>
       {/each}
+      {#if $activeTool === "spotHealing"}
+        <div class="heal-options">
+          <select
+            aria-label="修复模式"
+            title="修复模式"
+            value={$healSettings.mode}
+            onchange={(e) => updateHealSettings({ mode: +e.currentTarget.value })}
+          >
+            <option value={0}>内容感知</option>
+            <option value={1}>创建纹理</option>
+            <option value={2}>临近匹配</option>
+          </select>
+          <label title="画笔直径">
+            <input
+              type="range"
+              min="4"
+              max="200"
+              value={$healSettings.diameter}
+              onchange={(e) => updateHealSettings({ diameter: +e.currentTarget.value })}
+            />
+          </label>
+          <label title="不透明度">
+            <input
+              type="range"
+              min="1"
+              max="100"
+              value={Math.round($healSettings.opacity * 100)}
+              onchange={(e) => updateHealSettings({ opacity: +e.currentTarget.value / 100 })}
+            />
+          </label>
+        </div>
+      {/if}
     </nav>
 
     <main class="canvas-area">
@@ -345,6 +378,24 @@
     width: 34px;
     height: 34px;
     padding: 0;
+  }
+
+  .heal-options {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 8px 4px;
+    border-top: 1px solid var(--border);
+    width: 100%;
+  }
+
+  .heal-options select {
+    width: 100%;
+    font-size: 11px;
+  }
+
+  .heal-options input[type="range"] {
+    width: 100%;
   }
 
   .canvas-area {
