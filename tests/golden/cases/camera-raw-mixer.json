@@ -1,0 +1,19 @@
+{
+  "kernel": "camera_raw_curve",
+  "input": "blend",
+  "width": 48, "height": 48,
+  "epsilon": 0,
+  "params": {
+    "parametric": [0, 0, 0, 0, 25, 50, 75],
+    "rgb": [0, 0, 1, 1],
+    "red": [0, 0, 1, 1],
+    "green": [0, 0, 1, 1],
+    "blue": [0, 0, 1, 1],
+    "refineSaturation": 0,
+    "mixer": [0,0.3,0,0,0,0,0,0, 0,0,-0.4,0,0,0,0,0.2, 0,0.25,0,0,0,0,0,0],
+    "points": [],
+    "grade": [0,0,0, 0,0,0, 0,0,0, 0,0,0],
+    "blending": 50, "balance": 0, "visualize": -1
+  },
+  "note": "adjust_camera_raw_curve_color 混色器：橙 hue+0.3 / 绿 sat−0.4 / 品红 sat+0.2 / 橙 lum+0.25（内核打包值，滑杆 ÷100）→ ε=0。"
+}

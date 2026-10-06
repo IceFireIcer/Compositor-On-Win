@@ -1,0 +1,13 @@
+{
+  "kernel": "camera_raw_effects",
+  "input": "patches",
+  "width": 48, "height": 48,
+  "epsilon": 0,
+  "params": {
+    "texture": 0, "clarity": 0, "dehaze": 0, "glow": 60, "glowStyle": 0,
+    "glowRange": 20, "glowSpread": 30, "glowWarmth": 10,
+    "vignetteAmount": 0, "vignetteMidpoint": 50, "vignetteRoundness": 0,
+    "vignetteFeather": 50, "vignetteHighlights": 0, "vignetteStyle": 0, "scale": 1
+  },
+  "note": "adjust_camera_raw_effects 光晕（diffusion）：阈值亮度面 + 盒模糊 + 暖色增益 → ε=0。"
+}

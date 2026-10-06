@@ -1,0 +1,13 @@
+{
+  "kernel": "camera_raw_effects",
+  "input": "blend",
+  "width": 48, "height": 48,
+  "epsilon": 0,
+  "params": {
+    "texture": 0, "clarity": 40, "dehaze": 0, "glow": 0, "glowStyle": 0,
+    "glowRange": 0, "glowSpread": 0, "glowWarmth": 0,
+    "vignetteAmount": 0, "vignetteMidpoint": 50, "vignetteRoundness": 0,
+    "vignetteFeather": 50, "vignetteHighlights": 0, "vignetteStyle": 0, "scale": 1
+  },
+  "note": "adjust_camera_raw_effects 清晰度：粗尺度盒模糊局部对比（双精度滑窗累加、float 存储）→ ε=0。"
+}

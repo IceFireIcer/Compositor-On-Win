@@ -1003,3 +1003,500 @@ func ApplyCameraRawCurveColor(b *Bitmap, toneLut, redLut, greenLut, blueLut []fl
 		}
 	}
 }
+
+// ---------------------------------------------------------------------------
+// adjust_camera_raw_effects — texture, clarity, dehaze, glow, vignette
+// ---------------------------------------------------------------------------
+
+// clampedIndex ports clamped_index for the blur planes.
+func clampedIndex(index, limit int) int {
+	if index < 0 {
+		return 0
+	}
+	if index >= limit {
+		return limit - 1
+	}
+	return index
+}
+
+// boxBlurPlane ports box_blur_plane: an edge-clamped separable box blur with
+// double accumulators and float storage; dst must not alias src.
+func boxBlurPlane(src, dst []float32, width, height, radius int) bool {
+	if radius < 1 {
+		copy(dst, src)
+		return true
+	}
+	temp := make([]float32, width*height)
+	window := radius*2 + 1
+	for y := 0; y < height; y++ {
+		sum := 0.0
+		for k := -radius; k <= radius; k++ {
+			sum += float64(src[y*width+clampedIndex(k, width)])
+		}
+		for x := 0; x < width; x++ {
+			temp[y*width+x] = float32(sum / float64(window))
+			sum += float64(src[y*width+clampedIndex(x+radius+1, width)])
+			sum -= float64(src[y*width+clampedIndex(x-radius, width)])
+		}
+	}
+	for x := 0; x < width; x++ {
+		sum := 0.0
+		for k := -radius; k <= radius; k++ {
+			sum += float64(temp[clampedIndex(k, height)*width+x])
+		}
+		for y := 0; y < height; y++ {
+			dst[y*width+x] = float32(sum / float64(window))
+			sum += float64(temp[clampedIndex(y+radius+1, height)*width+x])
+			sum -= float64(temp[clampedIndex(y-radius, height)*width+x])
+		}
+	}
+	return true
+}
+
+// effectsRadius ports effects_radius: radii scale with the preview so a
+// full-size render and its preview match.
+func effectsRadius(base, scale float64) int {
+	radius := base
+	if scale > 0 {
+		radius = base * scale
+	}
+	if radius < 1 {
+		radius = 1
+	}
+	if radius > 64 {
+		radius = 64
+	}
+	return int(math.Round(radius))
+}
+
+func camEffectsDehaze(r, g, b *float64, amount float64) {
+	d := amount / 100.0
+	y := camRec709(*r, *g, *b)
+	contrast := 1.0 + 0.8*d
+	pivot := 0.45 - 0.1*math.Max(d, 0)
+	y2 := cameraClamp(pivot + (y-0.45)*contrast)
+	if d < 0 {
+		y2 = cameraClamp(y2 + (-d)*(1.0-y2)*0.45)
+	} else {
+		y2 = cameraClamp(y2 - d*math.Max(0.0, 0.4-y2))
+	}
+	camScaleLuminance(r, g, b, y2)
+	y2 = camRec709(*r, *g, *b)
+	sat := 1.0 + 0.7*d
+	*r = cameraClamp(y2 + (*r-y2)*sat)
+	*g = cameraClamp(y2 + (*g-y2)*sat)
+	*b = cameraClamp(y2 + (*b-y2)*sat)
+}
+
+// camVignetteMaskAt is the vignette's strength at a point of a frame
+// (0 at its middle, 1 past its edges).
+func camVignetteMaskAt(px, py, width, height, midpoint, roundness, feather float64) float64 {
+	nx := px/width*2.0 - 1.0
+	ny := py/height*2.0 - 1.0
+	square := math.Max(math.Abs(nx), math.Abs(ny))
+	circle := math.Hypot(nx, ny) / math.Sqrt(2.0)
+	shape := (1.0 - roundness/100.0) * 0.5
+	dist := circle + (square-circle)*shape
+	start := (midpoint / 100.0) * 0.85
+	soft := feather / 100.0
+	if soft < 0.05 {
+		soft = 0.05
+	}
+	t := cameraClamp((dist - start) / soft)
+	return t * t * (3.0 - 2.0*t)
+}
+
+func camEffectsVignette(r, g, b *float64, x, y, width, height int,
+	amount, midpoint, roundness, feather, highlights float64, style int) {
+	if amount == 0 || width == 0 || height == 0 {
+		return
+	}
+	mask := camVignetteMaskAt(float64(x)+0.5, float64(y)+0.5, float64(width), float64(height),
+		midpoint, roundness, feather)
+	effect := (amount / 100.0) * mask
+	// Highlight Priority eases a darkening vignette off bright pixels.
+	if effect < 0 && style == 0 {
+		bright := cameraClamp((camRec709(*r, *g, *b) - 0.45) / 0.55)
+		effect *= 1.0 - (highlights/100.0)*bright
+	}
+	if effect < 0 {
+		factor := 1.0 + effect
+		*r *= factor
+		*g *= factor
+		*b *= factor
+	} else if effect > 0 {
+		*r = *r + (1.0-*r)*effect
+		*g = *g + (1.0-*g)*effect
+		*b = *b + (1.0-*b)*effect
+	}
+	if style == 1 && mask > 0 {
+		lum := camRec709(*r, *g, *b)
+		sat := 1.0 - 0.75*mask*math.Abs(amount/100.0)
+		*r = cameraClamp(lum + (*r-lum)*sat)
+		*g = cameraClamp(lum + (*g-lum)*sat)
+		*b = cameraClamp(lum + (*b-lum)*sat)
+	}
+}
+
+// ApplyCameraRawEffects ports adjust_camera_raw_effects. Texture is a fine
+// local contrast, Clarity a broader one; Dehaze raises contrast and
+// saturation when positive and lifts the shadows when negative. Glow does
+// nothing until above zero (styles: 0 diffusion, 1 bloom, 2 halation);
+// vignette styles are 0 highlight priority, 1 color priority, 2 paint
+// overlay. scale is preview pixels per layer pixel so the radii match a
+// full-size render.
+func ApplyCameraRawEffects(b *Bitmap, texture, clarity, dehaze float64,
+	glow float64, glowStyle int, glowRange, glowSpread, glowWarmth float64,
+	vignetteAmount, vignetteMidpoint, vignetteRoundness, vignetteFeather,
+	vignetteHighlights float64, vignetteStyle int, scale float64) {
+	if b.W == 0 || b.H == 0 {
+		return
+	}
+	if texture == 0 && clarity == 0 && dehaze == 0 && !(glow > 0) && vignetteAmount == 0 {
+		return
+	}
+	count := b.W * b.H
+	var luma, fine, coarse, glowPlane []float32
+	if texture != 0 || clarity != 0 || glow > 0 {
+		luma = make([]float32, count)
+		for y := 0; y < b.H; y++ {
+			for x := 0; x < b.W; x++ {
+				i := (y*b.W + x) * 4
+				alpha := float64(b.Pix[i+3])
+				if alpha == 0 {
+					luma[y*b.W+x] = 0
+					continue
+				}
+				r := math.Min(1.0, float64(b.Pix[i])/alpha)
+				g := math.Min(1.0, float64(b.Pix[i+1])/alpha)
+				bl := math.Min(1.0, float64(b.Pix[i+2])/alpha)
+				luma[y*b.W+x] = float32(camRec709(r, g, bl))
+			}
+		}
+		if texture != 0 {
+			fine = make([]float32, count)
+			boxBlurPlane(luma, fine, b.W, b.H, effectsRadius(1, scale))
+		}
+		if clarity != 0 {
+			coarse = make([]float32, count)
+			boxBlurPlane(luma, coarse, b.W, b.H, effectsRadius(4, scale))
+		}
+		var glowRadius int
+		if glow > 0 {
+			spread := glowSpread / 100.0
+			base := 5.0
+			if glowStyle == 1 {
+				base = 2.0
+			}
+			widened := base * (1.0 + spread)
+			if widened < 1 {
+				widened = 1
+			}
+			glowRadius = effectsRadius(widened, scale)
+			threshold := 0.55 + 0.4*(glowRange/100.0)
+			source := make([]float32, count)
+			glowPlane = make([]float32, count)
+			denom := 1.0 - threshold
+			if denom < 0.05 {
+				denom = 0.05
+			}
+			for i := 0; i < count; i++ {
+				t := (float64(luma[i]) - threshold) / denom
+				if t < 0 {
+					t = 0
+				}
+				if t > 1 {
+					t = 1
+				}
+				source[i] = float32(t)
+			}
+			boxBlurPlane(source, glowPlane, b.W, b.H, glowRadius)
+		}
+	}
+	warmth := glowWarmth / 100.0
+	var glowRed, glowGreen, glowBlue, glowGain float64
+	if glowStyle == 2 {
+		// Halation's fringe is red; warmth pushes it further that way.
+		glowRed, glowGreen, glowBlue, glowGain = 1, 0.35-0.3*warmth, 0.2-0.2*warmth, 1
+	} else {
+		glowRed = 0.75 + 0.25*warmth
+		glowGreen = 0.6 + 0.2*warmth
+		glowBlue = 0.75 - 0.6*warmth
+		glowGain = 1
+		if glowStyle == 1 {
+			glowGain = 1.4
+		}
+	}
+	for y := 0; y < b.H; y++ {
+		for x := 0; x < b.W; x++ {
+			i := (y*b.W + x) * 4
+			alpha := float64(b.Pix[i+3])
+			if alpha == 0 {
+				continue
+			}
+			index := y*b.W + x
+			r := math.Min(1.0, float64(b.Pix[i])/alpha)
+			g := math.Min(1.0, float64(b.Pix[i+1])/alpha)
+			bl := math.Min(1.0, float64(b.Pix[i+2])/alpha)
+			if fine != nil || coarse != nil {
+				tone := camRec709(r, g, bl)
+				detail := 0.0
+				if fine != nil {
+					detail += (texture / 100.0) * (tone - float64(fine[index]))
+				}
+				if coarse != nil {
+					detail += (clarity / 100.0) * (tone - float64(coarse[index]))
+				}
+				if detail != 0 {
+					camScaleLuminance(&r, &g, &bl, cameraClamp(tone+detail))
+				}
+			}
+			if dehaze != 0 {
+				camEffectsDehaze(&r, &g, &bl, dehaze)
+			}
+			if glowPlane != nil && glow > 0 {
+				add := float64(glowPlane[index]) * (glow / 100.0) * glowGain
+				r = cameraClamp(r + add*glowRed)
+				g = cameraClamp(g + add*glowGreen)
+				bl = cameraClamp(bl + add*glowBlue)
+			}
+			camEffectsVignette(&r, &g, &bl, x, y, b.W, b.H, vignetteAmount, vignetteMidpoint,
+				vignetteRoundness, vignetteFeather, vignetteHighlights, vignetteStyle)
+			writePremulD(b.Pix[i:i+4], r, g, bl, alpha)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// adjust_camera_raw_detail — manual noise reduction, then sharpening
+// ---------------------------------------------------------------------------
+
+// camDetailRadius ports detail_radius: the radius slider spans 0.5…3 layer
+// pixels, scaled by the preview factor and clamped to the blur machinery.
+func camDetailRadius(slider, scale float64) float64 {
+	base := 0.5 + (slider/100.0)*2.5
+	radius := base
+	if scale > 0 {
+		radius = base * scale
+	}
+	if radius < 0.5 {
+		radius = 0.5
+	}
+	if radius > 64 {
+		radius = 64
+	}
+	return radius
+}
+
+// sharpenEdgeAt ports sharpen_edge_at: the mean absolute luminance deviation
+// of the ring samples a radius step away, in float arithmetic.
+func sharpenEdgeAt(luma []float32, width, height, x, y, radius int) float32 {
+	if radius < 1 {
+		radius = 1
+	}
+	center := luma[y*width+x]
+	var sum float32
+	count := 0
+	for dy := -radius; dy <= radius; dy += radius {
+		for dx := -radius; dx <= radius; dx += radius {
+			if dx == 0 && dy == 0 {
+				continue
+			}
+			sx, sy := x+dx, y+dy
+			if sx < 0 || sy < 0 || sx >= width || sy >= height {
+				continue
+			}
+			d := luma[sy*width+sx] - center
+			if d < 0 {
+				d = -d
+			}
+			sum += d
+			count++
+		}
+	}
+	if count == 0 {
+		return 0
+	}
+	return sum / float32(count)
+}
+
+// ApplyCameraRawDetail ports adjust_camera_raw_detail: luminance denoise
+// (edge-preserving box blur), then color denoise (saturation smoothing),
+// then unsharp sharpening with a masking threshold. scale maps the radius
+// sliders to preview pixels. Applied after the creative grade.
+func ApplyCameraRawDetail(b *Bitmap, sharpenAmount, sharpenRadius, sharpenDetail, sharpenMasking,
+	noiseLuminance, noiseLuminanceDetail, noiseLuminanceContrast,
+	noiseColor, noiseColorDetail, noiseColorSmoothness, scale float64) {
+	if b.W == 0 || b.H == 0 {
+		return
+	}
+	if sharpenAmount == 0 && noiseLuminance == 0 && noiseColor == 0 {
+		return
+	}
+	count := b.W * b.H
+	luma := make([]float32, count)
+	work := make([]float32, count)
+	buildLuma := func() {
+		for y := 0; y < b.H; y++ {
+			for x := 0; x < b.W; x++ {
+				i := (y*b.W + x) * 4
+				alpha := float64(b.Pix[i+3])
+				if alpha == 0 {
+					luma[y*b.W+x] = 0
+					continue
+				}
+				r := math.Min(1.0, float64(b.Pix[i])/alpha)
+				g := math.Min(1.0, float64(b.Pix[i+1])/alpha)
+				bl := math.Min(1.0, float64(b.Pix[i+2])/alpha)
+				luma[y*b.W+x] = float32(camRec709(r, g, bl))
+			}
+		}
+	}
+	buildLuma()
+	if noiseLuminance > 0 {
+		radius := effectsRadius(1.0+noiseLuminance/50.0, scale)
+		boxBlurPlane(luma, work, b.W, b.H, radius)
+		strength := noiseLuminance / 100.0
+		preserve := noiseLuminanceDetail / 100.0
+		contrast := noiseLuminanceContrast / 100.0
+		for y := 0; y < b.H; y++ {
+			for x := 0; x < b.W; x++ {
+				i := (y*b.W + x) * 4
+				alpha := float64(b.Pix[i+3])
+				if alpha == 0 {
+					continue
+				}
+				index := y*b.W + x
+				edge := sharpenEdgeAt(luma, b.W, b.H, x, y, 1)
+				local := strength * (1.0 - preserve*math.Min(1.0, float64(edge)*6.0))
+				blurred := work[index]
+				target := float32(float64(luma[index])*(1.0-local) + float64(blurred)*local)
+				if contrast != 0 {
+					target = float32(float64(target) + contrast*0.25*float64(luma[index]-blurred))
+				}
+				luma[index] = target
+				r := math.Min(1.0, float64(b.Pix[i])/alpha)
+				g := math.Min(1.0, float64(b.Pix[i+1])/alpha)
+				bl := math.Min(1.0, float64(b.Pix[i+2])/alpha)
+				camScaleLuminance(&r, &g, &bl, float64(target))
+				writePremulD(b.Pix[i:i+4], r, g, bl, alpha)
+			}
+		}
+	}
+	if noiseColor > 0 {
+		radius := effectsRadius(1.0+noiseColorSmoothness/40.0, scale)
+		chroma := make([]float32, count)
+		chromaBlur := make([]float32, count)
+		for y := 0; y < b.H; y++ {
+			for x := 0; x < b.W; x++ {
+				i := (y*b.W + x) * 4
+				alpha := float64(b.Pix[i+3])
+				if alpha == 0 {
+					continue
+				}
+				r := math.Min(1.0, float64(b.Pix[i])/alpha)
+				g := math.Min(1.0, float64(b.Pix[i+1])/alpha)
+				bl := math.Min(1.0, float64(b.Pix[i+2])/alpha)
+				_, s, _ := camRgbToHsl(r, g, bl)
+				chroma[y*b.W+x] = float32(s)
+			}
+		}
+		boxBlurPlane(chroma, chromaBlur, b.W, b.H, radius)
+		strength := noiseColor / 100.0
+		preserve := noiseColorDetail / 100.0
+		for y := 0; y < b.H; y++ {
+			for x := 0; x < b.W; x++ {
+				i := (y*b.W + x) * 4
+				alpha := float64(b.Pix[i+3])
+				if alpha == 0 {
+					continue
+				}
+				index := y*b.W + x
+				edge := chroma[index] - chromaBlur[index]
+				if edge < 0 {
+					edge = -edge
+				}
+				local := strength * (1.0 - preserve*math.Min(1.0, float64(edge)*4.0))
+				sat := chroma[index]*(float32(1.0-local)) + chromaBlur[index]*float32(local)
+				r := math.Min(1.0, float64(b.Pix[i])/alpha)
+				g := math.Min(1.0, float64(b.Pix[i+1])/alpha)
+				bl := math.Min(1.0, float64(b.Pix[i+2])/alpha)
+				h, _, l := camRgbToHsl(r, g, bl)
+				r, g, bl = camHslToRgb(h, float64(sat), l)
+				writePremulD(b.Pix[i:i+4], r, g, bl, alpha)
+			}
+		}
+	}
+	if sharpenAmount > 0 {
+		buildLuma()
+		radius := effectsRadius(camDetailRadius(sharpenRadius, scale), 1)
+		boxBlurPlane(luma, work, b.W, b.H, radius)
+		amount := sharpenAmount / 100.0
+		detailMix := sharpenDetail / 100.0
+		threshold := (sharpenMasking / 100.0) * 0.35
+		for y := 0; y < b.H; y++ {
+			for x := 0; x < b.W; x++ {
+				i := (y*b.W + x) * 4
+				alpha := float64(b.Pix[i+3])
+				if alpha == 0 {
+					continue
+				}
+				index := y*b.W + x
+				edge := sharpenEdgeAt(luma, b.W, b.H, x, y, radius)
+				mask := cameraClamp((float64(edge)*(0.5+detailMix) - threshold) /
+					math.Max(0.04, 0.35-threshold*0.5))
+				high := float64(luma[index] - work[index])
+				sharpened := cameraClamp(float64(luma[index]) + high*amount*mask*(0.5+detailMix))
+				r := math.Min(1.0, float64(b.Pix[i])/alpha)
+				g := math.Min(1.0, float64(b.Pix[i+1])/alpha)
+				bl := math.Min(1.0, float64(b.Pix[i+2])/alpha)
+				camScaleLuminance(&r, &g, &bl, sharpened)
+				writePremulD(b.Pix[i:i+4], r, g, bl, alpha)
+			}
+		}
+	}
+}
+
+// ApplyCameraRawSharpenMaskOverlay ports adjust_camera_raw_sharpen_mask_
+// overlay (preview only): white where sharpening would land, black where
+// masking protects, using the current sharpen sliders.
+func ApplyCameraRawSharpenMaskOverlay(b *Bitmap, sharpenRadius, sharpenDetail, sharpenMasking, scale float64) {
+	if b.W == 0 || b.H == 0 {
+		return
+	}
+	count := b.W * b.H
+	luma := make([]float32, count)
+	for y := 0; y < b.H; y++ {
+		for x := 0; x < b.W; x++ {
+			i := (y*b.W + x) * 4
+			alpha := float64(b.Pix[i+3])
+			if alpha == 0 {
+				luma[y*b.W+x] = 0
+				continue
+			}
+			r := math.Min(1.0, float64(b.Pix[i])/alpha)
+			g := math.Min(1.0, float64(b.Pix[i+1])/alpha)
+			bl := math.Min(1.0, float64(b.Pix[i+2])/alpha)
+			luma[y*b.W+x] = float32(camRec709(r, g, bl))
+		}
+	}
+	radius := effectsRadius(camDetailRadius(sharpenRadius, scale), 1)
+	threshold := (sharpenMasking / 100.0) * 0.35
+	detailBoost := 0.5 + sharpenDetail/100.0
+	for y := 0; y < b.H; y++ {
+		for x := 0; x < b.W; x++ {
+			i := (y*b.W + x) * 4
+			alpha := float64(b.Pix[i+3])
+			if alpha == 0 {
+				continue
+			}
+			edge := sharpenEdgeAt(luma, b.W, b.H, x, y, radius)
+			mask := cameraClamp((float64(edge)*detailBoost - threshold) /
+				math.Max(0.04, 0.35-threshold*0.5))
+			gray := uint8(math.Round(mask * alpha))
+			b.Pix[i] = gray
+			b.Pix[i+1] = gray
+			b.Pix[i+2] = gray
+		}
+	}
+}

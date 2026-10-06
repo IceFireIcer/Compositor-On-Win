@@ -1,0 +1,13 @@
+{
+  "kernel": "camera_raw_effects",
+  "input": "blend",
+  "width": 48, "height": 48,
+  "epsilon": 0,
+  "params": {
+    "texture": 0, "clarity": 0, "dehaze": 35, "glow": 0, "glowStyle": 0,
+    "glowRange": 0, "glowSpread": 0, "glowWarmth": 0,
+    "vignetteAmount": 0, "vignetteMidpoint": 50, "vignetteRoundness": 0,
+    "vignetteFeather": 50, "vignetteHighlights": 0, "vignetteStyle": 0, "scale": 1
+  },
+  "note": "adjust_camera_raw_effects 去雾：正深度的对比/饱和抬升与负深度阴影提升；纯算术无跨库函数 → ε=0。"
+}

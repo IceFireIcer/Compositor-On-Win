@@ -292,3 +292,171 @@ func TestCameraRawGradingPacking(t *testing.T) {
 		t.Fatalf("global wheel packing = %v/%v/%v", g[9], g[10], g[11])
 	}
 }
+
+func TestBoxBlurPlaneConstantStaysConstant(t *testing.T) {
+	src := make([]float32, 8*8)
+	for i := range src {
+		src[i] = 0.4
+	}
+	dst := make([]float32, 8*8)
+	boxBlurPlane(src, dst, 8, 8, 2)
+	for i, v := range dst {
+		if math.Abs(float64(v)-0.4) > 1e-5 {
+			t.Fatalf("constant plane drifted at %d: %v", i, v)
+		}
+	}
+}
+
+func TestBoxBlurPlaneSmoothsAndClampsEdges(t *testing.T) {
+	src := make([]float32, 8*8)
+	for i := range src {
+		src[i] = 0
+	}
+	src[3*8+3] = 1 // a single bright dot
+	dst := make([]float32, 8*8)
+	boxBlurPlane(src, dst, 8, 8, 1)
+	if dst[3*8+3] >= 1 {
+		t.Fatal("blur must spread the dot")
+	}
+	if dst[3*8+4] == 0 {
+		t.Fatal("neighbors must receive mass")
+	}
+	if dst[0] != 0 {
+		t.Fatalf("far pixel untouched, got %v", dst[0])
+	}
+}
+
+func TestEffectsRadiusScalesAndClamps(t *testing.T) {
+	if got := effectsRadius(4, 1); got != 4 {
+		t.Fatalf("radius at scale 1 = %v, want 4", got)
+	}
+	if got := effectsRadius(4, 2); got != 8 {
+		t.Fatalf("radius at scale 2 = %v, want 8", got)
+	}
+	if got := effectsRadius(0.2, 1); got != 1 {
+		t.Fatalf("radius floor = %v, want 1", got)
+	}
+	if got := effectsRadius(1000, 1); got != 64 {
+		t.Fatalf("radius ceiling = %v, want 64", got)
+	}
+}
+
+func TestCameraVignetteMaskShape(t *testing.T) {
+	center := camVignetteMaskAt(24, 24, 48, 48, 50, 0, 50)
+	if center != 0 {
+		t.Fatalf("center mask = %v, want 0", center)
+	}
+	corner := camVignetteMaskAt(0.5, 0.5, 48, 48, 50, 0, 50)
+	if corner <= 0 || corner > 1 {
+		t.Fatalf("corner mask = %v, want (0,1]", corner)
+	}
+	if corner <= camVignetteMaskAt(30, 30, 48, 48, 50, 0, 50) {
+		t.Fatal("mask must grow outward")
+	}
+}
+
+func TestApplyCameraRawEffectsDehazeDeepensContrast(t *testing.T) {
+	bmp := cameraRawTestBitmap()
+	clone := bmp.Clone()
+	ApplyCameraRawEffects(bmp, 0, 0, 40, 0, 0, 0, 0, 0, 0, 50, 0, 50, 0, 0, 1)
+	higher, lower := 0, 0
+	for i := 0; i < len(bmp.Pix); i += 4 {
+		if bmp.Pix[i] > clone.Pix[i] {
+			higher++
+		} else if bmp.Pix[i] < clone.Pix[i] {
+			lower++
+		}
+	}
+	if higher == 0 || lower == 0 {
+		t.Fatalf("dehaze must push tones apart (up %d, down %d)", higher, lower)
+	}
+}
+
+func TestApplyCameraRawEffectsVignetteDarkensCorners(t *testing.T) {
+	bmp := cameraRawTestBitmap()
+	clone := bmp.Clone()
+	ApplyCameraRawEffects(bmp, 0, 0, 0, 0, 0, 0, 0, 0, -80, 50, 0, 50, 0, 0, 1)
+	cornerDrop := false
+	centerKept := true
+	for y := 0; y < 8; y++ {
+		for x := 0; x < 8; x++ {
+			i := (y*8 + x) * 4
+			if (x == 0 || x == 7) && (y == 0 || y == 7) && bmp.Pix[i] < clone.Pix[i] {
+				cornerDrop = true
+			}
+			if x == 3 && y == 3 && bmp.Pix[i] != clone.Pix[i] {
+				centerKept = false
+			}
+		}
+	}
+	if !cornerDrop || !centerKept {
+		t.Fatalf("vignette must darken corners and spare the center (corner %v center %v)", cornerDrop, centerKept)
+	}
+}
+
+func TestApplyCameraRawDetailSharpenStrengthensEdges(t *testing.T) {
+	bmp := NewBitmap(8, 8)
+	for y := 0; y < 8; y++ {
+		for x := 0; x < 8; x++ {
+			i := (y*8 + x) * 4
+			v := uint8(64)
+			if x >= 4 {
+				v = 192
+			}
+			bmp.Pix[i], bmp.Pix[i+1], bmp.Pix[i+2], bmp.Pix[i+3] = v, v, v, 255
+		}
+	}
+	ApplyCameraRawDetail(bmp, 100, 25, 50, 0, 0, 50, 0, 0, 50, 50, 1)
+	// The unsharp ring is radius 1, so only the two pixels touching the
+	// edge change: the dark side dips, the bright side rises.
+	left, right := bmp.Pix[(3*8+3)*4], bmp.Pix[(3*8+4)*4]
+	if left >= 64 {
+		t.Fatalf("dark side of the edge must dip, got %v", left)
+	}
+	if right <= 192 {
+		t.Fatalf("bright side of the edge must rise, got %v", right)
+	}
+}
+
+func TestApplyCameraRawDetailDenoiseSmoothsNoise(t *testing.T) {
+	bmp := NewBitmap(16, 16)
+	for y := 0; y < 16; y++ {
+		for x := 0; x < 16; x++ {
+			i := (y*16 + x) * 4
+			n := uint8(128)
+			if (x*x+y*y*3+x/2)%3 == 0 {
+				n = 90
+			} else if (x+y*2)%4 == 0 {
+				n = 170
+			}
+			bmp.Pix[i], bmp.Pix[i+1], bmp.Pix[i+2], bmp.Pix[i+3] = n, n, n, 255
+		}
+	}
+	clone := bmp.Clone()
+	variance := func(b *Bitmap) float64 {
+		mean, acc := 0.0, 0.0
+		for i := 0; i < len(b.Pix); i += 4 {
+			mean += float64(b.Pix[i])
+		}
+		mean /= float64(16 * 16)
+		for i := 0; i < len(b.Pix); i += 4 {
+			d := float64(b.Pix[i]) - mean
+			acc += d * d
+		}
+		return acc / float64(16*16)
+	}
+	ApplyCameraRawDetail(bmp, 0, 25, 50, 0, 80, 50, 0, 0, 50, 50, 1)
+	if variance(bmp) >= variance(clone) {
+		t.Fatalf("denoise must reduce variance: %v → %v", variance(clone), variance(bmp))
+	}
+}
+
+func TestApplyCameraRawSharpenMaskOverlayGrays(t *testing.T) {
+	bmp := cameraRawTestBitmap()
+	ApplyCameraRawSharpenMaskOverlay(bmp, 25, 50, 0, 1)
+	for i := 0; i < len(bmp.Pix); i += 4 {
+		if bmp.Pix[i] != bmp.Pix[i+1] || bmp.Pix[i+1] != bmp.Pix[i+2] {
+			t.Fatalf("mask overlay must be gray at %d", i)
+		}
+	}
+}

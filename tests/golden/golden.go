@@ -342,6 +342,30 @@ func (c Case) DriverArgs() ([]string, error) {
 			}
 			args = add(args, f)
 		}
+	case "camera_raw_effects":
+		keys := []string{"texture", "clarity", "dehaze", "glow", "glowStyle", "glowRange",
+			"glowSpread", "glowWarmth", "vignetteAmount", "vignetteMidpoint", "vignetteRoundness",
+			"vignetteFeather", "vignetteHighlights", "vignetteStyle", "scale"}
+		args = make([]string, 0, len(keys))
+		for _, k := range keys {
+			f, e := num(k)
+			if e != nil {
+				return nil, e
+			}
+			args = add(args, f)
+		}
+	case "camera_raw_detail":
+		keys := []string{"sharpenAmount", "sharpenRadius", "sharpenDetail", "sharpenMasking",
+			"noiseLuminance", "noiseLuminanceDetail", "noiseLuminanceContrast",
+			"noiseColor", "noiseColorDetail", "noiseColorSmoothness", "scale"}
+		args = make([]string, 0, len(keys))
+		for _, k := range keys {
+			f, e := num(k)
+			if e != nil {
+				return nil, e
+			}
+			args = add(args, f)
+		}
 	case "dither":
 		singles := []string{"style", "levels", "diffusion", "density", "contrast", "cell", "angle",
 			"lightOnDark", "originalColors"}

@@ -1,0 +1,13 @@
+{
+  "kernel": "camera_raw_effects",
+  "input": "blend",
+  "width": 48, "height": 48,
+  "epsilon": 1,
+  "params": {
+    "texture": 0, "clarity": 0, "dehaze": 0, "glow": 0, "glowStyle": 0,
+    "glowRange": 0, "glowSpread": 0, "glowWarmth": 0,
+    "vignetteAmount": -60, "vignetteMidpoint": 50, "vignetteRoundness": 0,
+    "vignetteFeather": 50, "vignetteHighlights": 25, "vignetteStyle": 0, "scale": 1
+  },
+  "note": "adjust_camera_raw_effects 暗角：Highlight Priority 负量压暗+高光保护；vignette_mask 用 hypot 跨库 → ε=1。"
+}

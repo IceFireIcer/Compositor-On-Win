@@ -152,6 +152,19 @@ func goPort(c Case, px []byte) error {
 		render.ApplyCameraRawCurveColor(bmp, tone[:], red[:], green[:], blue[:],
 			num("refineSaturation"), f32s("mixer", 24), len(points)/9, points,
 			f32s("grade", 12), num("blending"), num("balance"), int(num("visualize")))
+	case "camera_raw_effects":
+		num := func(key string) float64 { return p[key].(float64) }
+		render.ApplyCameraRawEffects(bmp, num("texture"), num("clarity"), num("dehaze"),
+			num("glow"), int(num("glowStyle")), num("glowRange"), num("glowSpread"),
+			num("glowWarmth"), num("vignetteAmount"), num("vignetteMidpoint"),
+			num("vignetteRoundness"), num("vignetteFeather"), num("vignetteHighlights"),
+			int(num("vignetteStyle")), num("scale"))
+	case "camera_raw_detail":
+		num := func(key string) float64 { return p[key].(float64) }
+		render.ApplyCameraRawDetail(bmp, num("sharpenAmount"), num("sharpenRadius"),
+			num("sharpenDetail"), num("sharpenMasking"), num("noiseLuminance"),
+			num("noiseLuminanceDetail"), num("noiseLuminanceContrast"), num("noiseColor"),
+			num("noiseColorDetail"), num("noiseColorSmoothness"), num("scale"))
 	default:
 		return errNotPorted
 	}
@@ -313,7 +326,8 @@ func TestGoldenReferencesMatchGoPorts(t *testing.T) {
 	// Kernels with a live Go port must actually run a comparison, not skip —
 	// but only when their case was part of this run (go test -run may filter).
 	for _, k := range []string{"levels", "exposure", "gradient_map", "cube", "wand",
-		"grain", "black_white", "color_balance", "noise", "camera_raw", "camera_raw_curve"} {
+		"grain", "black_white", "color_balance", "noise", "camera_raw", "camera_raw_curve",
+		"camera_raw_effects", "camera_raw_detail"} {
 		if ran[k] && !compared[k] {
 			t.Errorf("kernel %q has a Go port in goPort but was not compared", k)
 		}

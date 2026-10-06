@@ -20,6 +20,13 @@
 //   camera_raw_curve  4 point curves (count + x y each), 7 parametric sliders,
 //                 refineSaturation, 24 mixer floats, pointCount + 9 floats per
 //                 point, 12 grade floats, blending, balance, visualize
+//   camera_raw_effects  texture clarity dehaze glow glowStyle glowRange
+//                 glowSpread glowWarmth vignetteAmount vignetteMidpoint
+//                 vignetteRoundness vignetteFeather vignetteHighlights
+//                 vignetteStyle scale
+//   camera_raw_detail  sharpenAmount sharpenRadius sharpenDetail sharpenMasking
+//                 noiseLuminance noiseLuminanceDetail noiseLuminanceContrast
+//                 noiseColor noiseColorDetail noiseColorSmoothness scale
 //   content_fill  maskPath
 //   dither        style levels diffusion density contrast cell angle lightOnDark
 //                 originalColors darkR darkG darkB lightR lightG lightB dots wobble
@@ -392,6 +399,24 @@ int main(int argc, char **argv) {
             free(xs[c]);
             free(ys[c]);
         }
+    } else if (!strcmp(command, "camera_raw_effects")) {
+        if (argc < argi + 15) die("camera_raw_effects needs 13 doubles + 2 style ints + scale");
+        adjust_camera_raw_effects(pixels, (size_t)width, (size_t)height, (size_t)width * 4,
+                                  arg_double(argv[argi]), arg_double(argv[argi + 1]),
+                                  arg_double(argv[argi + 2]), arg_double(argv[argi + 3]),
+                                  (int)arg_long(argv[argi + 4]), arg_double(argv[argi + 5]),
+                                  arg_double(argv[argi + 6]), arg_double(argv[argi + 7]),
+                                  arg_double(argv[argi + 8]), arg_double(argv[argi + 9]),
+                                  arg_double(argv[argi + 10]), arg_double(argv[argi + 11]),
+                                  arg_double(argv[argi + 12]), (int)arg_long(argv[argi + 13]),
+                                  arg_double(argv[argi + 14]));
+    } else if (!strcmp(command, "camera_raw_detail")) {
+        if (argc < argi + 11) die("camera_raw_detail needs 10 sliders + scale");
+        double d[11];
+        for (int i = 0; i < 11; i++) d[i] = arg_double(argv[argi + i]);
+        adjust_camera_raw_detail(pixels, (size_t)width, (size_t)height, (size_t)width * 4,
+                                 d[0], d[1], d[2], d[3], d[4], d[5], d[6], d[7], d[8], d[9],
+                                 d[10]);
     } else if (!strcmp(command, "content_fill")) {
         if (argc < argi + 1) die("content_fill needs a mask path");
         size_t mask_length;

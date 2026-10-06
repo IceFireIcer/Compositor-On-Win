@@ -1,0 +1,12 @@
+{
+  "kernel": "camera_raw_detail",
+  "input": "blend",
+  "width": 48, "height": 48,
+  "epsilon": 0,
+  "params": {
+    "sharpenAmount": 80, "sharpenRadius": 25, "sharpenDetail": 40, "sharpenMasking": 10,
+    "noiseLuminance": 40, "noiseLuminanceDetail": 50, "noiseLuminanceContrast": 10,
+    "noiseColor": 30, "noiseColorDetail": 50, "noiseColorSmoothness": 50, "scale": 1
+  },
+  "note": "adjust_camera_raw_detail 全链：亮度降噪（保边盒模糊+对比回加）→ 色度降噪（HSL 饱和度平滑）→ 锐化（环形边缘+蒙版阈值）；纯算术 → ε=0。"
+}
