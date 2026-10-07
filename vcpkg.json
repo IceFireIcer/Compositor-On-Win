@@ -1,0 +1,12 @@
+{
+  "name": "compositor-win",
+  "version-string": "0.1.0",
+  "dependencies": [
+    "libraw",
+    {
+      "name": "libheif",
+      "default-features": false
+    }
+  ],
+  "builtin-baseline": "2976266a3b2aa358e0eed9e89bde2e0cf59daf0a"
+}

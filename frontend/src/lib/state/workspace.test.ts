@@ -244,7 +244,10 @@ describe("importImages (ticket 40)", () => {
       JSON.stringify([{ name: "图标", png: "UE5H" }]),
     );
     expect(mockedRasterizeSVG).toHaveBeenCalledWith("U1ZH", 26.67, 37.8, 100, 100);
-    expect(failures).toEqual(["bad.png: 无法读取该图像：文件可能已损坏或不可用"]);
+    expect(failures).toEqual({
+      failures: ["bad.png: 无法读取该图像：文件可能已损坏或不可用"],
+      raws: [],
+    });
     expect(get(document)?.docId).toBe("doc-9");
   });
 });

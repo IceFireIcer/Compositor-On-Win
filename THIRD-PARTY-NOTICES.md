@@ -34,5 +34,9 @@ LGPL 依赖在文末单独一节声明（仅以动态库形式使用，源码不
 
 | 库 | 许可 | 引入票 | 用途 |
 | --- | --- | --- | --- |
-| [LibRaw](https://www.libraw.org) | LGPL-2.1 **或** CDDL-1.0（双许可，本仓库按 LGPL-2.1 侧使用） | 41（计划） | 相机 RAW 解码（CIRAWFilter 替代） |
-| [libheif](https://github.com/strukturag/libheif)（含 libde265） | LGPL-3.0 | 41（计划） | HEIC 解码 |
+| [LibRaw](https://www.libraw.org) 0.22.2（vcpkg，x64-mingw-static） | LGPL-2.1 **或** CDDL-1.0（双许可，本仓库按 LGPL-2.1 侧使用） | 41 ✅ | 相机 RAW 解码（CIRAWFilter 替代） |
+| [libheif](https://github.com/strukturag/libheif) 1.23.5（含 libde265，vcpkg，x64-mingw-static；未启用任何编码器 feature——x265 为 GPL，已明确排除） | LGPL-3.0 | 41 ✅ | HEIC 解码 |
+
+LGPL 静态链接说明：上述库以 x64-mingw-static 三角编译为 .a 并链入可执行文件。
+依 LGPL-2.1 §6(a)/LGPL-3.0 §4(d)，用户可凭本仓库源码与构建说明（vcpkg.json +
+CI 工作流）重新链接修改后的库版本；对应的目标文件随发行版或按需提供。

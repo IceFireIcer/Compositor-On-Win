@@ -35,3 +35,5 @@ Thumbs.db
 *.p8
 *.certSigningRequest
 .env
+# vcpkg manifest-mode install output (rebuilt from vcpkg.json)
+vcpkg_installed/

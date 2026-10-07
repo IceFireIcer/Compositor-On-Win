@@ -5,32 +5,18 @@ import {context} from '../models';
 
 export function ApplyFilter(arg1:string,arg2:string,arg3:string,arg4:number,arg5:string):Promise<string>;
 
-export function BeginFilterEdit(arg1:string,arg2:string,arg3:string,arg4:number,arg5:string):Promise<string>;
-
-export function BeginImageImport(arg1:Array<string>):Promise<string>;
+export function ApplyLevelsSample(arg1:string,arg2:number,arg3:number,arg4:number):Promise<string>;
 
 export function BeginExportPreview():Promise<string>;
 
-export function BeginHealStroke(arg1:number,arg2:number,arg3:number,arg4:number,arg5:number,arg6:number,arg7:number):Promise<string>;
-
-export function CancelImageImport():Promise<void>;
-
-export function CameraRawAutoWhiteBalance():Promise<string>;
-
-export function CameraRawDefringeSample(arg1:number,arg2:number,arg3:string):Promise<string>;
-
-export function CameraRawScope():Promise<string>;
-
-export function CameraRawWhiteBalanceSample(arg1:number,arg2:number):Promise<string>;
-
-export function BeginStroke(arg1:number,arg2:number):Promise<string>;
-
-export function ApplyLevelsSample(arg1:string,arg2:number,arg3:number,arg4:number):Promise<string>;
-
 export function BeginFilterEdit(arg1:string,arg2:string,arg3:string,arg4:number,arg5:string):Promise<string>;
 
 export function BeginHealStroke(arg1:number,arg2:number,arg3:number,arg4:number,arg5:number,arg6:number,arg7:number):Promise<string>;
 
+export function BeginImageImport(arg1:Array<string>):Promise<string>;
+
+export function BeginStroke(arg1:number,arg2:number):Promise<string>;
+
 export function CameraRawAutoWhiteBalance():Promise<string>;
 
 export function CameraRawDefringeSample(arg1:number,arg2:number,arg3:string):Promise<string>;
@@ -39,19 +25,19 @@ export function CameraRawScope():Promise<string>;
 
 export function CameraRawWhiteBalanceSample(arg1:number,arg2:number):Promise<string>;
 
-export function BeginStroke(arg1:number,arg2:number):Promise<string>;
-
 export function CancelFilterEdit():Promise<string>;
 
+export function CancelImageImport():Promise<void>;
+
 export function CommitFilter(arg1:string):Promise<string>;
-
-export function EndExportPreview():Promise<void>;
-
-export function EndHealStroke():Promise<string>;
 
 export function CopyMerged():Promise<string>;
 
 export function DocumentSnapshot():Promise<string>;
+
+export function EndExportPreview():Promise<void>;
+
+export function EndHealStroke():Promise<string>;
 
 export function EndStroke():Promise<string>;
 
@@ -67,13 +53,21 @@ export function HealPoint(arg1:number,arg2:number):Promise<string>;
 
 export function LayerHistogram():Promise<string>;
 
-export function LevelsAuto(arg1:number):Promise<string>;
-
 export function LayerOp(arg1:string,arg2:string):Promise<string>;
+
+export function LevelsAuto(arg1:number):Promise<string>;
 
 export function OpenProjectDialog():Promise<string>;
 
 export function PickImageImport():Promise<Array<string>>;
+
+export function RawBeginDevelop(arg1:string):Promise<string>;
+
+export function RawCancelDevelop():Promise<void>;
+
+export function RawDevelopPreview(arg1:string):Promise<string>;
+
+export function RawFinishDevelop(arg1:string,arg2:string):Promise<string>;
 
 export function Redo():Promise<string>;
 

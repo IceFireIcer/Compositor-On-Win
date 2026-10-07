@@ -101,17 +101,17 @@ export async function saveProject(): Promise<{ path: string; rev: number } | nul
 }
 
 /**
- * 导入图像…（ticket 40）：多选文件 → Go 解码栅格 / SVG 交给前端栅格化 →
- * 一次性提交。没有文档时首图定画布；有文档时追加为居中图层。返回失败的
- * 文件清单（原版 importError 弹窗语义），取消选择返回 null。
+ * 导入图像…（ticket 40/41）：多选文件 → Go 解码栅格 / SVG 交给前端栅格化 →
+ * 一次性提交。RAW 项在批次提交后逐个走显影表单。没有文档时首图定画布；
+ * 有文档时追加为居中图层。返回失败清单与 RAW 队列，取消选择返回 null。
  */
-export async function importImages(): Promise<string[] | null> {
+export async function importImages(): Promise<{ failures: string[]; raws: string[] } | null> {
   const paths = await PickImageImport();
   if (!paths || paths.length === 0) return null;
   const begin = JSON.parse(await BeginImageImport(paths)) as {
     items: {
       path: string;
-      status: "ok" | "svg" | "error";
+      status: "ok" | "svg" | "error" | "raw";
       name?: string;
       svgW?: number;
       svgH?: number;
@@ -123,11 +123,17 @@ export async function importImages(): Promise<string[] | null> {
     canvasH: number;
   };
   const rasters: { name: string; png: string }[] = [];
+  const raws: string[] = [];
   const failures: string[] = [];
   for (const item of begin.items) {
     if (item.status === "error") {
       const file = item.path.split(/[\/]/).pop() ?? item.path;
       failures.push(`${file}: ${item.error ?? "导入失败"}`);
+      continue;
+    }
+    if (item.status === "raw") {
+      // The develop sheet runs after the batch commit (one file at a time).
+      raws.push(item.path);
       continue;
     }
     if (item.status === "svg") {
@@ -144,5 +150,9 @@ export async function importImages(): Promise<string[] | null> {
   await FinishImageImport(JSON.stringify(rasters));
   applySnapshot(await GetSnapshot());
   await loadDocument();
-  return failures.length > 0 ? failures : [];
+  if (raws.length > 0) {
+    const { queueRawDevelop } = await import("./rawdevelop");
+    await queueRawDevelop(raws);
+  }
+  return { failures, raws };
 }

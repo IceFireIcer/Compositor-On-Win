@@ -16,6 +16,7 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
 	"compositor-win/internal/domain"
+	"compositor-win/internal/heicio"
 	"compositor-win/internal/render"
 	"compositor-win/internal/rasterio"
 )
@@ -117,6 +118,29 @@ func (s *Service) BeginImageImport(paths []string) (string, error) {
 			items = append(items, item)
 			continue
 		}
+		if IsRAWPath(path) {
+			// RAW goes through the develop sheet after the batch commits;
+			// only the item listing happens here (RawImporter flow).
+			item.Status = "raw"
+			item.Name = strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+			items = append(items, item)
+			continue
+		}
+		if IsHEICPath(path) {
+			res, err := decodeHEIC(path, remaining)
+			if err != nil {
+				item.Status = "error"
+				item.Error = err.Error()
+				items = append(items, item)
+				continue
+			}
+			remaining -= res.Width * res.Height
+			item.Status = "ok"
+			item.Name = res.Name
+			s.pendingImport = append(s.pendingImport, pendingImportFile{name: res.Name, bmp: res.Bitmap})
+			items = append(items, item)
+			continue
+		}
 		res, err := rasterio.Decode(path, remaining)
 		if err != nil {
 			item.Status = "error"
@@ -193,6 +217,25 @@ func (s *Service) CancelImageImport() {
 	s.importMu.Lock()
 	defer s.importMu.Unlock()
 	s.pendingImport = nil
+}
+
+// decodeHEIC reads one HEIC file through libheif with the import budget
+// applied (the same refusal the raster decode gives).
+func decodeHEIC(path string, remaining int) (*rasterio.Result, error) {
+	bmp, err := heicio.Decode(path)
+	if err != nil {
+		return nil, err
+	}
+	if bmp.W > domain.MaxSide || bmp.H > domain.MaxSide || bmp.W*bmp.H > remaining {
+		return nil, &rasterio.TooLargeError{Msg: fmt.Sprintf("导入超过当前 %.0f 百万像素文档预算或 %d 像素边长限制（图像 %d × %d）",
+			float64(domain.MaxSurfacePixels)/1e6, domain.MaxSide, bmp.W, bmp.H)}
+	}
+	return &rasterio.Result{
+		Name:   strings.TrimSuffix(filepath.Base(path), filepath.Ext(path)),
+		Bitmap: bmp,
+		Width:  bmp.W,
+		Height: bmp.H,
+	}, nil
 }
 
 func svgExt(path string) string {

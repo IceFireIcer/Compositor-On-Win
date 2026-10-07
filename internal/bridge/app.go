@@ -44,6 +44,10 @@ type Service struct {
 	exportMu      sync.Mutex
 	exportRaster  *render.Bitmap
 	exportPreview *render.Bitmap
+
+	// RAW develop sheet (ticket 41): the open half-size LibRaw session.
+	rawMu       sync.Mutex
+	rawSession  *rawDevelopSession
 }
 
 // NewService wires the service onto a workspace (shared with the

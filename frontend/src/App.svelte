@@ -31,6 +31,8 @@
     openExportJPEG,
   } from "./lib/state/export";
   import ExportDialog from "./lib/components/ExportDialog.svelte";
+  import RawDevelopSheet from "./lib/components/RawDevelopSheet.svelte";
+  import { rawDevelop } from "./lib/state/rawdevelop";
 
   let version = $state("…");
   let sheetOpen = $state(false);
@@ -341,6 +343,10 @@
 
 {#if $filterSession && $filterSession.kind !== "cameraRaw"}
   <FilterDialog />
+{/if}
+
+{#if $rawDevelop}
+  <RawDevelopSheet />
 {/if}
 
 {#if $exportDialog}

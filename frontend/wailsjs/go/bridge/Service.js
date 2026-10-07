@@ -10,24 +10,24 @@ export function ApplyLevelsSample(arg1, arg2, arg3, arg4) {
   return window['go']['bridge']['Service']['ApplyLevelsSample'](arg1, arg2, arg3, arg4);
 }
 
-export function BeginFilterEdit(arg1, arg2, arg3, arg4, arg5) {
-  return window['go']['bridge']['Service']['BeginFilterEdit'](arg1, arg2, arg3, arg4, arg5);
-}
-
-export function BeginImageImport(arg1) {
-  return window['go']['bridge']['Service']['BeginImageImport'](arg1);
-}
-
 export function BeginExportPreview() {
   return window['go']['bridge']['Service']['BeginExportPreview']();
+}
+
+export function BeginFilterEdit(arg1, arg2, arg3, arg4, arg5) {
+  return window['go']['bridge']['Service']['BeginFilterEdit'](arg1, arg2, arg3, arg4, arg5);
 }
 
 export function BeginHealStroke(arg1, arg2, arg3, arg4, arg5, arg6, arg7) {
   return window['go']['bridge']['Service']['BeginHealStroke'](arg1, arg2, arg3, arg4, arg5, arg6, arg7);
 }
 
-export function CancelImageImport() {
-  return window['go']['bridge']['Service']['CancelImageImport']();
+export function BeginImageImport(arg1) {
+  return window['go']['bridge']['Service']['BeginImageImport'](arg1);
+}
+
+export function BeginStroke(arg1, arg2) {
+  return window['go']['bridge']['Service']['BeginStroke'](arg1, arg2);
 }
 
 export function CameraRawAutoWhiteBalance() {
@@ -46,24 +46,16 @@ export function CameraRawWhiteBalanceSample(arg1, arg2) {
   return window['go']['bridge']['Service']['CameraRawWhiteBalanceSample'](arg1, arg2);
 }
 
-export function BeginStroke(arg1, arg2) {
-  return window['go']['bridge']['Service']['BeginStroke'](arg1, arg2);
-}
-
 export function CancelFilterEdit() {
   return window['go']['bridge']['Service']['CancelFilterEdit']();
 }
 
+export function CancelImageImport() {
+  return window['go']['bridge']['Service']['CancelImageImport']();
+}
+
 export function CommitFilter(arg1) {
   return window['go']['bridge']['Service']['CommitFilter'](arg1);
-}
-
-export function EndExportPreview() {
-  return window['go']['bridge']['Service']['EndExportPreview']();
-}
-
-export function EndHealStroke() {
-  return window['go']['bridge']['Service']['EndHealStroke']();
 }
 
 export function CopyMerged() {
@@ -72,6 +64,14 @@ export function CopyMerged() {
 
 export function DocumentSnapshot() {
   return window['go']['bridge']['Service']['DocumentSnapshot']();
+}
+
+export function EndExportPreview() {
+  return window['go']['bridge']['Service']['EndExportPreview']();
+}
+
+export function EndHealStroke() {
+  return window['go']['bridge']['Service']['EndHealStroke']();
 }
 
 export function EndStroke() {
@@ -118,6 +118,22 @@ export function PickImageImport() {
   return window['go']['bridge']['Service']['PickImageImport']();
 }
 
+export function RawBeginDevelop(arg1) {
+  return window['go']['bridge']['Service']['RawBeginDevelop'](arg1);
+}
+
+export function RawCancelDevelop() {
+  return window['go']['bridge']['Service']['RawCancelDevelop']();
+}
+
+export function RawDevelopPreview(arg1) {
+  return window['go']['bridge']['Service']['RawDevelopPreview'](arg1);
+}
+
+export function RawFinishDevelop(arg1, arg2) {
+  return window['go']['bridge']['Service']['RawFinishDevelop'](arg1, arg2);
+}
+
 export function Redo() {
   return window['go']['bridge']['Service']['Redo']();
 }
@@ -130,6 +146,10 @@ export function SampleLevelsPoint(arg1, arg2) {
   return window['go']['bridge']['Service']['SampleLevelsPoint'](arg1, arg2);
 }
 
+export function SaveProjectDialog() {
+  return window['go']['bridge']['Service']['SaveProjectDialog']();
+}
+
 export function SelectObjectAt(arg1, arg2) {
   return window['go']['bridge']['Service']['SelectObjectAt'](arg1, arg2);
 }
@@ -138,8 +158,8 @@ export function SelectSubject() {
   return window['go']['bridge']['Service']['SelectSubject']();
 }
 
-export function SaveProjectDialog() {
-  return window['go']['bridge']['Service']['SaveProjectDialog']();
+export function Startup(arg1) {
+  return window['go']['bridge']['Service']['Startup'](arg1);
 }
 
 export function StrokePoint(arg1, arg2) {

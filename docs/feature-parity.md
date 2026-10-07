@@ -195,9 +195,9 @@
 | # | 能力 | 锚点 | 故事# | 里程碑 | 状态 |
 | --- | --- | --- | --- | --- | --- |
 | I01 | 导入 JPEG/PNG/TIFF | Go 标准库 + x/image | 46 | M7 | ☑ 票40（含 EXIF 方向） |
-| I02 | 导入 HEIC（libheif/cgo） | `ImageImporter` | 46 | M7 | ☐ |
+| I02 | 导入 HEIC（libheif/cgo） | `ImageImporter` | 46 | M7 | ☑ 票41（静态链接，LGPL-3.0 已声明） |
 | I03 | 导入 SVG（光栅化） | `decodeSVG` | 46 | M7 | ☑ 票40（前端 WebView2 一次栅格化，适配画布语义） |
-| I04 | 相机 RAW + develop 步骤 + asShot 默认 | `RawImporter`/LibRaw | 46 | M7 | ☐ |
+| I04 | 相机 RAW + develop 步骤 + asShot 默认 | `RawImporter`/LibRaw | 46 | M7 | ☑ 票41（LibRaw 0.22.2 + 自写 develop 数学；与 Apple CIRAWFilter 数值不逐位一致） |
 | I05 | PSD/PSB 导入：层/组/蒙版/混合/`levl``curv``hue2`/填充形状/水平文本；超大层裁剪；转换报告 | `PSD/*` | 47 | M7 | ◐ 票38：解析/调整/蒙版/剪贴/裁剪/报告已落地；实时文字与矢量随文字批次 |
 | I06 | 导出 PNG/JPEG + JPEG 实时预览 | `ImageExporter` | 48 | M7 | ☑ 票42（DPI 元数据 pHYs/JFIF） |
 | I07 | `.comp` v11 读写/校验/原子保存/包内预览图 | `ProjectStore`（ADR-0002） | 1/49 | M1 | ☐ |

@@ -93,12 +93,13 @@
   }
 
   // 导入图像…: the batch lands as one undo step; per-file failures gather
-  // into one alert exactly as the original's importError did.
+  // into one alert exactly as the original's importError did. RAW items
+  // queue into the develop sheet (one at a time) after the commit.
   async function runImportImages(): Promise<void> {
     try {
-      const failures = await importImages();
-      if (failures && failures.length > 0) {
-        window.alert(`导入未能完成\n\n${failures.join("\n\n")}`);
+      const result = await importImages();
+      if (result && result.failures.length > 0) {
+        window.alert(`导入未能完成\n\n${result.failures.join("\n\n")}`);
       }
     } catch (err) {
       console.warn("导入图像失败", err);

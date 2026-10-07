@@ -37,6 +37,24 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
+      # Ticket 41: LibRaw/libheif are cgo-linked from the vcpkg manifest
+      # (x64-mingw-static). The triplet needs a mingw toolchain; the binary
+      # cache keeps day-to-day CI from rebuilding them.
+      - name: Install MinGW toolchain
+        run: choco install mingw -y --no-progress
+
+      - name: Restore vcpkg binary cache
+        uses: actions/cache@v4
+        with:
+          path: ~/AppData/Local/vcpkg/archives
+          key: vcpkg-x64-mingw-static-${{ hashFiles('vcpkg.json') }}
+
+      - name: Install LibRaw/libheif (vcpkg manifest)
+        run: |
+          git clone --depth 1 https://github.com/microsoft/vcpkg "$RUNNER_TEMP/vcpkg"
+          "$RUNNER_TEMP/vcpkg/bootstrap-vcpkg.bat" -disableMetrics
+          "$RUNNER_TEMP/vcpkg/vcpkg.exe" install --triplet x64-mingw-static
+
       - name: Frontend checks (svelte-check + vitest)
         working-directory: frontend
         run: |
@@ -69,6 +87,21 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: frontend/package-lock.json
+
+      - name: Install MinGW toolchain
+        run: choco install mingw -y --no-progress
+
+      - name: Restore vcpkg binary cache
+        uses: actions/cache@v4
+        with:
+          path: ~/AppData/Local/vcpkg/archives
+          key: vcpkg-x64-mingw-static-${{ hashFiles('vcpkg.json') }}
+
+      - name: Install LibRaw/libheif (vcpkg manifest)
+        run: |
+          git clone --depth 1 https://github.com/microsoft/vcpkg "$RUNNER_TEMP/vcpkg"
+          "$RUNNER_TEMP/vcpkg/bootstrap-vcpkg.bat" -disableMetrics
+          "$RUNNER_TEMP/vcpkg/vcpkg.exe" install --triplet x64-mingw-static
 
       - name: Install Wails CLI
         run: go install github.com/wailsapp/wails/v2/cmd/wails@latest

@@ -26,8 +26,8 @@
 | ImageIO：TIFF 解码 | 40 | [golang.org/x/image](https://pkg.go.dev/golang.org/x/image)（BSD-3） | go.mod，纯 Go |
 | ImageIO：EXIF 方向 | 40 | 无依赖：手写 APP1/IFD0 解析（只取 0x0112） | internal/rasterio |
 | ImageIO：SVG 光栅化 | 40 | 无依赖：WebView2 原生 SVG → canvas 一次性栅格化（原版 decodeSVG 语义） | 前端 |
-| CIRAWFilter：相机 RAW 解码 | 41 | [LibRaw](https://www.libraw.org)（LGPL-2.1 或 CDDL-1.0 双许可）+ 自写薄 cgo 绑定 | vcpkg 固定 + 进 CI |
-| ImageIO：HEIC 解码 | 41 | [libheif](https://github.com/strukturag/libheif)（LGPL-3.0）+ 自写薄 cgo 绑定（备选：[goheif](https://github.com/adrium/goheif) 内嵌源码，MIT 壳/LGPL 库） | vcpkg 固定 + 进 CI |
+| CIRAWFilter：相机 RAW 解码 | 41 ✅ | [LibRaw](https://www.libraw.org) 0.22.2（LGPL-2.1 或 CDDL-1.0 双许可）+ 自写 C ABI/cgo 绑定（internal/rawio） | vcpkg manifest（x64-mingw-static）+ CI binary cache |
+| ImageIO：HEIC 解码 | 41 ✅ | [libheif](https://github.com/strukturag/libheif) 1.23.5（LGPL-3.0，未启用 x265/GPL 编码 feature）+ 自写 cgo 绑定（internal/heicio） | vcpkg manifest（x64-mingw-static）+ CI binary cache |
 | ImageIO：导出 PNG/JPEG | 42 | 无依赖：Go `image/png`、`image/jpeg` 标准库 | — |
 | CoreText：文字引擎（排版/整形/栅格化） | 44 | [go-text/typesetting](https://github.com/go-text/typesetting)（MIT 主模块；子包 BSD-3/Unlicense；含 FreeType 许可条款的栅格化部分——均为宽松许可） | go.mod，纯 Go（票 44 实施时引入） |
 | Sparkle：自动更新（appcast.xml） | 50 | [creativeprojects/go-selfupdate](https://github.com/creativeprojects/go-selfupdate)（MIT）+ GitHub Releases + EdDSA 签名（矩阵 P04） | go.mod，纯 Go（票 50 实施时引入） |
