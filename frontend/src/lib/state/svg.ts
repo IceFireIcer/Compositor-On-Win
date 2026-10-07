@@ -18,7 +18,8 @@ export async function rasterizeSVG(
   canvasW: number | null,
   canvasH: number | null,
 ): Promise<{ width: number; height: number; png: string }> {
-  const scale = canvasW > 0 && canvasH > 0 ? Math.min(canvasW / naturalW, canvasH / naturalH) : 1;
+  const fitted = canvasW != null && canvasH != null && canvasW > 0 && canvasH > 0;
+  const scale = fitted ? Math.min((canvasW as number) / naturalW, (canvasH as number) / naturalH) : 1;
   const width = Math.max(1, Math.round(naturalW * scale));
   const height = Math.max(1, Math.round(naturalH * scale));
   const img = new Image();

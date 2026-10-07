@@ -23,6 +23,14 @@
   import CameraRawPanel from "./lib/components/CameraRawPanel.svelte";
   import { watchFilterPreviews, beginFilter, filterSession } from "./lib/state/filters";
   import { healSettings, updateHealSettings } from "./lib/state/tools";
+  import {
+    copyMerged,
+    exportDialog,
+    exportNotice,
+    exportPNG,
+    openExportJPEG,
+  } from "./lib/state/export";
+  import ExportDialog from "./lib/components/ExportDialog.svelte";
 
   let version = $state("…");
   let sheetOpen = $state(false);
@@ -107,6 +115,26 @@
   // Image-menu shortcuts: ⌘M 曲线 / ⌘L 色阶 / ⌘U 色相饱和度 / ⌘I 反相.
   function onKeydown(event: KeyboardEvent): void {
     if (!(event.metaKey || event.ctrlKey) || $filterSession) return;
+    // File-export shortcuts (ticket 42): ⇧⌘E 导出 PNG / ⇧⌥⌘S 导出 JPEG /
+    // ⇧⌘C 拷贝合并 — the original's C06/C07/C12 bindings.
+    if (event.shiftKey) {
+      const file = event.key.toLowerCase();
+      if (file === "e" && !event.altKey) {
+        event.preventDefault();
+        void exportPNG().catch((err) => console.warn("导出 PNG 失败", err));
+        return;
+      }
+      if (file === "s" && event.altKey) {
+        event.preventDefault();
+        void openExportJPEG();
+        return;
+      }
+      if (file === "c" && !event.altKey) {
+        event.preventDefault();
+        void copyMerged().catch((err) => console.warn("拷贝合并失败", err));
+        return;
+      }
+    }
     const key = event.key.toLowerCase();
     if (key !== "m" && key !== "l" && key !== "u" && key !== "i") return;
     const doc = current;
@@ -315,6 +343,18 @@
   <FilterDialog />
 {/if}
 
+{#if $exportDialog}
+  <ExportDialog
+    onClose={() => {
+      exportDialog.set(null);
+    }}
+  />
+{/if}
+
+{#if $exportNotice}
+  <div class="export-toast" role="status">{$exportNotice}</div>
+{/if}
+
 <style>
   .app {
     display: grid;
@@ -334,6 +374,24 @@
 
   .brand {
     font-weight: 600;
+  }
+
+  .export-toast {
+    position: fixed;
+    left: 50%;
+    bottom: 44px;
+    transform: translateX(-50%);
+    padding: 8px 16px;
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+    font-size: 13px;
+    z-index: 30;
+    max-width: 70vw;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .zoom-controls {

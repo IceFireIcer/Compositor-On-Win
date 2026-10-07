@@ -9,6 +9,8 @@ export function BeginFilterEdit(arg1:string,arg2:string,arg3:string,arg4:number,
 
 export function BeginImageImport(arg1:Array<string>):Promise<string>;
 
+export function BeginExportPreview():Promise<string>;
+
 export function BeginHealStroke(arg1:number,arg2:number,arg3:number,arg4:number,arg5:number,arg6:number,arg7:number):Promise<string>;
 
 export function CancelImageImport():Promise<void>;
@@ -43,11 +45,21 @@ export function CancelFilterEdit():Promise<string>;
 
 export function CommitFilter(arg1:string):Promise<string>;
 
+export function EndExportPreview():Promise<void>;
+
 export function EndHealStroke():Promise<string>;
+
+export function CopyMerged():Promise<string>;
 
 export function DocumentSnapshot():Promise<string>;
 
 export function EndStroke():Promise<string>;
+
+export function ExportJPEG(arg1:number,arg2:string):Promise<string>;
+
+export function ExportJPEGPreview(arg1:number):Promise<string>;
+
+export function ExportPNG(arg1:string):Promise<string>;
 
 export function FinishImageImport(arg1:string):Promise<string>;
 

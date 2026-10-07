@@ -7,6 +7,7 @@
   } from "../state/filters";
   import { document, applyDocumentSnapshot } from "../state/document";
   import { importImages } from "../state/workspace";
+  import { copyMerged, exportPNG, openExportJPEG } from "../state/export";
   import { Undo, Redo, ApplyFilter, SelectSubject, SelectObjectAt } from "../../../wailsjs/go/bridge/Service";
   import { setSelectionFromMaskData } from "../state/selection";
 
@@ -81,6 +82,16 @@
     close();
   }
 
+  // Non-fatal bridge failures log; the flows surface user errors themselves.
+  async function safe(p: Promise<void>, what: string): Promise<void> {
+    try {
+      await p;
+    } catch (err) {
+      console.warn(what, err);
+    }
+    close();
+  }
+
   // 导入图像…: the batch lands as one undo step; per-file failures gather
   // into one alert exactly as the original's importError did.
   async function runImportImages(): Promise<void> {
@@ -117,6 +128,24 @@
       label: "文件",
       items: [
         { label: "导入图像…", disabled: dialogOpen, run: () => void runImportImages() },
+        {
+          label: "导出 PNG…",
+          hint: "⇧⌘E",
+          disabled: !hasLayer || dialogOpen,
+          run: () => void safe(exportPNG(), "导出 PNG 失败"),
+        },
+        {
+          label: "导出 JPEG…",
+          hint: "⇧⌥⌘S",
+          disabled: !hasLayer || dialogOpen,
+          run: () => openExportJPEG(),
+        },
+        {
+          label: "拷贝合并",
+          hint: "⇧⌘C",
+          disabled: !hasLayer || dialogOpen,
+          run: () => void safe(copyMerged(), "拷贝合并失败"),
+        },
         { label: "撤销", hint: "⌘Z", run: () => void runUndoRedo("undo") },
         { label: "重做", hint: "⇧⌘Z", run: () => void runUndoRedo("redo") },
       ],

@@ -18,6 +18,10 @@ export function BeginImageImport(arg1) {
   return window['go']['bridge']['Service']['BeginImageImport'](arg1);
 }
 
+export function BeginExportPreview() {
+  return window['go']['bridge']['Service']['BeginExportPreview']();
+}
+
 export function BeginHealStroke(arg1, arg2, arg3, arg4, arg5, arg6, arg7) {
   return window['go']['bridge']['Service']['BeginHealStroke'](arg1, arg2, arg3, arg4, arg5, arg6, arg7);
 }
@@ -54,8 +58,16 @@ export function CommitFilter(arg1) {
   return window['go']['bridge']['Service']['CommitFilter'](arg1);
 }
 
+export function EndExportPreview() {
+  return window['go']['bridge']['Service']['EndExportPreview']();
+}
+
 export function EndHealStroke() {
   return window['go']['bridge']['Service']['EndHealStroke']();
+}
+
+export function CopyMerged() {
+  return window['go']['bridge']['Service']['CopyMerged']();
 }
 
 export function DocumentSnapshot() {
@@ -64,6 +76,18 @@ export function DocumentSnapshot() {
 
 export function EndStroke() {
   return window['go']['bridge']['Service']['EndStroke']();
+}
+
+export function ExportJPEG(arg1, arg2) {
+  return window['go']['bridge']['Service']['ExportJPEG'](arg1, arg2);
+}
+
+export function ExportJPEGPreview(arg1) {
+  return window['go']['bridge']['Service']['ExportJPEGPreview'](arg1);
+}
+
+export function ExportPNG(arg1) {
+  return window['go']['bridge']['Service']['ExportPNG'](arg1);
 }
 
 export function FinishImageImport(arg1) {

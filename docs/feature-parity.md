@@ -35,8 +35,8 @@
 | C03 | Open Recent（含清除） | — | 53 | M9 | ☐ |
 | C04 | Import Images… | — | 46 | M7 | ☑ 票40（多选批次，RAW/HEIC 随票41） |
 | C05 | Save / Save As | ⌘S / ⇧⌘S | 49 | M1 | ☐ |
-| C06 | Export PNG… | ⇧⌘E | 48 | M7 | ☐ |
-| C07 | Export JPEG…（实时预览内可缩放） | ⇧⌥⌘S | 48 | M7 | ☐ |
+| C06 | Export PNG… | ⇧⌘E | 48 | M7 | ☑ 票42 |
+| C07 | Export JPEG…（实时预览内可缩放） | ⇧⌥⌘S | 48 | M7 | ☑ 票42 |
 | C08 | Close Project / 退出逐标签确认 | ⌘W | 2 | M1 | ☐ |
 | C09 | Check for Updates… | — | 53 | M9 | ☐ |
 
@@ -46,7 +46,7 @@
 | --- | --- | --- | --- | --- | --- |
 | C10 | Undo/Redo（菜单名带操作名） | ⌘Z / ⇧⌘Z | 57 | M1 | ☐ |
 | C11 | Cut / Copy / Paste（像素与文字域分流） | ⌘X/C/V | 55 | M3/M9 | ☐ |
-| C12 | Copy Merged | ⇧⌘C | 48 | M7 | ☐ |
+| C12 | Copy Merged | ⇧⌘C | 48 | M7 | ☑ 票42（CF_DIB；剪贴板像素/整层 UI 通道随票48） |
 | C13 | 整层复制/粘贴/跨标签拖拽 | — | 16 | M3 | ☐ |
 | C14 | Keyboard Shortcuts…（重映射表单） | — | 52 | M9 | ☐ |
 | C15 | Fill with Foreground/Background Color | ⌥⌫ / ⌘⌫ | 42 | M4 | ☐ |
@@ -199,7 +199,7 @@
 | I03 | 导入 SVG（光栅化） | `decodeSVG` | 46 | M7 | ☑ 票40（前端 WebView2 一次栅格化，适配画布语义） |
 | I04 | 相机 RAW + develop 步骤 + asShot 默认 | `RawImporter`/LibRaw | 46 | M7 | ☐ |
 | I05 | PSD/PSB 导入：层/组/蒙版/混合/`levl``curv``hue2`/填充形状/水平文本；超大层裁剪；转换报告 | `PSD/*` | 47 | M7 | ◐ 票38：解析/调整/蒙版/剪贴/裁剪/报告已落地；实时文字与矢量随文字批次 |
-| I06 | 导出 PNG/JPEG + JPEG 实时预览 | `ImageExporter` | 48 | M7 | ☐ |
+| I06 | 导出 PNG/JPEG + JPEG 实时预览 | `ImageExporter` | 48 | M7 | ☑ 票42（DPI 元数据 pHYs/JFIF） |
 | I07 | `.comp` v11 读写/校验/原子保存/包内预览图 | `ProjectStore`（ADR-0002） | 1/49 | M1 | ☐ |
 | I08 | 保存不阻塞编辑（后台写） | `finishWriting` | 49 | M1 | ☐ |
 

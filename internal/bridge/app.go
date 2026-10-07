@@ -11,6 +11,7 @@ import (
 	"sync"
 
 	"compositor-win/internal/project"
+	"compositor-win/internal/render"
 )
 
 // wantVersion is the scaffold milestone version. Bumped per milestone.
@@ -37,6 +38,12 @@ type Service struct {
 	// wait here for the frontend's SVG rasters before the commit lands.
 	importMu      sync.Mutex
 	pendingImport []pendingImportFile
+
+	// Export preview (ticket 42): one flattened composite held between
+	// quality-slider moves; the dialog's preview re-encodes from it.
+	exportMu      sync.Mutex
+	exportRaster  *render.Bitmap
+	exportPreview *render.Bitmap
 }
 
 // NewService wires the service onto a workspace (shared with the
