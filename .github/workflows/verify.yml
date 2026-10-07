@@ -52,6 +52,11 @@ jobs:
       - name: Install LibRaw/libheif (vcpkg manifest)
         run: |
           git clone --depth 1 https://github.com/microsoft/vcpkg "$RUNNER_TEMP/vcpkg"
+          # vcpkg.json pins a baseline commit; a shallow clone does not have
+          # it, so fetch exactly that commit by SHA (GitHub allows fetching
+          # reachable commits).
+          BASELINE=$(python -c "import json;print(json.load(open('vcpkg.json'))['builtin-baseline'])")
+          git -C "$RUNNER_TEMP/vcpkg" fetch --depth 1 origin "$BASELINE"
           "$RUNNER_TEMP/vcpkg/bootstrap-vcpkg.bat" -disableMetrics
           "$RUNNER_TEMP/vcpkg/vcpkg.exe" install --triplet x64-mingw-static
 
@@ -100,6 +105,11 @@ jobs:
       - name: Install LibRaw/libheif (vcpkg manifest)
         run: |
           git clone --depth 1 https://github.com/microsoft/vcpkg "$RUNNER_TEMP/vcpkg"
+          # vcpkg.json pins a baseline commit; a shallow clone does not have
+          # it, so fetch exactly that commit by SHA (GitHub allows fetching
+          # reachable commits).
+          BASELINE=$(python -c "import json;print(json.load(open('vcpkg.json'))['builtin-baseline'])")
+          git -C "$RUNNER_TEMP/vcpkg" fetch --depth 1 origin "$BASELINE"
           "$RUNNER_TEMP/vcpkg/bootstrap-vcpkg.bat" -disableMetrics
           "$RUNNER_TEMP/vcpkg/vcpkg.exe" install --triplet x64-mingw-static
 
