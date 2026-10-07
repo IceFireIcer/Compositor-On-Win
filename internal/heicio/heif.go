@@ -5,7 +5,7 @@ package heicio
 
 /*
 #cgo CFLAGS: -I${SRCDIR}/../../vcpkg_installed/x64-mingw-static/include
-#cgo LDFLAGS: -L${SRCDIR}/../../vcpkg_installed/x64-mingw-static/lib -Wl,--start-group -lheif -lde265 -lspng_static -lzs -Wl,--end-group
+#cgo LDFLAGS: -L${SRCDIR}/../../vcpkg_installed/x64-mingw-static/lib -Wl,--start-group -lheif -lde265 -lspng_static -lzs -Wl,--end-group -static-libstdc++ -static-libgcc
 #include <libheif/heif.h>
 #include <stdlib.h>
 */

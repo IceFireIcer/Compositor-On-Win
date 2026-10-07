@@ -8,7 +8,7 @@ package rawio
 
 /*
 #cgo CXXFLAGS: -I${SRCDIR}/../../vcpkg_installed/x64-mingw-static/include -std=c++17
-#cgo LDFLAGS: -L${SRCDIR}/../../vcpkg_installed/x64-mingw-static/lib -Wl,--start-group -lraw_r -ljasper -llcms2 -ljpeg -lzs -lws2_32 -Wl,--end-group
+#cgo LDFLAGS: -L${SRCDIR}/../../vcpkg_installed/x64-mingw-static/lib -Wl,--start-group -lraw_r -ljasper -llcms2 -ljpeg -lzs -lws2_32 -Wl,--end-group -static-libstdc++ -static-libgcc
 #include <stdlib.h>
 #include "rawbridge.h"
 */
