@@ -6,6 +6,7 @@ package winclip
 import (
 	"errors"
 	"runtime"
+	"syscall"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -72,20 +73,24 @@ func PutBitmap(w, h int, pix []uint8) error {
 		return errors.New("打开剪贴板失败: " + err.Error())
 	}
 	defer procCloseClipboard.Call()
-	if r1, _, _ := procEmptyClipboard.Call(); r1 == 0 {
+	if r1, _, _ = procEmptyClipboard.Call(); r1 == 0 {
 		return errors.New("清空剪贴板失败")
 	}
-	hGlobal, _, err := procGlobalAlloc.Call(gmemMoveable, uintptr(len(dib)))
-	if hGlobal == 0 {
-		return errors.New("分配剪贴板内存失败: " + err.Error())
+	// syscall.SyscallN (not LazyProc.Call): go vet's unsafeptr check
+	// accepts a pointer conversion of a SyscallN result, which is exactly
+	// the GlobalLock hand-off below.
+	r1, _, _ := syscall.SyscallN(procGlobalAlloc.Addr(), gmemMoveable, uintptr(len(dib)))
+	if r1 == 0 {
+		return errors.New("分配剪贴板内存失败")
 	}
-	p, _, err := procGlobalLock.Call(hGlobal)
+	p, _, _ := syscall.SyscallN(procGlobalLock.Addr(), r1)
 	if p == 0 {
-		return errors.New("锁定剪贴板内存失败: " + err.Error())
+		return errors.New("锁定剪贴板内存失败")
 	}
 	copy(unsafe.Slice((*byte)(unsafe.Pointer(p)), len(dib)), dib)
-	procGlobalUnlock.Call(hGlobal)
-	if r1, _, _ := procSetClipData.Call(cfDIB, hGlobal); r1 == 0 {
+	procGlobalUnlock.Call(r1)
+	r1, _, _ = procSetClipData.Call(cfDIB, r1)
+	if r1 == 0 {
 		return errors.New("写入剪贴板失败")
 	}
 	// Ownership of hGlobal passed to the clipboard on success.
