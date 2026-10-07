@@ -6,6 +6,7 @@
     filterSession,
   } from "../state/filters";
   import { document, applyDocumentSnapshot } from "../state/document";
+  import { importImages } from "../state/workspace";
   import { Undo, Redo, ApplyFilter, SelectSubject, SelectObjectAt } from "../../../wailsjs/go/bridge/Service";
   import { setSelectionFromMaskData } from "../state/selection";
 
@@ -80,6 +81,21 @@
     close();
   }
 
+  // 导入图像…: the batch lands as one undo step; per-file failures gather
+  // into one alert exactly as the original's importError did.
+  async function runImportImages(): Promise<void> {
+    try {
+      const failures = await importImages();
+      if (failures && failures.length > 0) {
+        window.alert(`导入未能完成\n\n${failures.join("\n\n")}`);
+      }
+    } catch (err) {
+      console.warn("导入图像失败", err);
+      window.alert(`导入未能完成：${err instanceof Error ? err.message : String(err)}`);
+    }
+    close();
+  }
+
   const menus = $derived<Menu[]>([
     {
       label: "选择",
@@ -100,6 +116,7 @@
     {
       label: "文件",
       items: [
+        { label: "导入图像…", disabled: dialogOpen, run: () => void runImportImages() },
         { label: "撤销", hint: "⌘Z", run: () => void runUndoRedo("undo") },
         { label: "重做", hint: "⇧⌘Z", run: () => void runUndoRedo("redo") },
       ],

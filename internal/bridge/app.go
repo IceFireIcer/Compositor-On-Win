@@ -8,6 +8,7 @@ package bridge
 
 import (
 	"context"
+	"sync"
 
 	"compositor-win/internal/project"
 )
@@ -31,6 +32,11 @@ type Service struct {
 
 	openDialog func(ctx context.Context) (string, error)
 	saveDialog func(ctx context.Context) (string, error)
+
+	// Image import batch (ticket 40): files decoded by BeginImageImport
+	// wait here for the frontend's SVG rasters before the commit lands.
+	importMu      sync.Mutex
+	pendingImport []pendingImportFile
 }
 
 // NewService wires the service onto a workspace (shared with the

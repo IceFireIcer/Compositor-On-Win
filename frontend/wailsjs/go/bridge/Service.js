@@ -14,8 +14,16 @@ export function BeginFilterEdit(arg1, arg2, arg3, arg4, arg5) {
   return window['go']['bridge']['Service']['BeginFilterEdit'](arg1, arg2, arg3, arg4, arg5);
 }
 
+export function BeginImageImport(arg1) {
+  return window['go']['bridge']['Service']['BeginImageImport'](arg1);
+}
+
 export function BeginHealStroke(arg1, arg2, arg3, arg4, arg5, arg6, arg7) {
   return window['go']['bridge']['Service']['BeginHealStroke'](arg1, arg2, arg3, arg4, arg5, arg6, arg7);
+}
+
+export function CancelImageImport() {
+  return window['go']['bridge']['Service']['CancelImageImport']();
 }
 
 export function CameraRawAutoWhiteBalance() {
@@ -58,6 +66,10 @@ export function EndStroke() {
   return window['go']['bridge']['Service']['EndStroke']();
 }
 
+export function FinishImageImport(arg1) {
+  return window['go']['bridge']['Service']['FinishImageImport'](arg1);
+}
+
 export function HealPoint(arg1, arg2) {
   return window['go']['bridge']['Service']['HealPoint'](arg1, arg2);
 }
@@ -76,6 +88,10 @@ export function LevelsAuto(arg1) {
 
 export function OpenProjectDialog() {
   return window['go']['bridge']['Service']['OpenProjectDialog']();
+}
+
+export function PickImageImport() {
+  return window['go']['bridge']['Service']['PickImageImport']();
 }
 
 export function Redo() {

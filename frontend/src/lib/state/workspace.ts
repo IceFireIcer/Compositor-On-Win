@@ -4,7 +4,14 @@ import {
   NewDocument as NewDocumentRPC,
   Snapshot as GetSnapshot,
 } from "../../../wailsjs/go/bridge/Workspace";
-import { OpenProjectDialog, SaveProjectDialog } from "../../../wailsjs/go/bridge/Service";
+import {
+  BeginImageImport,
+  FinishImageImport,
+  OpenProjectDialog,
+  PickImageImport,
+  SaveProjectDialog,
+} from "../../../wailsjs/go/bridge/Service";
+import { rasterizeSVG } from "./svg";
 import { clearDocument, loadDocument } from "./document";
 
 /**
@@ -91,4 +98,51 @@ export async function saveProject(): Promise<{ path: string; rev: number } | nul
   applySnapshot(await GetSnapshot());
   await loadDocument();
   return { path: reply.path, rev: typeof reply.rev === "number" ? reply.rev : 0 };
+}
+
+/**
+ * 导入图像…（ticket 40）：多选文件 → Go 解码栅格 / SVG 交给前端栅格化 →
+ * 一次性提交。没有文档时首图定画布；有文档时追加为居中图层。返回失败的
+ * 文件清单（原版 importError 弹窗语义），取消选择返回 null。
+ */
+export async function importImages(): Promise<string[] | null> {
+  const paths = await PickImageImport();
+  if (!paths || paths.length === 0) return null;
+  const begin = JSON.parse(await BeginImageImport(paths)) as {
+    items: {
+      path: string;
+      status: "ok" | "svg" | "error";
+      name?: string;
+      svgW?: number;
+      svgH?: number;
+      svg?: string;
+      error?: string;
+    }[];
+    hasDocument: boolean;
+    canvasW: number;
+    canvasH: number;
+  };
+  const rasters: { name: string; png: string }[] = [];
+  const failures: string[] = [];
+  for (const item of begin.items) {
+    if (item.status === "error") {
+      const file = item.path.split(/[\/]/).pop() ?? item.path;
+      failures.push(`${file}: ${item.error ?? "导入失败"}`);
+      continue;
+    }
+    if (item.status === "svg") {
+      const { png } = await rasterizeSVG(
+        item.svg ?? "",
+        item.svgW ?? 0,
+        item.svgH ?? 0,
+        begin.hasDocument ? begin.canvasW : null,
+        begin.hasDocument ? begin.canvasH : null,
+      );
+      rasters.push({ name: item.name ?? "", png });
+    }
+  }
+  await FinishImageImport(JSON.stringify(rasters));
+  applySnapshot(await GetSnapshot());
+  await loadDocument();
+  return failures.length > 0 ? failures : [];
 }

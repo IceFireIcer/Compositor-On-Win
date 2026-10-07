@@ -7,19 +7,21 @@ import (
 )
 
 // BitmapFromImage converts a decoded PNG (straight alpha) into the
-// premultiplied working format.
+// premultiplied working format. color.Color's RGBA() already returns
+// alpha-premultiplied 16-bit values, so the conversion is a truncate —
+// multiplying by alpha again would double-premultiply every translucent
+// pixel.
 func BitmapFromImage(img image.Image) *Bitmap {
 	b := img.Bounds()
 	out := NewBitmap(b.Dx(), b.Dy())
 	for y := 0; y < b.Dy(); y++ {
 		for x := 0; x < b.Dx(); x++ {
 			r0, g0, b0, a0 := img.At(b.Min.X+x, b.Min.Y+y).RGBA()
-			a := a0 >> 8
 			i := (y*out.W + x) * 4
-			out.Pix[i] = uint8((r0 >> 8) * a / 255)
-			out.Pix[i+1] = uint8((g0 >> 8) * a / 255)
-			out.Pix[i+2] = uint8((b0 >> 8) * a / 255)
-			out.Pix[i+3] = uint8(a)
+			out.Pix[i] = uint8(r0 >> 8)
+			out.Pix[i+1] = uint8(g0 >> 8)
+			out.Pix[i+2] = uint8(b0 >> 8)
+			out.Pix[i+3] = uint8(a0 >> 8)
 		}
 	}
 	return out

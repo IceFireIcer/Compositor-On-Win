@@ -5,6 +5,7 @@ import {
   activeTab,
   closeTab,
   hasDocument,
+  importImages,
   newDocument,
   openProject,
   saveProject,
@@ -21,21 +22,29 @@ vi.mock("../../../wailsjs/go/bridge/Workspace", () => ({
   Snapshot: vi.fn(),
 }));
 vi.mock("../../../wailsjs/go/bridge/Service", () => ({
+  BeginImageImport: vi.fn(),
   DocumentSnapshot: vi.fn(),
+  FinishImageImport: vi.fn(),
   LayerOp: vi.fn(),
   OpenProjectDialog: vi.fn(),
+  PickImageImport: vi.fn(),
   SaveProjectDialog: vi.fn(),
 }));
+vi.mock("./svg", () => ({ rasterizeSVG: vi.fn() }));
 import {
   CloseTab,
   NewDocument as NewDocumentRPC,
   Snapshot as GetSnapshot,
 } from "../../../wailsjs/go/bridge/Workspace";
 import {
+  BeginImageImport,
   DocumentSnapshot,
+  FinishImageImport,
   OpenProjectDialog,
+  PickImageImport,
   SaveProjectDialog,
 } from "../../../wailsjs/go/bridge/Service";
+import { rasterizeSVG } from "./svg";
 
 import { bridge } from "../../../wailsjs/go/models";
 
@@ -64,6 +73,10 @@ const mockedGetSnapshot = vi.mocked(GetSnapshot);
 const mockedOpenDialog = vi.mocked(OpenProjectDialog);
 const mockedSaveDialog = vi.mocked(SaveProjectDialog);
 const mockedDocSnapshot = vi.mocked(DocumentSnapshot);
+const mockedPickImages = vi.mocked(PickImageImport);
+const mockedBeginImport = vi.mocked(BeginImageImport);
+const mockedFinishImport = vi.mocked(FinishImageImport);
+const mockedRasterizeSVG = vi.mocked(rasterizeSVG);
 
 function wireDoc(documentID: string, rev: number): string {
   return JSON.stringify({
@@ -193,5 +206,45 @@ describe("workspace ↔ document glue (ticket 04 wiring)", () => {
 
     await expect(saveProject()).resolves.toBeNull();
     expect(mockedGetSnapshot).not.toHaveBeenCalled();
+  });
+});
+
+describe("importImages (ticket 40)", () => {
+  it("canceling the picker leaves everything untouched", async () => {
+    mockedPickImages.mockResolvedValue([]);
+    expect(await importImages()).toBeNull();
+    expect(mockedBeginImport).not.toHaveBeenCalled();
+  });
+
+  it("rasterizes SVGs, commits the batch and refreshes both stores", async () => {
+    mockedPickImages.mockResolvedValue(["C:/pics/贴片.png", "C:/pics/图标.svg"]);
+    mockedBeginImport.mockResolvedValue(
+      JSON.stringify({
+        items: [
+          { path: "C:/pics/贴片.png", status: "ok", name: "贴片" },
+          { path: "C:/pics/图标.svg", status: "svg", name: "图标", svgW: 26.67, svgH: 37.8, svg: "U1ZH" },
+          { path: "C:/pics/bad.png", status: "error", error: "无法读取该图像：文件可能已损坏或不可用" },
+        ],
+        hasDocument: true,
+        canvasW: 100,
+        canvasH: 100,
+      }),
+    );
+    mockedRasterizeSVG.mockResolvedValue({ width: 71, height: 100, png: "UE5H" });
+    mockedFinishImport.mockResolvedValue(
+      JSON.stringify({ rev: 3, filterRev: 0, doc: { documentID: "doc-9", width: 100, height: 100 } }),
+    );
+    mockedGetSnapshot.mockResolvedValue(snapshot([{ id: "doc-9" }], "doc-9"));
+    mockedDocSnapshot.mockResolvedValue(
+      JSON.stringify({ rev: 3, filterRev: 0, doc: { documentID: "doc-9", width: 100, height: 100 } }),
+    );
+
+    const failures = await importImages();
+    expect(mockedFinishImport).toHaveBeenCalledWith(
+      JSON.stringify([{ name: "图标", png: "UE5H" }]),
+    );
+    expect(mockedRasterizeSVG).toHaveBeenCalledWith("U1ZH", 26.67, 37.8, 100, 100);
+    expect(failures).toEqual(["bad.png: 无法读取该图像：文件可能已损坏或不可用"]);
+    expect(get(document)?.docId).toBe("doc-9");
   });
 });
