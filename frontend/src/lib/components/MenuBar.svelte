@@ -8,6 +8,7 @@
   import { document, applyDocumentSnapshot } from "../state/document";
   import { importImages } from "../state/workspace";
   import { copyMerged, exportPNG, openExportJPEG } from "../state/export";
+  import { geometrySheet } from "../state/geometry";
   import { Undo, Redo, ApplyFilter, SelectSubject, SelectObjectAt } from "../../../wailsjs/go/bridge/Service";
   import { setSelectionFromMaskData } from "../state/selection";
 
@@ -79,6 +80,11 @@
     } catch (err) {
       console.warn(kind === "undo" ? "没有可撤销的操作" : "没有可重做的操作");
     }
+    close();
+  }
+
+  function openGeometry(kind: "canvasSize" | "imageSize" | "trim"): void {
+    geometrySheet.set(kind);
     close();
   }
 
@@ -171,6 +177,9 @@
           disabled: !hasLayer || dialogOpen,
           run: () => void runInvert("invertMask"),
         },
+        { label: "画布大小…", hint: "⌥⌘C", disabled: !hasLayer || dialogOpen, run: () => openGeometry("canvasSize") },
+        { label: "图像大小…", hint: "⌥⌘I", disabled: !hasLayer || dialogOpen, run: () => openGeometry("imageSize") },
+        { label: "修剪…", disabled: !hasLayer || dialogOpen, run: () => openGeometry("trim") },
       ],
     },
     {

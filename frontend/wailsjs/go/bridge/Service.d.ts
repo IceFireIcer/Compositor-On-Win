@@ -31,6 +31,8 @@ export function CancelImageImport():Promise<void>;
 
 export function CancelPendingOpen():Promise<void>;
 
+export function CanvasSize(arg1:string):Promise<string>;
+
 export function CommitFilter(arg1:string):Promise<string>;
 
 export function ConfirmPendingOpen():Promise<string>;
@@ -54,6 +56,8 @@ export function ExportPNG(arg1:string):Promise<string>;
 export function FinishImageImport():Promise<string>;
 
 export function HealPoint(arg1:number,arg2:number):Promise<string>;
+
+export function ImageSize(arg1:string):Promise<string>;
 
 export function LayerHistogram():Promise<string>;
 
@@ -88,6 +92,8 @@ export function SelectSubject():Promise<string>;
 export function Startup(arg1:context.Context):Promise<void>;
 
 export function StrokePoint(arg1:number,arg2:number):Promise<string>;
+
+export function Trim(arg1:string):Promise<string>;
 
 export function Undo():Promise<string>;
 

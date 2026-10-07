@@ -58,6 +58,10 @@ export function CancelPendingOpen() {
   return window['go']['bridge']['Service']['CancelPendingOpen']();
 }
 
+export function CanvasSize(arg1) {
+  return window['go']['bridge']['Service']['CanvasSize'](arg1);
+}
+
 export function CommitFilter(arg1) {
   return window['go']['bridge']['Service']['CommitFilter'](arg1);
 }
@@ -104,6 +108,10 @@ export function FinishImageImport() {
 
 export function HealPoint(arg1, arg2) {
   return window['go']['bridge']['Service']['HealPoint'](arg1, arg2);
+}
+
+export function ImageSize(arg1) {
+  return window['go']['bridge']['Service']['ImageSize'](arg1);
 }
 
 export function LayerHistogram() {
@@ -172,6 +180,10 @@ export function Startup(arg1) {
 
 export function StrokePoint(arg1, arg2) {
   return window['go']['bridge']['Service']['StrokePoint'](arg1, arg2);
+}
+
+export function Trim(arg1) {
+  return window['go']['bridge']['Service']['Trim'](arg1);
 }
 
 export function Undo() {

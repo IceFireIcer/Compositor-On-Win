@@ -33,6 +33,8 @@
     openExportJPEG,
   } from "./lib/state/export";
   import ExportDialog from "./lib/components/ExportDialog.svelte";
+  import GeometrySheet from "./lib/components/GeometrySheet.svelte";
+  import { geometrySheet } from "./lib/state/geometry";
   import RawDevelopSheet from "./lib/components/RawDevelopSheet.svelte";
   import { rawDevelop } from "./lib/state/rawdevelop";
 
@@ -98,6 +100,20 @@
     if (!(event.metaKey || event.ctrlKey) || $filterSession) return;
     // File-export shortcuts (ticket 42): ⇧⌘E 导出 PNG / ⇧⌥⌘S 导出 JPEG /
     // ⇧⌘C 拷贝合并 — the original's C06/C07/C12 bindings.
+    // Document geometry (ticket 43): ⌥⌘C 画布大小 / ⌥⌘I 图像大小.
+    if (event.altKey && !event.shiftKey) {
+      const geometry = event.key.toLowerCase();
+      if (geometry === "c") {
+        event.preventDefault();
+        geometrySheet.set("canvasSize");
+        return;
+      }
+      if (geometry === "i") {
+        event.preventDefault();
+        geometrySheet.set("imageSize");
+        return;
+      }
+    }
     if (event.shiftKey) {
       const file = event.key.toLowerCase();
       if (file === "e" && !event.altKey) {
@@ -331,6 +347,10 @@
 
 {#if $filterSession && $filterSession.kind !== "cameraRaw"}
   <FilterDialog />
+{/if}
+
+{#if $geometrySheet}
+  <GeometrySheet />
 {/if}
 
 {#if psdReport}
