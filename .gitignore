@@ -37,3 +37,4 @@ Thumbs.db
 .env
 # vcpkg manifest-mode install output (rebuilt from vcpkg.json)
 vcpkg_installed/
+.scratch/
