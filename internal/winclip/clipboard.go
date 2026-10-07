@@ -56,13 +56,7 @@ func PutBitmap(w, h int, pix []uint8) error {
 		dst[3] = uint8(a)
 	}
 
-	var data []byte
-	if len(dib) > 0 {
-		data = dib
-	} else {
-		data = []byte{0}
-	}
-	switch C.clip_put_dib((*C.uchar)(unsafe.Pointer(&data[0])), C.ulong(len(dib))) {
+	switch C.clip_put_dib((*C.uchar)(unsafe.Pointer(&dib[0])), C.ulong(len(dib))) {
 	case 0:
 		return nil
 	case 1:

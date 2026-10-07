@@ -30,7 +30,7 @@ vi.mock("../../../wailsjs/go/bridge/Service", () => ({
   PickImageImport: vi.fn(),
   SaveProjectDialog: vi.fn(),
 }));
-vi.mock("./svg", () => ({ rasterizeSVG: vi.fn() }));
+vi.mock("./svg", () => ({ rasterizeSVG: vi.fn(), uploadRaster: vi.fn() }));
 import {
   CloseTab,
   NewDocument as NewDocumentRPC,
@@ -44,7 +44,7 @@ import {
   PickImageImport,
   SaveProjectDialog,
 } from "../../../wailsjs/go/bridge/Service";
-import { rasterizeSVG } from "./svg";
+import { rasterizeSVG, uploadRaster } from "./svg";
 
 import { bridge } from "../../../wailsjs/go/models";
 
@@ -77,6 +77,7 @@ const mockedPickImages = vi.mocked(PickImageImport);
 const mockedBeginImport = vi.mocked(BeginImageImport);
 const mockedFinishImport = vi.mocked(FinishImageImport);
 const mockedRasterizeSVG = vi.mocked(rasterizeSVG);
+const mockedUploadRaster = vi.mocked(uploadRaster);
 
 function wireDoc(documentID: string, rev: number): string {
   return JSON.stringify({
@@ -222,7 +223,15 @@ describe("importImages (ticket 40)", () => {
       JSON.stringify({
         items: [
           { path: "C:/pics/贴片.png", status: "ok", name: "贴片" },
-          { path: "C:/pics/图标.svg", status: "svg", name: "图标", svgW: 26.67, svgH: 37.8, svg: "U1ZH" },
+          {
+        path: "C:/pics/图标.svg",
+        status: "svg",
+        name: "图标",
+        svgW: 26.67,
+        svgH: 37.8,
+        svg: "/pixel/stage/abc.svg",
+        uploadUrl: "/pixel/upload/tok123",
+      },
           { path: "C:/pics/bad.png", status: "error", error: "无法读取该图像：文件可能已损坏或不可用" },
         ],
         hasDocument: true,
@@ -230,7 +239,8 @@ describe("importImages (ticket 40)", () => {
         canvasH: 100,
       }),
     );
-    mockedRasterizeSVG.mockResolvedValue({ width: 71, height: 100, png: "UE5H" });
+    mockedRasterizeSVG.mockResolvedValue({ width: 71, height: 100, blob: new Blob(["PNG"]) });
+    mockedUploadRaster.mockResolvedValue(undefined);
     mockedFinishImport.mockResolvedValue(
       JSON.stringify({ rev: 3, filterRev: 0, doc: { documentID: "doc-9", width: 100, height: 100 } }),
     );
@@ -240,10 +250,9 @@ describe("importImages (ticket 40)", () => {
     );
 
     const failures = await importImages();
-    expect(mockedFinishImport).toHaveBeenCalledWith(
-      JSON.stringify([{ name: "图标", png: "UE5H" }]),
-    );
-    expect(mockedRasterizeSVG).toHaveBeenCalledWith("U1ZH", 26.67, 37.8, 100, 100);
+    expect(mockedRasterizeSVG).toHaveBeenCalledWith("/pixel/stage/abc.svg", 26.67, 37.8, 100, 100);
+    expect(mockedUploadRaster).toHaveBeenCalledWith("/pixel/upload/tok123", expect.any(Blob));
+    expect(mockedFinishImport).toHaveBeenCalledWith();
     expect(failures).toEqual({
       failures: ["bad.png: 无法读取该图像：文件可能已损坏或不可用"],
       raws: [],

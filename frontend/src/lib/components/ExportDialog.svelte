@@ -1,5 +1,6 @@
 <script lang="ts">
   import {
+    JPEG_ZOOM_STEPS,
     beginExportPreview,
     commitExportJPEG,
     endExportPreview,
@@ -15,25 +16,50 @@
    */
 
   let quality = $state(85);
-  let zoom = $state(0); // 0 = fit, 1 = 100%, 2 = 200%
+  // JPEGPreview.steps: Fit (null) and the 0.25×…8× ladder, plus a free
+  // "Fit ↔ 100%" toggle on double-click.
+  let zoom = $state<number | null>(null);
   let exporting = $state(false);
   let error = $state<string | null>(null);
   let { onClose }: { onClose?: () => void } = $props();
 
   const preview = $derived($exportPreview);
 
+  function stepZoom(direction: 1 | -1): void {
+    const current = zoom ?? 1;
+    const ladder = JPEG_ZOOM_STEPS as readonly number[];
+    if (direction === 1) {
+      const next = ladder.find((z) => z > current + 1e-9);
+      if (next !== undefined) zoom = next;
+    } else {
+      const next = [...ladder].reverse().find((z) => z < current - 1e-9);
+      if (next !== undefined && next >= 0.25) zoom = next;
+    }
+  }
+
+  function toggleFit(): void {
+    zoom = zoom === null ? 1 : null;
+  }
+
+  function setBackground(event: Event): void {
+    const value = (event.target as HTMLInputElement).value;
+    preview && exportPreview.update((state) => (state ? { ...state, background: value } : state));
+  }
+
   $effect(() => {
     void beginExportPreview();
     return () => endExportPreview();
   });
 
-  // Quality slider → re-encode (debounced like the filter previews).
+  // Quality/background → re-encode (debounced like the filter previews).
   let debounce: ReturnType<typeof setTimeout> | null = null;
   $effect(() => {
+    const bg = preview?.background ?? "#ffffff";
     void quality;
+    void bg;
     if (debounce) clearTimeout(debounce);
     debounce = setTimeout(() => {
-      void updateExportPreview(quality).catch((err) => {
+      void updateExportPreview(quality, bg).catch((err) => {
         error = err instanceof Error ? err.message : String(err);
       });
     }, 150);
@@ -42,13 +68,11 @@
     };
   });
 
-  const zoomLabels = ["适应", "100%", "200%"];
-
   async function doExport(): Promise<void> {
     exporting = true;
     error = null;
     try {
-      if (await commitExportJPEG(quality)) close();
+      if (await commitExportJPEG(quality, preview?.background ?? "#ffffff")) close();
     } catch (err) {
       error = err instanceof Error ? err.message : String(err);
     } finally {
@@ -72,12 +96,17 @@
     <h2>导出 JPEG</h2>
     <div class="preview-area">
       {#if preview?.jpegURL}
-        <div class="preview-scroll">
+        <div
+          class="preview-scroll"
+          role="presentation"
+          ondblclick={toggleFit}
+        >
           <img
             src={preview.jpegURL}
             alt="JPEG 导出预览"
-            style:width={zoom === 0 ? "100%" : zoom === 1 ? "auto" : "200%"}
-            style:image-rendering={zoom >= 2 ? "pixelated" : "auto"}
+            style:width={zoom === null ? "100%" : "auto"}
+            style:max-width={zoom === null ? "100%" : "none"}
+            style:image-rendering={zoom !== null && zoom >= 2 ? "pixelated" : "auto"}
           />
         </div>
         <div class="preview-meta">
@@ -86,9 +115,10 @@
               · 预览约 {formatBytes(preview.size)}（导出按原始分辨率）{/if}
           </span>
           <span class="zoom">
-            <button type="button" onclick={() => (zoom = Math.max(0, zoom - 1))}>−</button>
-            {zoomLabels[zoom]}
-            <button type="button" onclick={() => (zoom = Math.min(2, zoom + 1))}>＋</button>
+            <button type="button" disabled={zoom === null} onclick={() => (zoom = null)}>适应</button>
+            <button type="button" onclick={() => stepZoom(-1)}>−</button>
+            {zoom === null ? "适应" : `${Math.round(zoom * 100)}%`}
+            <button type="button" onclick={() => stepZoom(1)}>＋</button>
           </span>
         </div>
       {:else}
@@ -98,6 +128,10 @@
     <label class="quality">
       <span>质量：{quality}%</span>
       <input type="range" min="1" max="100" bind:value={quality} />
+    </label>
+    <label class="background">
+      <span>透明区域背景色</span>
+      <input type="color" value={preview?.background ?? "#ffffff"} oninput={setBackground} />
     </label>
     {#if error}
       <p class="error">{error}</p>
@@ -151,9 +185,29 @@
     display: flex;
   }
 
+  .preview-scroll {
+    cursor: zoom-in;
+  }
+
   .preview-scroll img {
     display: block;
     margin: 0 auto;
+  }
+
+  .background {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 12px;
+    font-size: 13px;
+  }
+
+  .background input {
+    width: 42px;
+    height: 24px;
+    padding: 0;
+    border: 1px solid var(--border);
+    background: none;
   }
 
   .placeholder {

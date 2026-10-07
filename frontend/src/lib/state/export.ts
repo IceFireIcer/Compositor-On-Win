@@ -68,47 +68,40 @@ export interface ExportPreviewState {
   height: number;
   jpegURL: string | null;
   size: number;
+  /** Background colour for transparency, "#rrggbb" (JPEGOptions). */
+  background: string;
 }
 
 export const exportPreview = writable<ExportPreviewState | null>(null);
 
 export async function beginExportPreview(): Promise<void> {
   const reply = JSON.parse(await BeginExportPreview()) as { width: number; height: number };
-  exportPreview.set({ width: reply.width, height: reply.height, jpegURL: null, size: 0 });
+  exportPreview.set({ width: reply.width, height: reply.height, jpegURL: null, size: 0, background: "#ffffff" });
 }
 
 let previewSeq = 0;
 
-/** Re-encode the held preview at quality (1–100) for the dialog's <img>. */
-export async function updateExportPreview(quality: number): Promise<void> {
+/** Re-encode the held preview at quality (1–100) and the chosen background. */
+export async function updateExportPreview(quality: number, background: string): Promise<void> {
   const seq = ++previewSeq;
-  const reply = JSON.parse(await ExportJPEGPreview(quality)) as { jpeg: string; size: number };
+  const reply = JSON.parse(await ExportJPEGPreview(quality, background)) as { url: string; size: number };
   if (seq !== previewSeq) return; // a newer slider move superseded this one
-  const bytes = Uint8Array.from(atob(reply.jpeg), (c) => c.charCodeAt(0));
-  const url = URL.createObjectURL(new Blob([bytes.buffer as ArrayBuffer], { type: "image/jpeg" }));
-  exportPreview.update((state) => {
-    if (state?.jpegURL) URL.revokeObjectURL(state.jpegURL);
-    return state ? { ...state, jpegURL: url, size: reply.size } : state;
-  });
+  // The JPEG is staged on the HTTP pixel plane; ?v busts the WebView cache
+  // as successive quality moves reuse the same live URL prefix.
+  exportPreview.update((state) =>
+    state ? { ...state, jpegURL: `${reply.url}?v=${seq}`, size: reply.size, background } : state,
+  );
 }
 
 export function endExportPreview(): void {
   previewSeq++;
-  const state = $getPreview();
-  if (state?.jpegURL) URL.revokeObjectURL(state.jpegURL);
   exportPreview.set(null);
   void EndExportPreview();
 }
 
-function $getPreview(): ExportPreviewState | null {
-  let value: ExportPreviewState | null = null;
-  exportPreview.subscribe((v) => (value = v))();
-  return value;
-}
-
-/** Commit the JPEG at the chosen quality; returns false on cancel. */
-export async function commitExportJPEG(quality: number): Promise<boolean> {
-  const reply = JSON.parse(await ExportJPEG(quality, rememberedName("jpg"))) as { path?: string };
+/** Commit the JPEG at the chosen quality and background; false on cancel. */
+export async function commitExportJPEG(quality: number, background: string): Promise<boolean> {
+  const reply = JSON.parse(await ExportJPEG(quality, background, rememberedName("jpg"))) as { path?: string };
   if (reply.path) {
     rememberName(reply.path);
     showExportNotice(`已导出 JPEG：${reply.path}`);
@@ -116,6 +109,9 @@ export async function commitExportJPEG(quality: number): Promise<boolean> {
   }
   return false;
 }
+
+/** JPEG zoom steps, JPEGPreview.steps (Fit is a separate button). */
+export const JPEG_ZOOM_STEPS = [0.25, 0.5, 1, 2, 4, 8] as const;
 
 /** 拷贝合并 (⇧⌘C): the flattened composite into the system clipboard. */
 export async function copyMerged(): Promise<void> {

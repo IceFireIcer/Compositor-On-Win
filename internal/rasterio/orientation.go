@@ -125,6 +125,11 @@ func pngEXIFOrientation(data []byte) int {
 	return 1
 }
 
+// TIFFOrientation reads IFD0's orientation tag from a TIFF/EXIF payload
+// (shared with the HEIC decode path, whose metadata block wraps the same
+// layout after a 4-byte header offset).
+func TIFFOrientation(data []byte) int { return tiffOrientation(data) }
+
 // tiffOrientation reads IFD0's orientation tag straight from a TIFF file
 // header (also reused for EXIF and eXIf payloads, which share the layout).
 func tiffOrientation(data []byte) int {

@@ -7,9 +7,9 @@ package bridge
 // BeginImageImport).
 
 import (
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"sync"
 
@@ -36,19 +36,12 @@ var heicExtensions = map[string]bool{
 
 // IsRAWPath reports whether the extension routes through the develop sheet.
 func IsRAWPath(path string) bool {
-	return rawExtensions[strings.ToLower(filepathExt(path))]
+	return rawExtensions[strings.ToLower(filepath.Ext(path))]
 }
 
 // IsHEICPath reports whether the extension decodes via libheif.
 func IsHEICPath(path string) bool {
-	return heicExtensions[strings.ToLower(filepathExt(path))]
-}
-
-func filepathExt(path string) string {
-	if i := strings.LastIndexByte(path, '.'); i >= 0 {
-		return path[i:]
-	}
-	return ""
+	return heicExtensions[strings.ToLower(filepath.Ext(path))]
 }
 
 // rawDevelopReply is RawBeginDevelop's reply: the half-size session's
@@ -67,6 +60,13 @@ type rawDevelopSession struct {
 	session *rawio.Session
 	name    string
 	half    bool
+	stage   []string // staged preview URLs, released when the sheet closes
+}
+
+// stagedPixel is one encoded bitmap waiting on the HTTP pixel plane.
+type stagedPixel struct {
+	data []byte
+	mime string
 }
 
 // RawBeginDevelop opens the half-size session and reads the camera's own
@@ -81,6 +81,7 @@ func (s *Service) RawBeginDevelop(path string) (string, error) {
 	defer s.rawMu.Unlock()
 	if s.rawSession != nil {
 		s.rawSession.session.Close()
+		s.releaseStagedURLs(s.rawSession.stage)
 	}
 	s.rawSession = &rawDevelopSession{session: sess, name: baseDisplayName(path), half: true}
 	asShot := rawio.CameraAsShot(sess.CamMul[0], sess.CamMul[1], sess.CamMul[2])
@@ -98,16 +99,17 @@ func (s *Service) RawBeginDevelop(path string) (string, error) {
 	return string(b), nil
 }
 
-// rawPreviewReply carries the developed preview: JPEG bytes (quality 90)
-// and the frame size the sheet displays.
+// rawPreviewReply points the sheet at the staged preview on the HTTP pixel
+// plane (never base64 through the bridge) and reports the frame size.
 type rawPreviewReply struct {
-	JPEG   string `json:"jpeg"`
+	URL    string `json:"url"`
 	Size   int    `json:"size"`
 	Width  int    `json:"width"`
 	Height int    `json:"height"`
 }
 
-const rawPreviewLimit = 2048
+// rawPreviewLimit is the original sheet's preview limit (limit: 800).
+const rawPreviewLimit = 800
 
 // RawDevelopPreview re-develops the held half-size frame with the given
 // settings and returns a JPEG preview. The develop is seconds of work on
@@ -138,8 +140,10 @@ func (s *Service) RawDevelopPreview(settingsJSON string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("预览编码失败: %w", err)
 	}
+	url := s.stagePixel(data, "image/jpeg")
+	s.rawSession.stage = append(s.rawSession.stage, url)
 	reply := rawPreviewReply{
-		JPEG:   base64.StdEncoding.EncodeToString(data),
+		URL:    url,
 		Size:   len(data),
 		Width:  preview.W,
 		Height: preview.H,
@@ -168,9 +172,9 @@ func (s *Service) RawFinishDevelop(path string, settingsJSON string) (string, er
 	}
 	defer full.Close()
 	if full.Width > domain.MaxSide || full.Height > domain.MaxSide ||
-		full.Width*full.Height > domain.MaxSurfacePixels {
+		full.Width*full.Height > domain.DocumentPixelBudget() {
 		return "", fmt.Errorf("导入超过当前 %.0f 百万像素文档预算或 %d 像素边长限制",
-			float64(domain.MaxSurfacePixels)/1e6, domain.MaxSide)
+			float64(domain.DocumentPixelBudget())/1e6, domain.MaxSide)
 	}
 	pix, w, h, err := developFromSession(full, settings)
 	if err != nil {
@@ -178,7 +182,7 @@ func (s *Service) RawFinishDevelop(path string, settingsJSON string) (string, er
 	}
 	bmp := render.NewBitmap(w, h)
 	copy(bmp.Pix, pix)
-	return s.ws.CommitImportedLayers([]pendingImportFile{{name: baseDisplayName(path), bmp: bmp}})
+	return s.ws.commitImportedLayers([]pendingImportFile{{name: baseDisplayName(path), bmp: bmp}})
 }
 
 // RawCancelDevelop releases the half-size session (sheet closed).
@@ -187,6 +191,7 @@ func (s *Service) RawCancelDevelop() {
 	defer s.rawMu.Unlock()
 	if s.rawSession != nil {
 		s.rawSession.session.Close()
+		s.releaseStagedURLs(s.rawSession.stage)
 		s.rawSession = nil
 	}
 }

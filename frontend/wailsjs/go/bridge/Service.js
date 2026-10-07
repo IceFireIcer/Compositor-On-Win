@@ -86,20 +86,20 @@ export function EndStroke() {
   return window['go']['bridge']['Service']['EndStroke']();
 }
 
-export function ExportJPEG(arg1, arg2) {
-  return window['go']['bridge']['Service']['ExportJPEG'](arg1, arg2);
+export function ExportJPEG(arg1, arg2, arg3) {
+  return window['go']['bridge']['Service']['ExportJPEG'](arg1, arg2, arg3);
 }
 
-export function ExportJPEGPreview(arg1) {
-  return window['go']['bridge']['Service']['ExportJPEGPreview'](arg1);
+export function ExportJPEGPreview(arg1, arg2) {
+  return window['go']['bridge']['Service']['ExportJPEGPreview'](arg1, arg2);
 }
 
 export function ExportPNG(arg1) {
   return window['go']['bridge']['Service']['ExportPNG'](arg1);
 }
 
-export function FinishImageImport(arg1) {
-  return window['go']['bridge']['Service']['FinishImageImport'](arg1);
+export function FinishImageImport() {
+  return window['go']['bridge']['Service']['FinishImageImport']();
 }
 
 export function HealPoint(arg1, arg2) {

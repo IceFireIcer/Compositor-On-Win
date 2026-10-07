@@ -7,11 +7,11 @@ package bridge
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
@@ -43,11 +43,12 @@ var (
 // suite never clobbers a real clipboard.
 var copyToClipboard = winclip.PutBitmap
 
-// FlattenActive renders the committed document through the CPU compositor —
+// flattenActive renders the committed document through the CPU compositor —
 // the export truth. Live filter previews do not substitute: an export
 // always reflects the committed layers, as the original's snapshot-based
-// export did. Returns the bitmap and the document resolution.
-func (w *Workspace) FlattenActive() (*render.Bitmap, int, error) {
+// export did. Returns the bitmap and the document resolution. Unexported:
+// bitmaps never sit on the Wails binding surface (architecture §3.3).
+func (w *Workspace) flattenActive() (*render.Bitmap, int, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	sess := w.activeSessionLocked()
@@ -72,10 +73,10 @@ type exportPreviewReply struct {
 	Height int `json:"height"`
 }
 
-// exportJPEGReply carries the live JPEG preview: base64 payload and its
-// encoded size for the dialog's size readout.
+// exportJPEGReply points the dialog at the staged preview on the HTTP pixel
+// plane (never base64 through the bridge) and reports its encoded size.
 type exportJPEGReply struct {
-	JPEG string `json:"jpeg"`
+	URL  string `json:"url"`
 	Size int    `json:"size"`
 }
 
@@ -86,12 +87,14 @@ func (s *Service) BeginExportPreview() (string, error) {
 	if s.ws == nil {
 		return "", errNoDocument
 	}
-	bmp, _, err := s.ws.FlattenActive()
+	bmp, _, err := s.ws.flattenActive()
 	if err != nil {
 		return "", err
 	}
 	s.exportMu.Lock()
 	defer s.exportMu.Unlock()
+	s.releaseStagedURLs(s.exportStage)
+	s.exportStage = nil
 	s.exportRaster = bmp
 	const previewLimit = 2048
 	preview := bmp
@@ -107,33 +110,39 @@ func (s *Service) BeginExportPreview() (string, error) {
 	return string(b), nil
 }
 
-// EndExportPreview releases the held raster when the dialog closes.
+// EndExportPreview releases the held raster and its staged previews when
+// the dialog closes.
 func (s *Service) EndExportPreview() {
 	s.exportMu.Lock()
 	defer s.exportMu.Unlock()
+	s.releaseStagedURLs(s.exportStage)
+	s.exportStage = nil
 	s.exportRaster = nil
 	s.exportPreview = nil
 }
 
 // ExportJPEGPreview re-encodes the held preview at the given quality
-// (1–100); the JPEG bytes go back base64 so the dialog can show the real
-// artifacts at 100%.
-func (s *Service) ExportJPEGPreview(quality int) (string, error) {
+// (1–100) over the dialog's background colour; the JPEG is staged on the
+// HTTP pixel plane so the dialog shows the real artifacts at 100%.
+func (s *Service) ExportJPEGPreview(quality int, background string) (string, error) {
 	s.exportMu.Lock()
 	defer s.exportMu.Unlock()
 	if s.exportPreview == nil {
 		return "", fmt.Errorf("没有进行中的导出预览")
 	}
-	data, err := render.EncodeJPEGWithDPI(s.exportPreview, quality, 0, 255, 255, 255)
+	br, bg, bb := parseBackground(background)
+	data, err := render.EncodeJPEGWithDPI(s.exportPreview, quality, 0, br, bg, bb)
 	if err != nil {
 		return "", fmt.Errorf("图像无法编码: %w", err)
 	}
-	reply := exportJPEGReply{JPEG: base64.StdEncoding.EncodeToString(data), Size: len(data)}
-	b, err := json.Marshal(reply)
+	url := s.stagePixel(data, "image/jpeg")
+	s.exportStage = append(s.exportStage, url)
+	reply := exportJPEGReply{URL: url, Size: len(data)}
+	encoded, err := json.Marshal(reply)
 	if err != nil {
 		return "", fmt.Errorf("无法编码预览: %w", err)
 	}
-	return string(b), nil
+	return string(encoded), nil
 }
 
 // ExportPNG asks for a destination (the frontend passes the remembered
@@ -145,11 +154,26 @@ func (s *Service) ExportPNG(defaultName string) (string, error) {
 }
 
 // ExportJPEG is the same path with the quality slider's value; the
-// composite lands on an opaque white background (JPEGOptions defaults).
-func (s *Service) ExportJPEG(quality int, defaultName string) (string, error) {
+// composite lands on the chosen background (JPEG background for
+// transparency; white by default, JPEGOptions' own default).
+func (s *Service) ExportJPEG(quality int, background string, defaultName string) (string, error) {
+	br, bg, bb := parseBackground(background)
 	return s.exportFile("导出 JPEG", defaultName, jpegFilter, ".jpg", func(bmp *render.Bitmap, res int) ([]byte, error) {
-		return render.EncodeJPEGWithDPI(bmp, quality, res, 255, 255, 255)
+		return render.EncodeJPEGWithDPI(bmp, quality, res, br, bg, bb)
 	})
+}
+
+// parseBackground reads "#rrggbb" (anything else uses white).
+func parseBackground(hex string) (uint8, uint8, uint8) {
+	hex = strings.TrimPrefix(hex, "#")
+	if len(hex) != 6 {
+		return 255, 255, 255
+	}
+	value, err := strconv.ParseUint(hex, 16, 32)
+	if err != nil {
+		return 255, 255, 255
+	}
+	return uint8(value >> 16), uint8(value >> 8), uint8(value)
 }
 
 func (s *Service) exportFile(title, defaultName string, filter runtime.FileFilter, ext string, encode func(*render.Bitmap, int) ([]byte, error)) (string, error) {
@@ -163,10 +187,14 @@ func (s *Service) exportFile(title, defaultName string, filter runtime.FileFilte
 	if picked == "" {
 		return `{"path":""}`, nil
 	}
-	if !strings.EqualFold(filepath.Ext(picked), ext) {
+	accepted := []string{ext}
+	if ext == ".jpg" {
+		accepted = append(accepted, ".jpeg")
+	}
+	if !containsFold(accepted, filepath.Ext(picked)) {
 		picked += ext
 	}
-	bmp, res, err := s.ws.FlattenActive()
+	bmp, res, err := s.ws.flattenActive()
 	if err != nil {
 		return "", err
 	}
@@ -178,6 +206,16 @@ func (s *Service) exportFile(title, defaultName string, filter runtime.FileFilte
 		return "", fmt.Errorf("写入 %s 失败: %w", filepath.Base(picked), err)
 	}
 	return marshalExportPath(picked)
+}
+
+// containsFold reports whether list holds name, case-insensitively.
+func containsFold(list []string, name string) bool {
+	for _, item := range list {
+		if strings.EqualFold(item, name) {
+			return true
+		}
+	}
+	return false
 }
 
 func marshalExportPath(path string) (string, error) {
@@ -204,7 +242,7 @@ func (s *Service) CopyMerged() (string, error) {
 	if s.ws == nil {
 		return "", errNoDocument
 	}
-	bmp, _, err := s.ws.FlattenActive()
+	bmp, _, err := s.ws.flattenActive()
 	if err != nil {
 		return "", err
 	}

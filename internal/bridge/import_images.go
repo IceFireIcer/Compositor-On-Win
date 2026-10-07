@@ -2,7 +2,6 @@ package bridge
 
 import (
 	"bytes"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"image/png"
@@ -24,18 +23,23 @@ import (
 // imageFilter is the file-dialog filter for the import batch: the raster
 // formats decoded in Go plus SVG (rasterized by the frontend). RAW/HEIC
 // join with ticket 41.
-var imageFilter = runtime.FileFilter{DisplayName: "图像文件", Pattern: "*.jpg;*.jpeg;*.png;*.tif;*.tiff;*.svg"}
+var imageFilter = runtime.FileFilter{DisplayName: "图像文件",
+	Pattern: "*.jpg;*.jpeg;*.png;*.tif;*.tiff;*.svg;*.heic;*.heif;*.hif;" +
+		"*.cr2;*.cr3;*.crw;*.nef;*.nrw;*.arw;*.srf;*.sr2;*.dng;*.raf;*.orf;*.rw2;*.pef;*.srw;*.x3f;*.3fr;*.fff;*.iiq;*.kdc;*.dcr;*.mef;*.mos;*.mrw;*.ptx;*.rdc"}
 
 // importItem reports one picked file: decoded (ok), handed to the frontend
-// for SVG rasterization (svg), or refused (error).
+// for SVG rasterization (svg — the SVG source waits on the HTTP pixel
+// plane, never base64 through the bridge), a RAW develop-sheet item (raw),
+// or refused (error).
 type importItem struct {
-	Path   string  `json:"path"`
-	Status string  `json:"status"`
-	Name   string  `json:"name,omitempty"`
-	SvgW   float64 `json:"svgW,omitempty"`
-	SvgH   float64 `json:"svgH,omitempty"`
-	SVG    string  `json:"svg,omitempty"`
-	Error  string  `json:"error,omitempty"`
+	Path      string  `json:"path"`
+	Status    string  `json:"status"`
+	Name      string  `json:"name,omitempty"`
+	SvgW      float64 `json:"svgW,omitempty"`
+	SvgH      float64 `json:"svgH,omitempty"`
+	SVG       string  `json:"svg,omitempty"`
+	UploadURL string  `json:"uploadUrl,omitempty"`
+	Error     string  `json:"error,omitempty"`
 }
 
 // importBegin is BeginImageImport's reply; canvas lets the frontend fit
@@ -48,16 +52,30 @@ type importBegin struct {
 }
 
 // pendingImportFile is one decoded file waiting for the commit. A nil
-// bitmap marks an SVG placeholder the frontend still has to rasterize.
+// bitmap marks an SVG placeholder the frontend still has to rasterize,
+// identified by its upload token (the PUT target on the pixel plane).
 type pendingImportFile struct {
-	name string
-	bmp  *render.Bitmap
+	name   string
+	bmp    *render.Bitmap
+	upload string
 }
 
-// svgRaster is the frontend's answer for one SVG placeholder.
-type svgRaster struct {
-	Name string `json:"name"`
-	PNG  string `json:"png"`
+// storeUploadedRaster receives one rasterized SVG (PUT body = PNG bytes)
+// and slots it into the pending import batch by its upload token.
+func (s *Service) storeUploadedRaster(token string, data []byte) error {
+	s.importMu.Lock()
+	defer s.importMu.Unlock()
+	for i := range s.pendingImport {
+		if s.pendingImport[i].upload == token {
+			img, err := png.Decode(bytes.NewReader(data))
+			if err != nil {
+				return fmt.Errorf("SVG 的栅格无法解码: %w", err)
+			}
+			s.pendingImport[i].bmp = render.BitmapFromImage(img)
+			return nil
+		}
+	}
+	return fmt.Errorf("没有等待该上传的 SVG")
 }
 
 // PickImageImport shows the multi-file import dialog; an empty result
@@ -87,15 +105,15 @@ func (s *Service) BeginImageImport(paths []string) (string, error) {
 	s.importMu.Lock()
 	defer s.importMu.Unlock()
 	s.pendingImport = nil
-	remaining := domain.MaxSurfacePixels
-	canvasW, canvasH, hasDoc := s.ws.ActiveCanvasInfo()
+	remaining := domain.DocumentPixelBudget()
+	canvasW, canvasH, hasDoc := s.ws.activeCanvasInfo()
 	if hasDoc {
-		remaining -= s.ws.ActiveUsedPixels()
+		remaining -= s.ws.activeUsedPixels()
 	}
 	items := make([]importItem, 0, len(paths))
 	for _, path := range paths {
 		item := importItem{Path: path}
-		if strings.EqualFold(svgExt(path), ".svg") {
+		if strings.EqualFold(filepath.Ext(path), ".svg") {
 			data, err := readSVGSource(path)
 			if err != nil {
 				item.Status = "error"
@@ -110,11 +128,20 @@ func (s *Service) BeginImageImport(paths []string) (string, error) {
 				items = append(items, item)
 				continue
 			}
+			// decodeSVG's guard: the declared size must fit the side limit
+			// and the pixel budget before anything rasterizes.
+			if w > domain.MaxSide || h > domain.MaxSide || int(w*h) > remaining {
+				item.Status = "error"
+				item.Error = rasterio.NewTooLarge(int(w), int(h), remaining).Error()
+				items = append(items, item)
+				continue
+			}
 			item.Status = "svg"
 			item.Name = strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
 			item.SvgW, item.SvgH = w, h
-			item.SVG = base64.StdEncoding.EncodeToString(data)
-			s.pendingImport = append(s.pendingImport, pendingImportFile{name: item.Name})
+			item.SVG = s.stagePixel(data, "image/svg+xml")
+			item.UploadURL = "/pixel/upload/" + newPixelToken()
+			s.pendingImport = append(s.pendingImport, pendingImportFile{name: item.Name, upload: strings.TrimPrefix(item.UploadURL, "/pixel/upload/")})
 			items = append(items, item)
 			continue
 		}
@@ -162,10 +189,10 @@ func (s *Service) BeginImageImport(paths []string) (string, error) {
 	return string(b), nil
 }
 
-// FinishImageImport takes the frontend's SVG rasters (data-URL PNGs drawn
-// at the fitted size), slots them into the buffered order, and commits the
-// whole batch as one history entry.
-func (s *Service) FinishImageImport(svgsJSON string) (string, error) {
+// FinishImageImport commits the buffered import batch as one history entry.
+// SVG rasterizations have already landed through the HTTP pixel plane
+// (PUT /pixel/upload/<token>), so only a completeness check runs here.
+func (s *Service) FinishImageImport() (string, error) {
 	if s.ws == nil {
 		return "", errNoDocument
 	}
@@ -174,36 +201,16 @@ func (s *Service) FinishImageImport(svgsJSON string) (string, error) {
 	if len(s.pendingImport) == 0 {
 		return "", fmt.Errorf("没有进行中的导入")
 	}
-	var svgs []svgRaster
-	if strings.TrimSpace(svgsJSON) != "" {
-		if err := json.Unmarshal([]byte(svgsJSON), &svgs); err != nil {
-			return "", fmt.Errorf("无法解析 SVG 栅格: %w", err)
-		}
-	}
-	byName := make(map[string]*render.Bitmap, len(svgs))
-	for _, svg := range svgs {
-		raw, err := base64.StdEncoding.DecodeString(svg.PNG)
-		if err != nil {
-			return "", fmt.Errorf("SVG %s 的栅格数据无效: %w", svg.Name, err)
-		}
-		img, err := png.Decode(bytes.NewReader(raw))
-		if err != nil {
-			return "", fmt.Errorf("SVG %s 的栅格无法解码: %w", svg.Name, err)
-		}
-		byName[svg.Name] = render.BitmapFromImage(img)
-	}
 	files := make([]pendingImportFile, len(s.pendingImport))
 	copy(files, s.pendingImport)
-	for i, f := range files {
+	for _, f := range files {
 		if f.bmp == nil {
-			bmp, ok := byName[f.name]
-			if !ok {
-				return "", fmt.Errorf("SVG %s 没有栅格化结果", f.name)
-			}
-			files[i].bmp = bmp
+			return "", fmt.Errorf("SVG %s 没有栅格化结果", f.name)
 		}
 	}
-	reply, err := s.ws.CommitImportedLayers(files)
+	// The release happens inside the commit path so the SVGs stay fetchable
+	// while the frontend is still drawing them.
+	reply, err := s.ws.commitImportedLayers(files)
 	if err != nil {
 		return "", err
 	}
@@ -220,15 +227,20 @@ func (s *Service) CancelImageImport() {
 }
 
 // decodeHEIC reads one HEIC file through libheif with the import budget
-// applied (the same refusal the raster decode gives).
+// applied (the same refusal the raster decode gives). The header probe
+// runs first so an oversized file is refused before the decode work,
+// exactly as the original's pixelSize guard did.
 func decodeHEIC(path string, remaining int) (*rasterio.Result, error) {
-	bmp, err := heicio.Decode(path)
+	w, h, err := heicio.Size(path)
 	if err != nil {
 		return nil, err
 	}
-	if bmp.W > domain.MaxSide || bmp.H > domain.MaxSide || bmp.W*bmp.H > remaining {
-		return nil, &rasterio.TooLargeError{Msg: fmt.Sprintf("导入超过当前 %.0f 百万像素文档预算或 %d 像素边长限制（图像 %d × %d）",
-			float64(domain.MaxSurfacePixels)/1e6, domain.MaxSide, bmp.W, bmp.H)}
+	if w > domain.MaxSide || h > domain.MaxSide || w*h > remaining {
+		return nil, rasterio.NewTooLarge(w, h, remaining)
+	}
+	bmp, err := heicio.Decode(path)
+	if err != nil {
+		return nil, err
 	}
 	return &rasterio.Result{
 		Name:   strings.TrimSuffix(filepath.Base(path), filepath.Ext(path)),
@@ -238,17 +250,10 @@ func decodeHEIC(path string, remaining int) (*rasterio.Result, error) {
 	}, nil
 }
 
-func svgExt(path string) string {
-	if i := strings.LastIndexByte(path, '.'); i >= 0 {
-		return path[i:]
-	}
-	return ""
-}
-
 func readSVGSource(path string) ([]byte, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("无法读取该图像：文件可能已损坏或不可用")
+		return nil, rasterio.ErrUnreadable
 	}
 	return data, nil
 }
@@ -266,7 +271,7 @@ var (
 func parseSVGSize(data []byte) (float64, float64, error) {
 	root := svgRootRe.Find(data)
 	if root == nil {
-		return 0, 0, fmt.Errorf("无法读取该图像：文件可能已损坏或不可用")
+		return 0, 0, rasterio.ErrUnreadable
 	}
 	w, wOK := svgLength(svgWidthRe.FindSubmatch(root))
 	h, hOK := svgLength(svgHeightRe.FindSubmatch(root))
@@ -339,7 +344,7 @@ func floorOrigin(canvasW, canvasH, imgW, imgH int) (float64, float64) {
 
 // ActiveCanvasInfo reports the active tab's canvas size and whether any
 // tab is open, so the frontend can fit SVGs to the canvas.
-func (w *Workspace) ActiveCanvasInfo() (int, int, bool) {
+func (w *Workspace) activeCanvasInfo() (int, int, bool) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	sess := w.activeSessionLocked()
@@ -351,7 +356,7 @@ func (w *Workspace) ActiveCanvasInfo() (int, int, bool) {
 
 // ActiveUsedPixels counts every pixel stored in the active document's layer
 // bitmaps — the already-used side of the import pixel budget.
-func (w *Workspace) ActiveUsedPixels() int {
+func (w *Workspace) activeUsedPixels() int {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	sess := w.activeSessionLocked()
@@ -371,12 +376,12 @@ func (w *Workspace) ActiveUsedPixels() int {
 	return total
 }
 
-// CommitImportedLayers lands the buffered import batch. With no active tab
+// commitImportedLayers lands the buffered import batch. With no active tab
 // the first image's size becomes a new document (the original lets the
 // first successful image determine the canvas); otherwise the images append
 // as centered layers inside one 导入图像 history entry, parented into the
 // active layer's group exactly as insert() did.
-func (w *Workspace) CommitImportedLayers(files []pendingImportFile) (string, error) {
+func (w *Workspace) commitImportedLayers(files []pendingImportFile) (string, error) {
 	if len(files) == 0 {
 		return "", fmt.Errorf("没有可导入的图像")
 	}

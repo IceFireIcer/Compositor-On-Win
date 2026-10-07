@@ -44,6 +44,11 @@ type Service struct {
 	exportMu      sync.Mutex
 	exportRaster  *render.Bitmap
 	exportPreview *render.Bitmap
+	exportStage   []string
+
+	// Staged bitmaps for the HTTP pixel plane (architecture §3.3).
+	pixelMu    sync.Mutex
+	pixelStage map[string]stagedPixel
 
 	// RAW develop sheet (ticket 41): the open half-size LibRaw session.
 	rawMu      sync.Mutex

@@ -8,7 +8,6 @@ package bridge
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"image/jpeg"
 	"image/png"
 	"os"
@@ -44,7 +43,7 @@ func stubClipboard(t *testing.T) *bool {
 
 func TestFlattenActiveMatchesDocument(t *testing.T) {
 	svc, _ := newTestService(t, 20, 10)
-	bmp, res, err := svc.ws.FlattenActive()
+	bmp, res, err := svc.ws.flattenActive()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,23 +69,24 @@ func TestExportJPEGPreviewQualityRoundTrip(t *testing.T) {
 	if preview.Width != 16 || preview.Height != 16 {
 		t.Fatalf("Begin 回报 %+v", preview)
 	}
-	low, err := svc.ExportJPEGPreview(10)
+	low, err := svc.ExportJPEGPreview(10, "#ffffff")
 	if err != nil {
 		t.Fatal(err)
 	}
-	high, err := svc.ExportJPEGPreview(95)
+	high, err := svc.ExportJPEGPreview(95, "#ffffff")
 	if err != nil {
 		t.Fatal(err)
 	}
 	lowReply := parseJSON[exportJPEGReply](t, low)
 	highReply := parseJSON[exportJPEGReply](t, high)
-	rawLow, err := base64.StdEncoding.DecodeString(lowReply.JPEG)
-	if err != nil {
-		t.Fatal(err)
+	// Previews ride the HTTP pixel plane, never base64 through the bridge.
+	rawLow, ok := fetchStaged(t, svc, lowReply.URL)
+	if !ok {
+		t.Fatalf("低质量预览应可经像素面取回: %q", lowReply.URL)
 	}
-	rawHigh, err := base64.StdEncoding.DecodeString(highReply.JPEG)
-	if err != nil {
-		t.Fatal(err)
+	rawHigh, ok := fetchStaged(t, svc, highReply.URL)
+	if !ok {
+		t.Fatalf("高质量预览应可经像素面取回: %q", highReply.URL)
 	}
 	if lowReply.Size != len(rawLow) {
 		t.Fatalf("预览字节数不符: %d vs %d", lowReply.Size, len(rawLow))
@@ -102,8 +102,12 @@ func TestExportJPEGPreviewQualityRoundTrip(t *testing.T) {
 		t.Fatalf("高质量应更大: %d vs %d", len(rawHigh), len(rawLow))
 	}
 	svc.EndExportPreview()
-	if _, err := svc.ExportJPEGPreview(85); err == nil {
+	if _, err := svc.ExportJPEGPreview(85, ""); err == nil {
 		t.Fatal("End 后应报没有进行中的预览")
+	}
+	// The staged previews are gone with the dialog.
+	if _, ok := fetchStaged(t, svc, lowReply.URL); ok {
+		t.Fatal("End 后暂存预览应释放")
 	}
 }
 
@@ -148,7 +152,7 @@ func TestExportJPEGWritesFileWhiteBackground(t *testing.T) {
 	}
 	path := filepath.Join(t.TempDir(), "输出.jpg")
 	stubExportSaveDialog(t, path)
-	if _, err := svc.ExportJPEG(90, "导出.jpg"); err != nil {
+	if _, err := svc.ExportJPEG(90, "#ffffff", "导出.jpg"); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(path)
@@ -162,6 +166,50 @@ func TestExportJPEGWritesFileWhiteBackground(t *testing.T) {
 	r, g, b, _ := img.At(4, 0).RGBA()
 	if r != 0xffff || g != 0xffff || b != 0xffff {
 		t.Fatalf("透明区应落在白底上: (%d,%d,%d)", r>>8, g>>8, b>>8)
+	}
+}
+
+func TestExportJPEGBackgroundColour(t *testing.T) {
+	svc, _ := newTestService(t, 4, 4)
+	sess := activeSessionOf(t, svc)
+	key := *sess.doc.Layers[0].ImageFile
+	bmp := sess.bitmaps[key]
+	for i := 0; i < len(bmp.Pix); i += 4 {
+		bmp.Pix[i], bmp.Pix[i+1], bmp.Pix[i+2], bmp.Pix[i+3] = 0, 0, 0, 0
+	}
+	path := filepath.Join(t.TempDir(), "bg.jpg")
+	stubExportSaveDialog(t, path)
+	if _, err := svc.ExportJPEG(90, "#ff0000", "bg.jpg"); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	img, err := jpeg.Decode(bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, g, b, _ := img.At(1, 1).RGBA()
+	if r>>8 < 240 || g>>8 > 16 || b>>8 > 16 {
+		t.Fatalf("透明区应落在选定红底上: (%d,%d,%d)", r>>8, g>>8, b>>8)
+	}
+}
+
+func TestExportJPEGAcceptsJpegSpelling(t *testing.T) {
+	svc, _ := newTestService(t, 4, 4)
+	path := filepath.Join(t.TempDir(), "photo.jpeg")
+	stubExportSaveDialog(t, path)
+	reply, err := svc.ExportJPEG(80, "", "photo.jpeg")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// .jpeg is a JPEG spelling: the export must not append .jpg after it.
+	if got := parseJSON[map[string]string](t, reply)["path"]; got != path {
+		t.Fatalf("路径 = %q，想要 %q", got, path)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf(".jpeg 目标应写成原路径: %v", err)
 	}
 }
 

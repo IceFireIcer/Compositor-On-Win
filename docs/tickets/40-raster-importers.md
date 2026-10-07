@@ -14,3 +14,5 @@
 - [x] 新建文档与追加图层两条路径可用（首图定画布/居中追加，单一"导入图像"历史项）
 
 对等矩阵：I01、I03、C04。
+
+审查修复（2026-10-07，code-review 双轴）：SVG 声明尺寸在栅格化前按 maxSide/像素预算校验（decodeSVG 语义）；SVG 源码与栅格改走 HTTP 像素面（GET /pixel/stage、PUT /pixel/upload），不再 base64 走 JSON 桥（ADR 架构 §3.3 红线）；像素预算改用原版公式 min(800M, max(200M, RAM/16))；对话框补上 RAW/HEIC 全部扩展名（原票 41 的格式此前选不到）。

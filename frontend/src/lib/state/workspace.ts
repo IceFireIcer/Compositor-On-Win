@@ -13,7 +13,7 @@ import {
   PickImageImport,
   SaveProjectDialog,
 } from "../../../wailsjs/go/bridge/Service";
-import { rasterizeSVG } from "./svg";
+import { rasterizeSVG, uploadRaster } from "./svg";
 import { clearDocument, loadDocument } from "./document";
 
 /**
@@ -146,13 +146,13 @@ export async function importImages(): Promise<{ failures: string[]; raws: string
       svgW?: number;
       svgH?: number;
       svg?: string;
+      uploadUrl?: string;
       error?: string;
     }[];
     hasDocument: boolean;
     canvasW: number;
     canvasH: number;
   };
-  const rasters: { name: string; png: string }[] = [];
   const raws: string[] = [];
   const failures: string[] = [];
   for (const item of begin.items) {
@@ -167,17 +167,21 @@ export async function importImages(): Promise<{ failures: string[]; raws: string
       continue;
     }
     if (item.status === "svg") {
-      const { png } = await rasterizeSVG(
+      const { blob } = await rasterizeSVG(
         item.svg ?? "",
         item.svgW ?? 0,
         item.svgH ?? 0,
         begin.hasDocument ? begin.canvasW : null,
         begin.hasDocument ? begin.canvasH : null,
       );
-      rasters.push({ name: item.name ?? "", png });
+      if (!item.uploadUrl) {
+        failures.push(`${item.name ?? "SVG"}: 缺少上传地址`);
+        continue;
+      }
+      await uploadRaster(item.uploadUrl, blob);
     }
   }
-  await FinishImageImport(JSON.stringify(rasters));
+  await FinishImageImport();
   applySnapshot(await GetSnapshot());
   await loadDocument();
   if (raws.length > 0) {

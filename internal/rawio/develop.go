@@ -47,6 +47,14 @@ func kelvinToGains(kelvin, tint float64) (r, g, b float64) {
 	return r / top, g / top, b / top
 }
 
+// greenShare is one channel's weight against the red/blue average.
+func greenShare(g, r, b float64) float64 {
+	if avg := (r + b) / 2; avg > 0 {
+		return g / avg
+	}
+	return 1
+}
+
 // applyTint moves green against red+blue (positive: green, negative: magenta).
 func applyTint(g, tint float64) float64 {
 	if tint > 0 {
@@ -69,7 +77,9 @@ func planckianXY(kelvin float64) (x, y float64) {
 	case t < 2222:
 		y = -1.1063814*x*x*x - 1.34811020*x*x + 2.18555832*x - 0.20219683
 	case t < 4000:
-		y = -1.1063814*x*x*x - 1.34811020*x*x + 2.18555832*x - 0.20219683
+		// Kang's middle band carries its own coefficients; reusing the low
+		// band's skews 2222–4000K off the locus.
+		y = -0.9549476*x*x*x - 1.37418593*x*x + 2.09137015*x - 0.16748867
 	default:
 		y = 3.0817580*x*x*x - 5.87338670*x*x + 3.75112997*x - 0.37001483
 	}
@@ -123,17 +133,10 @@ func CameraAsShot(camR, camG, camB float64) DevelopSettings {
 	}
 	kelvin := gainsToKelvinEstimate(camR, camG, camB)
 	// Tint: how far the camera's green share sits from the locus's own.
-	_, modelG, _ := kelvinToGains(kelvin, 0)
+	modelR, modelG, modelB := kelvinToGains(kelvin, 0)
 	tint := 0.0
-	top := math.Max(camR, math.Max(camG, camB))
-	if modelG > 0 {
-		green := (camG / top) / ((camR/top + camB/top) / 2)
-		_, mg, mb := kelvinToGains(kelvin, 0)
-		modelGreen := mg / 1 // gains are top-normalized
-		_ = mb
-		if modelGreen > 0 {
-			tint = math.Max(-100, math.Min(100, (green/modelGreen-1)*100))
-		}
+	if modelShare := greenShare(modelG, modelR, modelB); modelShare > 0 {
+		tint = math.Max(-100, math.Min(100, (greenShare(camG, camR, camB)/modelShare-1)*100))
 	}
 	return DevelopSettings{
 		Temperature:       kelvin,

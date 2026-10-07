@@ -8,9 +8,10 @@
   } from "../state/rawdevelop";
 
   /**
-   * RAW develop sheet (ticket 41 / RawDevelopSheet semantics): 曝光（档）、
-   * 色温（K）、色调（绿–品红）、增强（0–1）。滑杆停下后重显影半尺寸帧；
-   * Reset 回 asShot；导入按全尺寸重开并落层。
+   * RAW develop sheet (ticket 41 / RawDevelopSheet semantics)：曝光 −3…3 EV、
+   * 色温 2000…12000 K、色调 ±150、增强 0…1——滑杆范围与原版一致。预览是
+   * 像素面上暂存的 JPEG（≤800px，原版 limit: 800），滑杆停下后重显影半尺寸
+   * 帧；Reset 回 asShot；导入按全尺寸重开并落层。
    */
 
   let settings = $state<RawDevelopSettings | null>(null);
@@ -70,15 +71,15 @@
       <div class="controls">
         <label>
           <span>曝光 {settings.exposure >= 0 ? "+" : ""}{settings.exposure.toFixed(2)} 档</span>
-          <input type="range" min="-5" max="5" step="0.05" bind:value={settings.exposure} />
+          <input type="range" min="-3" max="3" step="0.01" bind:value={settings.exposure} />
         </label>
         <label>
           <span>色温 {kelvinLabel(settings.temperature)}</span>
-          <input type="range" min="2000" max="50000" step="50" bind:value={settings.temperature} />
+          <input type="range" min="2000" max="12000" step="10" bind:value={settings.temperature} />
         </label>
         <label>
           <span>色调 {settings.tint >= 0 ? "+" : ""}{Math.round(settings.tint)}</span>
-          <input type="range" min="-100" max="100" step="1" bind:value={settings.tint} />
+          <input type="range" min="-150" max="150" step="1" bind:value={settings.tint} />
         </label>
         <label>
           <span>增强 {Math.round(settings.boost * 100)}%</span>

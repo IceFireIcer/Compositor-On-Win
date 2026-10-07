@@ -68,18 +68,6 @@ export namespace bridge {
 	        this.height = source["height"];
 	    }
 	}
-	export class pendingImportFile {
-	
-	
-	    static createFrom(source: any = {}) {
-	        return new pendingImportFile(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	
-	    }
-	}
 
 }
 
@@ -820,27 +808,6 @@ export namespace domain {
 	
 	
 	
-
-}
-
-export namespace render {
-	
-	export class Bitmap {
-	    W: number;
-	    H: number;
-	    Pix: number[];
-	
-	    static createFrom(source: any = {}) {
-	        return new Bitmap(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.W = source["W"];
-	        this.H = source["H"];
-	        this.Pix = source["Pix"];
-	    }
-	}
 
 }
 

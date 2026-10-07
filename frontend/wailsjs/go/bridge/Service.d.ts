@@ -45,13 +45,13 @@ export function EndHealStroke():Promise<string>;
 
 export function EndStroke():Promise<string>;
 
-export function ExportJPEG(arg1:number,arg2:string):Promise<string>;
+export function ExportJPEG(arg1:number,arg2:string,arg3:string):Promise<string>;
 
-export function ExportJPEGPreview(arg1:number):Promise<string>;
+export function ExportJPEGPreview(arg1:number,arg2:string):Promise<string>;
 
 export function ExportPNG(arg1:string):Promise<string>;
 
-export function FinishImageImport(arg1:string):Promise<string>;
+export function FinishImageImport():Promise<string>;
 
 export function HealPoint(arg1:number,arg2:number):Promise<string>;
 

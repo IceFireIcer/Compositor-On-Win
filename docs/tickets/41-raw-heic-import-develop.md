@@ -14,3 +14,5 @@
 - [x] 不支持变体的错误可操作（LibRaw/libheif 错误文本直通弹窗；非 RAW/HEIC 拒绝路径有测试）
 
 对等矩阵：I02、I04、故事 46（RAW/HEIC 项）。
+
+审查修复（2026-10-07，code-review 双轴）：heicio.Size 头探针（超大文件解码前拒绝，原版 pixelSize 语义）+ 无 irot/imir 时按 EXIF 方向兜底；导入对话框补全 RAW/HEIC 扩展名（此前 develop 表单从菜单不可达）；RAW 滑杆范围对齐原版（曝光 −3…3、色温 2000…12000、色调 ±150、预览 limit 800）；Planckian 轨迹补 Kang 中段系数（2222–4000K）；预览改走 HTTP 像素面。

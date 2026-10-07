@@ -34,9 +34,15 @@ type TooLargeError struct{ Msg string }
 
 func (e *TooLargeError) Error() string { return e.Msg }
 
-func tooLarge(width, height, remaining int) error {
+// NewTooLarge builds the refusal for one image (the message quotes the
+// document budget, as the original's did).
+func NewTooLarge(width, height, budget int) *TooLargeError {
 	return &TooLargeError{Msg: fmt.Sprintf("导入超过当前 %.0f 百万像素文档预算或 %d 像素边长限制（图像 %d × %d）",
-		float64(domain.MaxSurfacePixels)/1e6, domain.MaxSide, width, height)}
+		float64(budget)/1e6, domain.MaxSide, width, height)}
+}
+
+func tooLarge(width, height, remaining int) error {
+	return NewTooLarge(width, height, remaining)
 }
 
 // Result is one decoded image: the layer name (file base name), the

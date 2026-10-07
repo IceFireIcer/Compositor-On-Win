@@ -79,17 +79,14 @@ export async function updateRawDevelopPreview(settings: RawDevelopSettings): Pro
   rawDevelop.update((s) => (s ? { ...s, busy: true } : s));
   try {
     const reply = JSON.parse(await RawDevelopPreview(JSON.stringify(settings))) as {
-      jpeg: string;
+      url: string;
       width: number;
       height: number;
     };
     if (seq !== previewSeq) return;
-    const bytes = Uint8Array.from(atob(reply.jpeg), (c) => c.charCodeAt(0));
-    const url = URL.createObjectURL(new Blob([bytes.buffer as ArrayBuffer], { type: "image/jpeg" }));
-    rawDevelop.update((s) => {
-      if (s?.jpegURL) URL.revokeObjectURL(s.jpegURL);
-      return s ? { ...s, jpegURL: url, busy: false, error: null } : s;
-    });
+    // The preview JPEG is staged on the HTTP pixel plane (§3.3); the query
+    // is a cache buster for the WebView, not part of the token.
+    rawDevelop.update((s) => (s ? { ...s, jpegURL: `${reply.url}?v=${seq}`, busy: false, error: null } : s));
   } catch (err) {
     if (seq !== previewSeq) return;
     rawDevelop.update((s) =>
@@ -118,8 +115,6 @@ export async function finishRawDevelop(settings: RawDevelopSettings): Promise<vo
 
 export function closeRawDevelop(): void {
   previewSeq++;
-  const state = getRaw();
-  if (state?.jpegURL) URL.revokeObjectURL(state.jpegURL);
   rawDevelop.set(null);
   void RawCancelDevelop();
   const next = rawQueue.shift();

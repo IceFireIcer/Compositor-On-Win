@@ -3,7 +3,14 @@
 // ticket 04 around these constants.
 package domain
 
-import "fmt"
+import (
+	"fmt"
+	"math"
+	"sync"
+	"unsafe"
+
+	"golang.org/x/sys/windows"
+)
 
 // DocumentLimits, ported from the macOS DocumentLimits:
 // max side 30,000px, max single surface 200M pixels,
@@ -49,4 +56,48 @@ func ValidateNewDocument(width, height, resolution int) *LimitsError {
 		return limitsErrf("分辨率超出 %d–%d ppi", MinResolution, MaxResolution)
 	}
 	return nil
+}
+
+// DocumentPixelBudget is the total raster one document may hold across every
+// layer and mask (DocumentLimits.documentPixelBudget): a quarter of physical
+// memory at 4 bytes a pixel, never below one surface (200 MP) and never above
+// 800 MP. Imports spend from this budget; a single surface stays capped by
+// MaxSurfacePixels.
+func DocumentPixelBudget() int {
+	budgetOnce.Do(func() {
+		total := physicalMemoryBytes()
+		budget = int(math.Min(800_000_000, math.Max(float64(MaxSurfacePixels), float64(total/16))))
+	})
+	return budget
+}
+
+var (
+	budgetOnce sync.Once
+	budget     int
+)
+
+// memoryStatusEx mirrors MEMORYSTATUSEX (kernel32).
+type memoryStatusEx struct {
+	Length               uint32
+	MemoryLoad           uint32
+	TotalPhys            uint64
+	AvailPhys            uint64
+	TotalPageFile        uint64
+	AvailPageFile        uint64
+	TotalVirtual         uint64
+	AvailVirtual         uint64
+	AvailExtendedVirtual uint64
+}
+
+// physicalMemoryBytes reads installed physical memory; 0 falls back to the
+// 200 MP floor through DocumentPixelBudget's max.
+func physicalMemoryBytes() uint64 {
+	proc := windows.NewLazySystemDLL("kernel32.dll").NewProc("GlobalMemoryStatusEx")
+	var status memoryStatusEx
+	status.Length = uint32(unsafe.Sizeof(status))
+	result, _, _ := proc.Call(uintptr(unsafe.Pointer(&status)))
+	if result == 0 {
+		return 0
+	}
+	return status.TotalPhys
 }

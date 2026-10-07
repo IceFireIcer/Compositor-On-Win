@@ -6,10 +6,11 @@ package bridge
 
 import (
 	"bytes"
-	"encoding/base64"
 	"image"
 	"image/color"
 	"image/png"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -50,7 +51,7 @@ func TestImportIntoEmptyWorkspaceCreatesDocument(t *testing.T) {
 	if begin.HasDocument {
 		t.Fatal("空工作区应报 hasDocument=false")
 	}
-	env := parseJSON[envelope](t, mustFinish(t, svc, ""))
+	env := parseJSON[envelope](t, mustFinish(t, svc))
 	if env.Doc == nil {
 		t.Fatal("Finish 后应有文档")
 	}
@@ -80,7 +81,7 @@ func TestImportAppendsLayerCenteredAndUndoes(t *testing.T) {
 	before := mustDocumentSnapshot(t, svc)
 	path := writeTemp(t, "贴片.png", encodeTestPNG(t, 40, 30, color.NRGBA{G: 255, A: 255}))
 	mustBegin(t, svc, path)
-	env := parseJSON[envelope](t, mustFinish(t, svc, ""))
+	env := parseJSON[envelope](t, mustFinish(t, svc))
 	if len(env.Doc.Layers) != len(before.Doc.Layers)+1 {
 		t.Fatalf("应追加一层：得到 %d", len(env.Doc.Layers))
 	}
@@ -113,15 +114,28 @@ func TestImportSVGPlaceholderFlow(t *testing.T) {
 	if item.SvgW < 26.6 || item.SvgW > 26.7 || item.SvgH < 37.7 || item.SvgH > 37.8 {
 		t.Fatalf("CSS 单位换算错误：%v×%v", item.SvgW, item.SvgH)
 	}
-	// 忘记栅格化就提交 → 可操作报错
-	if _, err := svc.FinishImageImport(""); err == nil {
+	// SVG 源码停在 HTTP 像素面（绝不 base64 走桥）：必须能取回。
+	if !strings.HasPrefix(item.SVG, "/pixel/stage/") {
+		t.Fatalf("SVG 源码应停在像素面：%q", item.SVG)
+	}
+	if body, ok := fetchStaged(t, svc, item.SVG); !ok || !strings.Contains(string(body), "<svg") {
+		t.Fatal("SVG 源码应可经 HTTP 取回")
+	}
+	if !strings.HasPrefix(item.UploadURL, "/pixel/upload/") {
+		t.Fatalf("应有上传地址：%q", item.UploadURL)
+	}
+	// 忘记上传就提交 → 可操作报错
+	if _, err := svc.FinishImageImport(); err == nil {
 		t.Fatal("缺少 SVG 栅格应报错")
 	}
 	// 画布 100×100，SVG 26.67×37.8 → scale=min(100/26.67,100/37.8)=2.646
-	// → 70.57×100 → 前端栅格化为 71×100
+	// → 70.57×100 → 前端栅格化为 71×100，经 PUT 落到像素面。
 	raster := encodeTestPNG(t, 71, 100, color.NRGBA{B: 255, A: 255})
-	payload := `[{"name":"图标","png":"` + base64.StdEncoding.EncodeToString(raster) + `"}]`
-	env := parseJSON[envelope](t, mustFinish(t, svc, payload))
+	token := strings.TrimPrefix(item.UploadURL, "/pixel/upload/")
+	if err := svc.storeUploadedRaster(token, raster); err != nil {
+		t.Fatal(err)
+	}
+	env := parseJSON[envelope](t, mustFinish(t, svc))
 	l := env.Doc.Layers[len(env.Doc.Layers)-1]
 	if l.Name != "图标" || l.Transform.Size != [2]float64{71, 100} {
 		t.Fatalf("SVG 层 %+v", l)
@@ -146,7 +160,7 @@ func TestImportFailuresAccumulateAndGoodFilesLand(t *testing.T) {
 	if begin.Items[2].Status != "error" || !strings.Contains(begin.Items[2].Error, "JPEG") {
 		t.Fatalf("不受支持类型应报可操作错误：%+v", begin.Items[2])
 	}
-	env := parseJSON[envelope](t, mustFinish(t, svc, ""))
+	env := parseJSON[envelope](t, mustFinish(t, svc))
 	if env.Doc == nil || len(env.Doc.Layers) != 1 {
 		t.Fatal("好文件仍应落成文档")
 	}
@@ -154,18 +168,18 @@ func TestImportFailuresAccumulateAndGoodFilesLand(t *testing.T) {
 
 func TestBeginWithoutDocumentChecksPixelBudget(t *testing.T) {
 	svc, _ := newTestService(t, 64, 48)
-	if got := svc.ws.ActiveUsedPixels(); got != 64*48 {
+	if got := svc.ws.activeUsedPixels(); got != 64*48 {
 		t.Fatalf("ActiveUsedPixels = %d，想要 %d", got, 64*48)
 	}
-	w, h, ok := svc.ws.ActiveCanvasInfo()
+	w, h, ok := svc.ws.activeCanvasInfo()
 	if !ok || w != 64 || h != 48 {
 		t.Fatalf("ActiveCanvasInfo = %d×%d %v", w, h, ok)
 	}
 	empty := NewService(NewWorkspace())
-	if _, _, ok := empty.ws.ActiveCanvasInfo(); ok {
+	if _, _, ok := empty.ws.activeCanvasInfo(); ok {
 		t.Fatal("空工作区 ActiveCanvasInfo 应返回 false")
 	}
-	if empty.ws.ActiveUsedPixels() != 0 {
+	if empty.ws.activeUsedPixels() != 0 {
 		t.Fatal("空工作区已用像素应为 0")
 	}
 }
@@ -215,11 +229,23 @@ func mustBegin(t *testing.T, svc *Service, paths ...string) string {
 	return out
 }
 
-func mustFinish(t *testing.T, svc *Service, svgs string) string {
+func mustFinish(t *testing.T, svc *Service) string {
 	t.Helper()
-	out, err := svc.FinishImageImport(svgs)
+	out, err := svc.FinishImageImport()
 	if err != nil {
 		t.Fatalf("FinishImageImport failed: %v", err)
 	}
 	return out
+}
+
+// fetchStaged reads one staged bitmap back over the HTTP pixel plane.
+func fetchStaged(t *testing.T, svc *Service, url string) ([]byte, bool) {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, url, nil)
+	svc.RenderHandler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		return nil, false
+	}
+	return rec.Body.Bytes(), true
 }
