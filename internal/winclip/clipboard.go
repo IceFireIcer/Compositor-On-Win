@@ -1,32 +1,20 @@
-// Package winclip puts bitmaps on the Windows clipboard via user32.
-// Ticket 42 ships Copy Merged (⇧⌘C) on this seam; the richer clipboard
-// surface (copy layer/pixels, paste, drag-drop) lands with ticket 48.
+// Package winclip puts bitmaps on the Windows clipboard. Ticket 42 ships
+// Copy Merged (⇧⌘C) on this seam; the richer clipboard surface (copy
+// layer/pixels, paste, drag-drop) lands with ticket 48. The GlobalAlloc/
+// GlobalLock/SetClipboardData work lives in clipbridge.cpp — Win32 handle
+// patterns that go vet's unsafeptr check cannot express; the Go side stays
+// plain byte slices.
 package winclip
+
+/*
+#include "clipbridge.h"
+*/
+import "C"
 
 import (
 	"errors"
 	"runtime"
-	"syscall"
 	"unsafe"
-
-	"golang.org/x/sys/windows"
-)
-
-var (
-	user32             = windows.NewLazySystemDLL("user32.dll")
-	kernel32           = windows.NewLazySystemDLL("kernel32.dll")
-	procOpenClipboard  = user32.NewProc("OpenClipboard")
-	procCloseClipboard = user32.NewProc("CloseClipboard")
-	procEmptyClipboard = user32.NewProc("EmptyClipboard")
-	procSetClipData    = user32.NewProc("SetClipboardData")
-	procGlobalAlloc    = kernel32.NewProc("GlobalAlloc")
-	procGlobalLock     = kernel32.NewProc("GlobalLock")
-	procGlobalUnlock   = kernel32.NewProc("GlobalUnlock")
-)
-
-const (
-	gmemMoveable = 0x0002
-	cfDIB        = 8 // device-independent bitmap (BITMAPINFO + pixels)
 )
 
 // PutBitmap copies a premultiplied RGBA bitmap to the clipboard as a
@@ -68,31 +56,18 @@ func PutBitmap(w, h int, pix []uint8) error {
 		dst[3] = uint8(a)
 	}
 
-	r1, _, err := procOpenClipboard.Call(0)
-	if r1 == 0 {
-		return errors.New("打开剪贴板失败: " + err.Error())
+	var data []byte
+	if len(dib) > 0 {
+		data = dib
+	} else {
+		data = []byte{0}
 	}
-	defer procCloseClipboard.Call()
-	if r1, _, _ = procEmptyClipboard.Call(); r1 == 0 {
-		return errors.New("清空剪贴板失败")
-	}
-	// syscall.SyscallN (not LazyProc.Call): go vet's unsafeptr check
-	// accepts a pointer conversion of a SyscallN result, which is exactly
-	// the GlobalLock hand-off below.
-	r1, _, _ := syscall.SyscallN(procGlobalAlloc.Addr(), gmemMoveable, uintptr(len(dib)))
-	if r1 == 0 {
-		return errors.New("分配剪贴板内存失败")
-	}
-	p, _, _ := syscall.SyscallN(procGlobalLock.Addr(), r1)
-	if p == 0 {
-		return errors.New("锁定剪贴板内存失败")
-	}
-	copy(unsafe.Slice((*byte)(unsafe.Pointer(p)), len(dib)), dib)
-	procGlobalUnlock.Call(r1)
-	r1, _, _ = procSetClipData.Call(cfDIB, r1)
-	if r1 == 0 {
+	switch C.clip_put_dib((*C.uchar)(unsafe.Pointer(&data[0])), C.ulong(len(dib))) {
+	case 0:
+		return nil
+	case 1:
+		return errors.New("打开剪贴板失败")
+	default:
 		return errors.New("写入剪贴板失败")
 	}
-	// Ownership of hGlobal passed to the clipboard on success.
-	return nil
 }
