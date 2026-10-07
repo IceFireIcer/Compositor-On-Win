@@ -12,6 +12,8 @@ import (
 
 const testImageID = "11111111-1111-1111-1111-111111111111"
 
+const testTextID = "33333333-3333-3333-3333-333333333333"
+
 func sampleDoc() *domain.Document {
 	image := testImageID + ".png"
 	mask := testImageID + ".mask.png"
@@ -44,6 +46,34 @@ func sampleDoc() *domain.Document {
 		Opacity: ptr(1.0),
 	}
 	group.BlendMode = &normal
+	// A text layer (ticket 44): the editable TextStyle must survive the
+	// .comp round-trip in the manifest like every other record.
+	textImage := testTextID + ".png"
+	text := domain.TextStyle{
+		Content:   "Hello 世界",
+		FontName:  "Segoe UI",
+		FontSize:  48,
+		Red:       1,
+		Green:     0,
+		Blue:      0,
+		Alignment: domain.TextAlignmentCenter,
+		Tracking:  2.5,
+		Leading:   60,
+	}
+	textLayer := domain.Layer{
+		ID:        testTextID,
+		Name:      "Hello 世界",
+		IsVisible: true,
+		Transform: domain.Transform{
+			Origin:   [2]float64{12, 18},
+			Size:     [2]float64{80, 40},
+			Sampling: domain.SamplingHighQuality,
+		},
+		ImageFile: &textImage,
+		Opacity:   ptr(1.0),
+		Text:      &text,
+	}
+	textLayer.BlendMode = &normal
 	doc := &domain.Document{
 		Format:        domain.FormatID,
 		Version:       domain.FormatVersion,
@@ -52,7 +82,7 @@ func sampleDoc() *domain.Document {
 		Width:         100,
 		Height:        50,
 		ActiveLayerID: ptr(testImageID),
-		Layers:        []domain.Layer{layer, group},
+		Layers:        []domain.Layer{layer, group, textLayer},
 	}
 	return doc
 }
@@ -61,6 +91,7 @@ func sampleAssets() map[string][]byte {
 	return map[string][]byte{
 		testImageID + ".png":      fakePNG(100, 50, 8, 6),
 		testImageID + ".mask.png": fakePNG(100, 50, 8, 0),
+		testTextID + ".png":       fakePNG(80, 40, 8, 6),
 	}
 }
 

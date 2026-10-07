@@ -21,6 +21,14 @@
   import { activeTool } from "../state/tools";
   import { eyedropperClick } from "../state/filters";
   import { currentSelection } from "../state/selection";
+  import {
+    textSession,
+    startPointText,
+    startBoxText,
+    editTextLayerAt,
+    commitTextSession,
+    cancelTextSession,
+  } from "../state/text";
 
   /** One marching-ants loop as an SVG path (doc pixel coordinates). */
   function loopPath(loop: { x: number; y: number }[]): string {
@@ -50,6 +58,43 @@
   let viewWidth = $state(0);
   let viewHeight = $state(0);
   let panning = $state(false);
+
+  // Text tool (ticket 44): a press on a live text layer edits it, otherwise
+  // a drag draws a paragraph box and a click makes point text.
+  let textDrag = $state<{ x: number; y: number } | null>(null);
+  let textDragRect = $state<{ x: number; y: number; w: number; h: number } | null>(null);
+  let textEditor = $state<HTMLTextAreaElement | undefined>();
+
+  $effect(() => {
+    // Focus the inline editor as soon as the session opens (IME composes
+    // natively in the textarea over the canvas).
+    if ($textSession && textEditor) textEditor.focus();
+  });
+
+  function textColor(): string {
+    const sess = get(textSession);
+    if (!sess) return "#000";
+    const byte = (v: number) => Math.max(0, Math.min(255, Math.round(v * 255)));
+    return `rgb(${byte(sess.style.red)}, ${byte(sess.style.green)}, ${byte(sess.style.blue)})`;
+  }
+
+  async function finishText(): Promise<void> {
+    try {
+      await commitTextSession();
+    } catch (err) {
+      console.warn("文字提交失败", err);
+    }
+  }
+
+  function onTextKeydown(e: KeyboardEvent): void {
+    if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+      e.preventDefault();
+      void finishText();
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      cancelTextSession();
+    }
+  }
 
   const vp = $derived($viewport);
   const ppp = $derived(pointsPerPixel(vp));
@@ -234,6 +279,15 @@
       zoomAt(target, e.clientX - r.left, e.clientY - r.top, doc.width, doc.height);
       return;
     }
+    if (e.button === 0 && $activeTool === "type") {
+      const p = docPixelOf(e);
+      if (!editTextLayerAt(p.x, p.y)) {
+        textDrag = { x: p.x, y: p.y };
+      }
+      stage?.setPointerCapture(e.pointerId);
+      e.preventDefault();
+      return;
+    }
     if (e.button === 0 && $activeTool === "spotHealing") {
       healing = true;
       stage?.setPointerCapture(e.pointerId);
@@ -265,6 +319,16 @@
       panDrag = { x: e.clientX, y: e.clientY };
       return;
     }
+    if (textDrag) {
+      const p = docPixelOf(e);
+      textDragRect = {
+        x: Math.min(textDrag.x, p.x),
+        y: Math.min(textDrag.y, p.y),
+        w: Math.abs(p.x - textDrag.x),
+        h: Math.abs(p.y - textDrag.y),
+      };
+      return;
+    }
     if (painting) queueStrokePoint(docPixelOf(e));
     if (healing) {
       const p = docPixelOf(e);
@@ -273,6 +337,20 @@
   }
 
   function onPointerEnd(e: PointerEvent): void {
+    if (textDrag) {
+      const start = textDrag;
+      const rect = textDragRect;
+      textDrag = null;
+      textDragRect = null;
+      stage?.releasePointerCapture(e.pointerId);
+      // A drag of at least 4 px makes a paragraph box; a click is point text.
+      if (rect && rect.w >= 4 && rect.h >= 4) {
+        startBoxText(rect.x, rect.y, rect.w, rect.h);
+      } else {
+        startPointText(start.x, start.y);
+      }
+      return;
+    }
     if (healing) {
       healing = false;
       void EndHealStroke();
@@ -360,10 +438,61 @@
         style:background-size="{ppp}px {ppp}px"
       ></div>
     {/if}
+    {#if textDragRect}
+      <div
+        class="text-box-drag"
+        style:left="{textDragRect.x}px"
+        style:top="{textDragRect.y}px"
+        style:width="{textDragRect.w}px"
+        style:height="{textDragRect.h}px"
+      ></div>
+    {/if}
+    {#if $textSession}
+      <!-- Inline editor: a real textarea over the canvas, so IME composes
+           natively; ⌘回车提交 / Esc 取消. -->
+      <textarea
+        bind:this={textEditor}
+        class="text-editor"
+        style:left="{$textSession.editorAt.x}px"
+        style:top="{$textSession.editorAt.y}px"
+        style:width="{$textSession.boxSize ? $textSession.boxSize[0] : Math.max(120, $textSession.style.fontSize * 6)}px"
+        style:height="{$textSession.boxSize ? $textSession.boxSize[1] : Math.max(40, $textSession.style.fontSize * 1.8)}px"
+        style:font-size="{$textSession.style.fontSize}px"
+        style:line-height="{$textSession.style.leading > 0 ? $textSession.style.leading : $textSession.style.fontSize * 1.2}px"
+        style:color={textColor()}
+        style:font-family={$textSession.style.fontName}
+        value={$textSession.content}
+        oninput={(e) => {
+          const v = (e.target as HTMLTextAreaElement).value;
+          textSession.update((s2) => (s2 ? { ...s2, content: v } : s2));
+        }}
+        onkeydown={onTextKeydown}
+        placeholder="输入文字…"
+      ></textarea>
+    {/if}
   </div>
 </div>
 
 <style>
+  .text-box-drag {
+    position: absolute;
+    border: 1px dashed var(--accent, #3b82f6);
+    background: rgba(59, 130, 246, 0.08);
+    pointer-events: none;
+  }
+
+  .text-editor {
+    position: absolute;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px dashed var(--accent, #3b82f6);
+    outline: none;
+    resize: none;
+    overflow: hidden;
+    padding: 2px 4px;
+    white-space: pre-wrap;
+    caret-color: var(--accent, #3b82f6);
+  }
+
   .canvas-stage {
     position: absolute;
     inset: 0;

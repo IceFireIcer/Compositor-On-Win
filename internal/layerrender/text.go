@@ -262,3 +262,24 @@ func TextAnchor(style domain.TextStyle, imageWidth float64) (float64, float64) {
 	}
 	return x, TextPadding + ascent
 }
+
+// TextBaselineInset is where the first baseline sits inside a text image:
+// TextPadding + lineHeight − descent (EditorSession.beginText's formula,
+// which places a click's baseline on the pointer). Negative descent values
+// (signed metrics) clamp to the same fallback the rasterizer uses.
+func TextBaselineInset(style domain.TextStyle) float64 {
+	lineHeight := style.Leading
+	if !(lineHeight > 0) {
+		lineHeight = style.FontSize * 1.2
+	}
+	descent := style.FontSize * 0.25
+	if fontObj, _ := Resolve(style.FontName); fontObj != nil {
+		var buf sfnt.Buffer
+		if metrics, err := fontObj.Sfnt.Metrics(&buf, fixed.Int26_6(style.FontSize*64), font.HintingNone); err == nil {
+			if d := float64(metrics.Descent) / 64; d > 0 && !math.IsNaN(d) {
+				descent = d
+			}
+		}
+	}
+	return TextPadding + lineHeight - descent
+}

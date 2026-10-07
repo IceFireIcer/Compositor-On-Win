@@ -182,6 +182,10 @@ export function StrokePoint(arg1, arg2) {
   return window['go']['bridge']['Service']['StrokePoint'](arg1, arg2);
 }
 
+export function TextCommit(arg1) {
+  return window['go']['bridge']['Service']['TextCommit'](arg1);
+}
+
 export function Trim(arg1) {
   return window['go']['bridge']['Service']['Trim'](arg1);
 }

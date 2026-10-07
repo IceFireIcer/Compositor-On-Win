@@ -35,6 +35,26 @@ export interface DocLayer {
   imageFile: string | null;
   /** Version 7 adjustment record (adjustment layers); null = pixel layer. */
   adjustment: Record<string, unknown> | null;
+  /** Editable text metadata (ticket 39/44); null = not a text layer. */
+  text: TextRecord | null;
+  /** Layer placement in document pixels (origin/size/rotation). */
+  transform: { origin: [number, number]; size: [number, number]; rotation?: number };
+  /** Version 4/6 mask file, when the layer carries one. */
+  maskFile?: string | null;
+}
+
+/** The manifest's text record (domain.TextStyle shape). */
+export interface TextRecord {
+  content: string;
+  fontName: string;
+  fontSize: number;
+  red: number;
+  green: number;
+  blue: number;
+  alignment: "Left" | "Center" | "Right";
+  tracking: number;
+  leading: number;
+  boxSize?: [number, number] | null;
 }
 
 export interface DocumentState {
@@ -127,6 +147,8 @@ interface RawLayer {
   maskSourceID?: unknown;
   imageFile?: unknown;
   adjustment?: unknown;
+  text?: unknown;
+  transform?: unknown;
 }
 
 interface RawDocument {
@@ -164,6 +186,43 @@ function parseLayer(raw: RawLayer): DocLayer {
     maskSourceID: asString(raw.maskSourceID),
     imageFile: asString(raw.imageFile),
     adjustment: raw.adjustment == null ? null : (raw.adjustment as Record<string, unknown>),
+    text: parseTextRecord(raw.text),
+    transform: parseTransform(raw.transform),
+  };
+}
+
+function parseTextRecord(raw: unknown): TextRecord | null {
+  if (raw == null || typeof raw !== "object") return null;
+  const t = raw as Record<string, unknown>;
+  const align = t.alignment === "Center" || t.alignment === "Right" ? t.alignment : "Left";
+  let boxSize: [number, number] | null = null;
+  if (Array.isArray(t.boxSize) && t.boxSize.length === 2) {
+    boxSize = [asNumber(t.boxSize[0], 0), asNumber(t.boxSize[1], 0)];
+  }
+  return {
+    content: typeof t.content === "string" ? t.content : "",
+    fontName: typeof t.fontName === "string" ? t.fontName : "Segoe UI",
+    fontSize: asNumber(t.fontSize, 72),
+    red: asNumber(t.red, 0),
+    green: asNumber(t.green, 0),
+    blue: asNumber(t.blue, 0),
+    alignment: align,
+    tracking: asNumber(t.tracking, 0),
+    leading: asNumber(t.leading, 0),
+    boxSize,
+  };
+}
+
+function parseTransform(raw: unknown): { origin: [number, number]; size: [number, number]; rotation?: number } {
+  const fallback = { origin: [0, 0] as [number, number], size: [0, 0] as [number, number] };
+  if (raw == null || typeof raw !== "object") return fallback;
+  const t = raw as Record<string, unknown>;
+  const pair = (v: unknown): [number, number] =>
+    Array.isArray(v) && v.length === 2 ? [asNumber(v[0], 0), asNumber(v[1], 0)] : [0, 0];
+  return {
+    origin: pair(t.origin),
+    size: pair(t.size),
+    rotation: asNumber(t.rotation, 0),
   };
 }
 

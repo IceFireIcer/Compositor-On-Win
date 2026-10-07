@@ -232,9 +232,9 @@ describe("layerOps wire contract", () => {
 describe("panel rendering helpers", () => {
   it("displayRows reverses bottom→top into top→bottom without mutating", () => {
     const layers: DocLayer[] = [
-      { id: "a", name: "底", isVisible: true, isGroup: false, opacity: 1, blendMode: "Normal", parentID: null, maskSourceID: null, imageFile: null, adjustment: null },
-      { id: "b", name: "中", isVisible: true, isGroup: false, opacity: 1, blendMode: "Normal", parentID: null, maskSourceID: null, imageFile: null, adjustment: null },
-      { id: "c", name: "顶", isVisible: true, isGroup: false, opacity: 1, blendMode: "Normal", parentID: null, maskSourceID: null, imageFile: null, adjustment: null },
+      { id: "a", name: "底", isVisible: true, isGroup: false, opacity: 1, blendMode: "Normal", parentID: null, maskSourceID: null, imageFile: null, adjustment: null, text: null, transform: { origin: [0, 0], size: [0, 0] } },
+      { id: "b", name: "中", isVisible: true, isGroup: false, opacity: 1, blendMode: "Normal", parentID: null, maskSourceID: null, imageFile: null, adjustment: null, text: null, transform: { origin: [0, 0], size: [0, 0] } },
+      { id: "c", name: "顶", isVisible: true, isGroup: false, opacity: 1, blendMode: "Normal", parentID: null, maskSourceID: null, imageFile: null, adjustment: null, text: null, transform: { origin: [0, 0], size: [0, 0] } },
     ];
     const rows = displayRows(layers);
     expect(rows.map((r) => r.id)).toEqual(["c", "b", "a"]); // Photoshop: topmost first

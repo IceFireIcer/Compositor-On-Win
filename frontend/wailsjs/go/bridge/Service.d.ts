@@ -93,6 +93,8 @@ export function Startup(arg1:context.Context):Promise<void>;
 
 export function StrokePoint(arg1:number,arg2:number):Promise<string>;
 
+export function TextCommit(arg1:string):Promise<string>;
+
 export function Trim(arg1:string):Promise<string>;
 
 export function Undo():Promise<string>;

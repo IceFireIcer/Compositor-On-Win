@@ -34,6 +34,7 @@
   } from "./lib/state/export";
   import ExportDialog from "./lib/components/ExportDialog.svelte";
   import GeometrySheet from "./lib/components/GeometrySheet.svelte";
+  import TextOptionsBar from "./lib/components/TextOptionsBar.svelte";
   import { geometrySheet } from "./lib/state/geometry";
   import RawDevelopSheet from "./lib/components/RawDevelopSheet.svelte";
   import { rawDevelop } from "./lib/state/rawdevelop";
@@ -249,6 +250,10 @@
       </button>
     </div>
   </header>
+
+  {#if $activeTool === "type"}
+    <TextOptionsBar />
+  {/if}
 
   <div class="body">
     <nav class="tool-rail" aria-label="工具">
