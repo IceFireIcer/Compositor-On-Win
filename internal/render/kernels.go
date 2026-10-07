@@ -29,7 +29,7 @@ func mix32(x uint32) uint32 {
 // lattice ports AdjustPixels.c lattice: A value in −1…1 for an integer lattice point, fixed by the point and the seed. Two uniform halves
 // summed give a triangular spread, closer to film grain than flat noise.
 func lattice(ix, iy int64, seed uint32) float32 {
-	h := mix32((uint32(ix) * 0x9E3779B1) ^ mix32((uint32(iy) * 0x85EBCA77) ^ seed))
+	h := mix32((uint32(ix) * 0x9E3779B1) ^ mix32((uint32(iy)*0x85EBCA77)^seed))
 	return float32(h&0xFFFF)/65535.0 + float32(h>>16)/65535.0 - 1.0
 }
 
@@ -113,9 +113,9 @@ func ApplyGrain(b *Bitmap, amount, size, roughness float64, seed uint32, originX
 				// Film grain shows most in the midtones.
 				delta := noise * strength * (0.4 + 2.4*level*(1.0-level))
 				coverage := float32(a) / 255.0
-				row[i] = uint8(clamp255f(r+delta) * coverage + 0.5)
-				row[i+1] = uint8(clamp255f(g+delta) * coverage + 0.5)
-				row[i+2] = uint8(clamp255f(bl+delta) * coverage + 0.5)
+				row[i] = uint8(clamp255f(r+delta)*coverage + 0.5)
+				row[i+1] = uint8(clamp255f(g+delta)*coverage + 0.5)
+				row[i+2] = uint8(clamp255f(bl+delta)*coverage + 0.5)
 			}
 		}
 	})
@@ -153,7 +153,7 @@ func ApplyAddNoise(b *Bitmap, amount float32, gaussian, monochromatic bool, seed
 				}
 				px := uint32(x)
 				py := uint32(y)
-				base := noiseHash(seed ^ noiseHash((px * 0x9e3779b9) ^ noiseHash(py*0x85ebca6b)))
+				base := noiseHash(seed ^ noiseHash((px*0x9e3779b9)^noiseHash(py*0x85ebca6b)))
 				for c := 0; c < 3; c++ {
 					key := base
 					if !monochromatic {
@@ -164,7 +164,7 @@ func ApplyAddNoise(b *Bitmap, amount float32, gaussian, monochromatic bool, seed
 						// Box–Muller: two uniform values make one normally distributed one.
 						u1 := noiseUnit(key)
 						u2 := noiseUnit(key ^ 0x68e31da4)
-						n = float32(math.Sqrt(float64(-2.0 * float32(math.Log(float64(1.0-u1)))))) *
+						n = float32(math.Sqrt(float64(-2.0*float32(math.Log(float64(1.0-u1)))))) *
 							float32(math.Cos(float64(6.2831853*u2))) * spread * (2.0 / 3.0)
 					} else {
 						n = (noiseUnit(key)*2.0 - 1.0) * spread

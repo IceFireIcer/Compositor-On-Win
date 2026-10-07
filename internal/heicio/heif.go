@@ -67,7 +67,7 @@ func Decode(path string) (*render.Bitmap, error) {
 		return nil, ErrUnreadable
 	}
 	bmp := render.NewBitmap(width, height)
-	row := (*[1 << 30]C.uint8_t)(unsafe.Pointer(plane))[:int(stride)*height : int(stride)*height]
+	row := (*[1 << 30]C.uint8_t)(unsafe.Pointer(plane))[: int(stride)*height : int(stride)*height]
 	for y := 0; y < height; y++ {
 		base := y * int(stride)
 		for x := 0; x < width; x++ {

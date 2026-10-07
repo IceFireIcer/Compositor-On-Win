@@ -199,3 +199,35 @@ func TestExportWithoutDocumentFails(t *testing.T) {
 		t.Fatal("无文档拷贝合并应报错")
 	}
 }
+
+// Pending Photoshop open (ticket 39): the conversion report comes back from
+// OpenProjectDialog; Confirm applies, Cancel drops, nothing pending errors.
+func TestPendingPhotoshopOpenFlow(t *testing.T) {
+	svc, _ := newTestService(t, 10, 10)
+	if _, err := svc.ConfirmPendingOpen(); err == nil {
+		t.Fatal("没有待确认时应报错")
+	}
+	svc.CancelPendingOpen() // idempotent
+	doc, bitmaps := newDocumentModel(6, 4, 72)
+	svc.psdMu.Lock()
+	svc.pendingPSD = &pendingPSDOpen{path: "C:/tmp/test.psd", doc: doc, bitmaps: bitmaps}
+	svc.psdMu.Unlock()
+	out, err := svc.ConfirmPendingOpen()
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := parseJSON[envelope](t, out)
+	if env.Doc == nil || env.Doc.Width != 6 || env.Doc.Height != 4 {
+		t.Fatalf("确认后应打开文档: %+v", env.Doc)
+	}
+	if _, err := svc.ConfirmPendingOpen(); err == nil {
+		t.Fatal("确认后待确认项应已清空")
+	}
+	svc.psdMu.Lock()
+	svc.pendingPSD = &pendingPSDOpen{path: "C:/tmp/x.psd", doc: doc, bitmaps: bitmaps}
+	svc.psdMu.Unlock()
+	svc.CancelPendingOpen()
+	if _, err := svc.ConfirmPendingOpen(); err == nil {
+		t.Fatal("取消后应无可确认项")
+	}
+}

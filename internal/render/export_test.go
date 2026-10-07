@@ -108,4 +108,3 @@ func TestEncodeJPEGWithDPI(t *testing.T) {
 		t.Fatal("质量必须影响输出且 0 被钳到 1")
 	}
 }
-

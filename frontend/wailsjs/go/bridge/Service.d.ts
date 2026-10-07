@@ -29,7 +29,11 @@ export function CancelFilterEdit():Promise<string>;
 
 export function CancelImageImport():Promise<void>;
 
+export function CancelPendingOpen():Promise<void>;
+
 export function CommitFilter(arg1:string):Promise<string>;
+
+export function ConfirmPendingOpen():Promise<string>;
 
 export function CopyMerged():Promise<string>;
 

@@ -1,8 +1,8 @@
 package rasterio
 
 import (
-	"encoding/binary"
 	"compositor-win/internal/render"
+	"encoding/binary"
 )
 
 // ApplyOrientation rewrites the bitmap the way CIImage.oriented(forExifOrientation:)

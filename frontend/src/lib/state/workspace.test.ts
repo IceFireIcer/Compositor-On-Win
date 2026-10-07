@@ -172,7 +172,7 @@ describe("workspace ↔ document glue (ticket 04 wiring)", () => {
     mockedGetSnapshot.mockResolvedValue(snapshot([{ id: "doc-2", dirty: false }], "doc-2"));
     mockedDocSnapshot.mockResolvedValue(wireDoc("doc-2", 3));
 
-    await expect(openProject()).resolves.toBe(true);
+    await expect(openProject()).resolves.toBe("opened");
 
     expect(get(workspace).tabs).toHaveLength(1);
     expect(get(document).docId).toBe("doc-2");
@@ -182,7 +182,7 @@ describe("workspace ↔ document glue (ticket 04 wiring)", () => {
   it("openProject treats doc:null as cancel and touches nothing", async () => {
     mockedOpenDialog.mockResolvedValue(JSON.stringify({ doc: null }));
 
-    await expect(openProject()).resolves.toBe(false);
+    await expect(openProject()).resolves.toBe("cancelled");
 
     expect(mockedGetSnapshot).not.toHaveBeenCalled();
     expect(mockedDocSnapshot).not.toHaveBeenCalled();
@@ -249,5 +249,22 @@ describe("importImages (ticket 40)", () => {
       raws: [],
     });
     expect(get(document)?.docId).toBe("doc-9");
+  });
+});
+
+describe("openProject pending Photoshop report (ticket 39)", () => {
+  it("returns the conversion report instead of opening", async () => {
+    mockedOpenDialog.mockResolvedValue(
+      JSON.stringify({
+        rev: 3,
+        pending: true,
+        conversions: [{ layerName: "文字", message: "字体“X”未安装，文字以系统字体绘制。" }],
+      }),
+    );
+    const result = await openProject();
+    expect(result).toEqual({
+      pending: true,
+      conversions: [{ layerName: "文字", message: "字体“X”未安装，文字以系统字体绘制。" }],
+    });
   });
 });

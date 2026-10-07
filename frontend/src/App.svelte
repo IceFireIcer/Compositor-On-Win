@@ -11,7 +11,9 @@
     hasDocument,
     openProject,
     saveProject,
+    type PendingConversion,
   } from "./lib/state/workspace";
+  import PsdConversionSheet from "./lib/components/PsdConversionSheet.svelte";
   import { clearDocument, loadDocument } from "./lib/state/document";
   import { keyboardZoom, viewport, zoomToValue } from "./lib/state/viewport";
   import TabStrip from "./lib/components/TabStrip.svelte";
@@ -89,29 +91,6 @@
   $effect(() => {
     const stop = watchFilterPreviews();
     return stop;
-  });
-
-  // PSD/PSB 转换报告：信息性提示，不阻断打开。
-  $effect(() => {
-    const wails = window as unknown as {
-      runtime?: { EventsOn: (name: string, fn: (...args: unknown[]) => void) => () => void };
-    };
-    const runtimeApi = wails.runtime;
-    if (!runtimeApi) return;
-    const off = runtimeApi.EventsOn("psdConversions", (payload: unknown) => {
-      try {
-        const notes = JSON.parse(String(payload)) as { layerName: string; message: string }[];
-        for (const note of notes) {
-          console.info(`PSD 导入 · ${note.layerName}: ${note.message}`);
-        }
-        if (notes.length > 0) {
-          console.info(`PSD 导入：共 ${notes.length} 条转换说明。`);
-        }
-      } catch {
-        // non-fatal
-      }
-    });
-    return off;
   });
 
   // Image-menu shortcuts: ⌘M 曲线 / ⌘L 色阶 / ⌘U 色相饱和度 / ⌘I 反相.
@@ -198,9 +177,18 @@
     sheetOpen = true;
   }
 
+  // PSD 转换报告（票 39）：报告完再应用。
+  let psdReport = $state<PendingConversion[] | null>(null);
+
   // Bridge errors (plain `vite dev` has no window.go) stay non-fatal.
   function openProjectSafe(): void {
-    void openProject().catch((err) => console.warn("打开项目失败", err));
+    void openProject()
+      .then((result) => {
+        if (result !== "opened" && result !== "cancelled" && result.pending) {
+          psdReport = result.conversions;
+        }
+      })
+      .catch((err) => console.warn("打开项目失败", err));
   }
 
   function saveProjectSafe(): void {
@@ -343,6 +331,10 @@
 
 {#if $filterSession && $filterSession.kind !== "cameraRaw"}
   <FilterDialog />
+{/if}
+
+{#if psdReport}
+  <PsdConversionSheet conversions={psdReport} onclose={() => (psdReport = null)} />
 {/if}
 
 {#if $rawDevelop}

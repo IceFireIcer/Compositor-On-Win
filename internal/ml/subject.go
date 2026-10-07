@@ -66,7 +66,7 @@ func ModelDir() string {
 	return filepath.Join(base, "Compositor", "models")
 }
 
-func modelPath() string  { return filepath.Join(ModelDir(), ModelFileName) }
+func modelPath() string { return filepath.Join(ModelDir(), ModelFileName) }
 func libPath() string {
 	for _, dir := range []string{"", ".", "models"} {
 		p := filepath.Join(dir, libFileName())
@@ -231,7 +231,7 @@ func RunSubjectMaskRaw(b *render.Bitmap) (*render.Bitmap, error) {
 	mask := render.NewBitmap(b.W, b.H)
 	levels := render.GuidedUpscale(raw, inputSide, inputSide, b.W, b.H)
 	for i, v := range levels {
-		g := uint8(min(255, max(0, (float64(v)-float64(lo))/float64(span)*255 + 0.5)))
+		g := uint8(min(255, max(0, (float64(v)-float64(lo))/float64(span)*255+0.5)))
 		mask.Pix[i*4] = g
 		mask.Pix[i*4+1] = g
 		mask.Pix[i*4+2] = g

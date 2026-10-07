@@ -81,15 +81,15 @@ func exifAPP1(orientation uint16, little bool) []byte {
 		u16, u32 = binary.LittleEndian.AppendUint16, binary.LittleEndian.AppendUint32
 	}
 	payload := make([]byte, 0, 8+2+12+4)
-	payload = append(payload, bo...)                // TIFF header
-	payload = u32(payload, 8)                       // IFD0 at offset 8
-	payload = u16(payload, 1)                       // one entry
-	payload = u16(payload, 0x0112)                  // orientation tag
-	payload = u16(payload, 3)                       // SHORT
-	payload = u16(payload, 1)                       // count 1
+	payload = append(payload, bo...) // TIFF header
+	payload = u32(payload, 8)        // IFD0 at offset 8
+	payload = u16(payload, 1)        // one entry
+	payload = u16(payload, 0x0112)   // orientation tag
+	payload = u16(payload, 3)        // SHORT
+	payload = u16(payload, 1)        // count 1
 	payload = u16(payload, orientation)
-	payload = u16(payload, 0)                       // pad
-	payload = u32(payload, 0)                       // next IFD
+	payload = u16(payload, 0) // pad
+	payload = u32(payload, 0) // next IFD
 	seg := append([]byte("Exif\x00\x00"), payload...)
 	out := []byte{0xFF, 0xE1}
 	out = binary.BigEndian.AppendUint16(out, uint16(len(seg)+2))

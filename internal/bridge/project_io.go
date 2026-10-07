@@ -46,10 +46,30 @@ func defaultSaveDialog(ctx context.Context) (string, error) {
 	})
 }
 
+// openReply is OpenProjectDialog's JSON shape: either an opened document
+// envelope, or a pending Photoshop import awaiting the conversion report's
+// confirmation (the original showed its sheet before applying).
+type openReply struct {
+	Rev         int              `json:"rev"`
+	Pending     bool             `json:"pending,omitempty"`
+	Conversions []psd.Conversion `json:"conversions,omitempty"`
+}
+
+// pendingPSDOpen is one parsed Photoshop file held until the user answers
+// the conversion report.
+type pendingPSDOpen struct {
+	path        string
+	doc         *domain.Document
+	bitmaps     map[string]*render.Bitmap
+	conversions []psd.Conversion
+}
+
 // OpenProjectDialog asks for a .comp package, loads it through the project
 // store (manifest → validate → decode PNG assets into the bitmap library)
-// and opens it as the active tab. An empty path means the user cancelled:
-// per the binding contract the reply keeps the current rev but carries
+// and opens it as the active tab. A Photoshop file with conversion notes is
+// held back and reported instead ({"pending":true,"conversions":[…]});
+// ConfirmPendingOpen applies it, CancelPendingOpen drops it. An empty path
+// means the user cancelled: the reply keeps the current rev but carries
 // doc:null.
 func (s *Service) OpenProjectDialog() (string, error) {
 	if s.ws == nil {
@@ -66,19 +86,47 @@ func (s *Service) OpenProjectDialog() (string, error) {
 	if err != nil {
 		return "", err
 	}
+	if len(conversions) > 0 {
+		s.psdMu.Lock()
+		s.pendingPSD = &pendingPSDOpen{path: path, doc: doc, bitmaps: bitmaps, conversions: conversions}
+		s.psdMu.Unlock()
+		rev := s.ws.ActiveRev()
+		b, err := json.Marshal(openReply{Rev: rev, Pending: true, Conversions: conversions})
+		if err != nil {
+			return "", fmt.Errorf("无法编码转换报告: %w", err)
+		}
+		return string(b), nil
+	}
 	if _, err := s.ws.OpenDocument(path, doc, bitmaps); err != nil {
 		return "", err
 	}
-	if len(conversions) > 0 {
-		// The conversion report rides an event: the tab is already open and
-		// the notes are informational, not a failure.
-		if s.ctx != nil {
-			if payload, merr := json.Marshal(conversions); merr == nil {
-				runtime.EventsEmit(s.ctx, "psdConversions", payload)
-			}
-		}
+	return s.ws.ActiveDocumentJSON()
+}
+
+// ConfirmPendingOpen applies the Photoshop file the conversion report was
+// about.
+func (s *Service) ConfirmPendingOpen() (string, error) {
+	if s.ws == nil {
+		return "", errNoDocument
+	}
+	s.psdMu.Lock()
+	pending := s.pendingPSD
+	s.pendingPSD = nil
+	s.psdMu.Unlock()
+	if pending == nil {
+		return "", fmt.Errorf("没有待确认的 Photoshop 导入")
+	}
+	if _, err := s.ws.OpenDocument(pending.path, pending.doc, pending.bitmaps); err != nil {
+		return "", err
 	}
 	return s.ws.ActiveDocumentJSON()
+}
+
+// CancelPendingOpen drops the pending Photoshop import.
+func (s *Service) CancelPendingOpen() {
+	s.psdMu.Lock()
+	s.pendingPSD = nil
+	s.psdMu.Unlock()
 }
 
 // loadAny opens .comp packages and .psd/.psb files, dispatching by

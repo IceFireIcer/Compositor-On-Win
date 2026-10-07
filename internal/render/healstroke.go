@@ -23,13 +23,13 @@ type HealStroke struct {
 	radius   float64
 	spacing  float64
 
-	prev      Point
-	hasPrev   bool
+	prev       Point
+	hasPrev    bool
 	distToNext float64
-	anchor    Point
-	hasAnchor bool
-	pointer   Point
-	done      bool
+	anchor     Point
+	hasAnchor  bool
+	pointer    Point
+	done       bool
 }
 
 // NewHealStroke starts a healing stroke over the layer's pixel grid.

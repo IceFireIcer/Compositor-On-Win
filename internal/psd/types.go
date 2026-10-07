@@ -57,7 +57,9 @@ const (
 )
 
 // Record is one parsed layer (PSDRecord). Image is premultiplied RGBA
-// (the render.Bitmap format); Mask is 8-bit gray.
+// (the render.Bitmap format); Mask is 8-bit gray. Text carries a parsed
+// editable type layer (ticket 39) and Shape a live shape style; both are
+// nil when the layer imports as its stored pixels.
 type Record struct {
 	ID                    string
 	ParentID              string
@@ -79,7 +81,19 @@ type Record struct {
 	MaskLinked            bool
 	// Adjustment is the parsed levl/curv/hue2 record, nil for other kinds.
 	Adjustment interface{ AdjustmentKind() string }
-	Kind       LayerKind
+	// Text is the parsed TySh type layer (KindText), Shape a live shape
+	// style parsed from vogk (KindVector); both feed the builder's editable
+	// metadata, nil otherwise.
+	Text  *ParsedText
+	Shape *LiveShape
+
+	// OriginX/OriginY is the transform's top-left in document pixels
+	// (fractional for text layers); Rotation and FlipY ride with it.
+	OriginX, OriginY float64
+	Rotation         float64
+	FlipY            bool
+
+	Kind LayerKind
 }
 
 // BlendModeFromPSD maps the Photoshop blend key onto the domain's modes

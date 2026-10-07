@@ -24,7 +24,7 @@ import (
 
 // User-facing import failures, ported from ImageImportError.
 var (
-	ErrUnreadable = errors.New("无法读取该图像：文件可能已损坏或不可用")
+	ErrUnreadable  = errors.New("无法读取该图像：文件可能已损坏或不可用")
 	ErrUnsupported = errors.New("请选择 JPEG、PNG、HEIC、TIFF 或 Photoshop（PSD）文件")
 )
 

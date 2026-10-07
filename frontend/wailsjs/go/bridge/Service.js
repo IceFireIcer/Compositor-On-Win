@@ -54,8 +54,16 @@ export function CancelImageImport() {
   return window['go']['bridge']['Service']['CancelImageImport']();
 }
 
+export function CancelPendingOpen() {
+  return window['go']['bridge']['Service']['CancelPendingOpen']();
+}
+
 export function CommitFilter(arg1) {
   return window['go']['bridge']['Service']['CommitFilter'](arg1);
+}
+
+export function ConfirmPendingOpen() {
+  return window['go']['bridge']['Service']['ConfirmPendingOpen']();
 }
 
 export function CopyMerged() {

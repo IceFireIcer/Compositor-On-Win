@@ -46,8 +46,13 @@ type Service struct {
 	exportPreview *render.Bitmap
 
 	// RAW develop sheet (ticket 41): the open half-size LibRaw session.
-	rawMu       sync.Mutex
-	rawSession  *rawDevelopSession
+	rawMu      sync.Mutex
+	rawSession *rawDevelopSession
+
+	// PSD conversion confirmation (ticket 39): a Photoshop file with
+	// conversion notes waits here until the user confirms or cancels.
+	psdMu      sync.Mutex
+	pendingPSD *pendingPSDOpen
 }
 
 // NewService wires the service onto a workspace (shared with the

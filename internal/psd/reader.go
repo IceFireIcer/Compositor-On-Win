@@ -944,9 +944,43 @@ func assemble(raw []rawLayer, canvasWidth, canvasHeight int, resolution float64,
 		if !isGroup {
 			record.Image = layer.image
 		}
-		if !isGroup && (layer.extra["vmsk"] != nil || layer.extra["vsms"] != nil || layer.extra["vogk"] != nil) {
-			// Live vector re-rendering is not ported; the layer keeps the
-			// raster pixels Photoshop stores and the builder adds the note.
+		record.OriginX, record.OriginY = float64(record.Left), float64(record.Top)
+		if record.Kind == KindText {
+			if text := parseText(layer.extra); text != nil {
+				record.Text = text
+			}
+		}
+		if record.Text == nil && !isGroup {
+			// PSDReader.assemble's vector gates, in the original order:
+			// text first, then a live filled rectangle/ellipse, then a
+			// raster fallback only when Photoshop stored no pixels.
+			if live := parseVector(layer.extra, canvasWidth, canvasHeight, remaining); live != nil && live.Live != nil {
+				if image, ok := liveShapeImage(*live.Live); ok {
+					w, h := image.W, image.H
+					record.Image = image
+					record.Width, record.Height = w, h
+					record.OriginX, record.OriginY = live.Live.X, live.Live.Y
+					record.Left, record.Top = int(live.Live.X), int(live.Live.Y)
+					record.Shape = live.Live
+					record.Kind = KindVector
+					remaining = max(0, remaining-w*h)
+				}
+			} else if record.Image == nil {
+				if raster := parseVectorRaster(layer.extra, canvasWidth, canvasHeight, remaining); raster != nil && raster.Raster != nil {
+					if image, ok := rasterVectorImage(*raster.Raster, layer.extra); ok {
+						w, h := image.W, image.H
+						record.Image = image
+						record.Width, record.Height = w, h
+						record.OriginX, record.OriginY = raster.Raster.X, raster.Raster.Y
+						record.Left, record.Top = int(raster.Raster.X), int(raster.Raster.Y)
+						record.Kind = KindVector
+						remaining = max(0, remaining-w*h)
+					}
+				}
+			}
+		}
+		if record.Kind == KindVector && record.Image == nil {
+			// A vector the model cannot redraw stays the stored raster.
 			record.Kind = KindVector
 		}
 		if layer.maskFromRender {

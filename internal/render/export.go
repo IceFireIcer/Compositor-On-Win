@@ -97,4 +97,3 @@ func EncodeJPEGWithDPI(b *Bitmap, quality, dpi int, bgR, bgG, bgB uint8) ([]byte
 	}
 	return data, nil
 }
-

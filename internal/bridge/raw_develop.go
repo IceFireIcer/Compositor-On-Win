@@ -14,8 +14,8 @@ import (
 	"sync"
 
 	"compositor-win/internal/domain"
-	"compositor-win/internal/render"
 	"compositor-win/internal/rawio"
+	"compositor-win/internal/render"
 )
 
 // rawExtensions is the develop-sheet trigger set: every camera RAW the
@@ -101,10 +101,10 @@ func (s *Service) RawBeginDevelop(path string) (string, error) {
 // rawPreviewReply carries the developed preview: JPEG bytes (quality 90)
 // and the frame size the sheet displays.
 type rawPreviewReply struct {
-	JPEG  string `json:"jpeg"`
-	Size  int    `json:"size"`
-	Width int    `json:"width"`
-	Height int   `json:"height"`
+	JPEG   string `json:"jpeg"`
+	Size   int    `json:"size"`
+	Width  int    `json:"width"`
+	Height int    `json:"height"`
 }
 
 const rawPreviewLimit = 2048

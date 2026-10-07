@@ -6,6 +6,8 @@ import {
 } from "../../../wailsjs/go/bridge/Workspace";
 import {
   BeginImageImport,
+  CancelPendingOpen,
+  ConfirmPendingOpen,
   FinishImageImport,
   OpenProjectDialog,
   PickImageImport,
@@ -74,17 +76,45 @@ export async function closeTab(id: string): Promise<Snapshot> {
   return s;
 }
 
+export interface PendingConversion {
+  layerName: string;
+  message: string;
+}
+
 /**
- * Open a .comp project through the native dialog. Returns false when the
- * user cancels (the bridge replies doc:null); otherwise refreshes both the
- * tab strip and the document store.
+ * Open a .comp project through the native dialog. Returns "opened" on
+ * success, "cancelled" when the user closed the picker, and
+ * "pending" (with the conversion report) when a Photoshop file needs its
+ * notes confirmed before it is applied — the original's sheet-before-insert
+ * flow. Confirm with confirmPendingOpen, drop with cancelPendingOpen.
  */
-export async function openProject(): Promise<boolean> {
-  const reply = JSON.parse(await OpenProjectDialog()) as { doc?: unknown };
-  if (!reply || reply.doc == null) return false;
+export async function openProject(): Promise<
+  "opened" | "cancelled" | { pending: true; conversions: PendingConversion[] }
+> {
+  const raw = JSON.parse(await OpenProjectDialog()) as {
+    doc?: unknown;
+    pending?: boolean;
+    conversions?: PendingConversion[];
+  };
+  if (raw?.pending) {
+    return { pending: true, conversions: raw.conversions ?? [] };
+  }
+  if (!raw || raw.doc == null) return "cancelled";
   applySnapshot(await GetSnapshot());
   await loadDocument();
-  return true;
+  return "opened";
+}
+
+/** Apply the Photoshop file the conversion report described. */
+export async function confirmPendingOpen(): Promise<void> {
+  await ConfirmPendingOpen();
+  applySnapshot(await GetSnapshot());
+  await loadDocument();
+}
+
+/** Drop the pending Photoshop file (user closed the sheet). */
+export async function cancelPendingOpen(): Promise<void> {
+  await CancelPendingOpen();
 }
 
 /**

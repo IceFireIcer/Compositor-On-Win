@@ -81,8 +81,8 @@ func RenderShape(style domain.ShapeStyle, w, h int) *Bitmap {
 				hits := 0
 				for sy := 0; sy < 2; sy++ {
 					for sx := 0; sx < 2; sx++ {
-						sampleX := float64(px) + 0.5 + (0.25+0.5*float64(sx) - 0.5)
-						sampleY := float64(py) + 0.5 + (0.25+0.5*float64(sy) - 0.5)
+						sampleX := float64(px) + 0.5 + (0.25 + 0.5*float64(sx) - 0.5)
+						sampleY := float64(py) + 0.5 + (0.25 + 0.5*float64(sy) - 0.5)
 						if inside(sampleX, sampleY) {
 							hits++
 						}

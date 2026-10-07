@@ -17,8 +17,8 @@ import (
 
 	"compositor-win/internal/domain"
 	"compositor-win/internal/heicio"
-	"compositor-win/internal/render"
 	"compositor-win/internal/rasterio"
+	"compositor-win/internal/render"
 )
 
 // imageFilter is the file-dialog filter for the import batch: the raster
@@ -254,9 +254,9 @@ func readSVGSource(path string) ([]byte, error) {
 }
 
 var (
-	svgRootRe  = regexp.MustCompile(`(?is)<svg\b[^>]*>`)
-	svgWidthRe = regexp.MustCompile(`(?is)\bwidth\s*=\s*"([^"]*)"`)
-	svgHeightRe = regexp.MustCompile(`(?is)\bheight\s*=\s*"([^"]*)"`)
+	svgRootRe    = regexp.MustCompile(`(?is)<svg\b[^>]*>`)
+	svgWidthRe   = regexp.MustCompile(`(?is)\bwidth\s*=\s*"([^"]*)"`)
+	svgHeightRe  = regexp.MustCompile(`(?is)\bheight\s*=\s*"([^"]*)"`)
 	svgViewBoxRe = regexp.MustCompile(`(?is)\bviewBox\s*=\s*"([^"]*)"`)
 )
 
@@ -334,7 +334,7 @@ func svgLength(attr [][]byte) (float64, bool) {
 // floor(center − size/2), which for a canvas-centered import is the
 // centered (possibly negative) offset.
 func floorOrigin(canvasW, canvasH, imgW, imgH int) (float64, float64) {
-	return math.Floor(float64(canvasW-imgW)/2), math.Floor(float64(canvasH-imgH)/2)
+	return math.Floor(float64(canvasW-imgW) / 2), math.Floor(float64(canvasH-imgH) / 2)
 }
 
 // ActiveCanvasInfo reports the active tab's canvas size and whether any

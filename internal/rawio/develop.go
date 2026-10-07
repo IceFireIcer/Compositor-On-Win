@@ -164,7 +164,7 @@ func ApplyDevelop(r16, g16, b16 []uint16, settings DevelopSettings) (pix []uint8
 	for i := 0; i < n; i++ {
 		samples := [3]uint16{r16[i], g16[i], b16[i]}
 		for c, v16 := range samples {
-			linear := (float64(v16)/65535) * exposure * gains[c]
+			linear := (float64(v16) / 65535) * exposure * gains[c]
 			linear = math.Max(0, math.Min(1, linear))
 			// Flat interpretation: plain sRGB gamma encode of the linear
 			// value. Full: the same encode plus a soft S-curve pull.

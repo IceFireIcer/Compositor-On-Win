@@ -6,10 +6,12 @@ package psd
 
 import (
 	"fmt"
+	"math"
 
 	crand "crypto/rand"
 
 	"compositor-win/internal/domain"
+	"compositor-win/internal/layerrender"
 	"compositor-win/internal/render"
 )
 
@@ -59,15 +61,39 @@ func Build(doc Document) (*Import, error) {
 			})
 		}
 		var notes []string
+		renderedText := false
+		var textImage *render.Bitmap
+		var textStyle *domain.TextStyle
+		var textOrigin [2]float64
+		if record.Kind == KindText && record.Text != nil {
+			style := record.Text.Style
+			if image, ok := layerrender.TextImage(style); ok {
+				renderedText = true
+				textImage = image
+				textStyle = &style
+				textOrigin = textLayerOrigin(record.Text, float64(image.W), float64(image.H))
+			}
+		}
 		switch record.Kind {
 		case KindText:
-			notes = append(notes, "文字图层以像素导入，实时文字未随文件转换。")
+			if renderedText && record.Text != nil {
+				notes = append(notes, record.Text.Notes...)
+				if !layerrender.FontInstalled(record.Text.Style.FontName) {
+					notes = append(notes, fmt.Sprintf("字体“%s”未安装，文字以系统字体绘制。", record.Text.Style.FontName))
+				}
+			} else {
+				notes = append(notes, "可编辑的 Photoshop 文字已成为像素，无法再重新输入。")
+			}
 		case KindSmartObject:
 			notes = append(notes, "智能对象已栅格化，链接内容不可编辑。")
 		case KindEffects:
 			notes = append(notes, "图层特效被丢弃，外观可能不同。")
 		case KindVector:
-			notes = append(notes, "矢量形状已栅格化为像素。")
+			if record.Shape != nil {
+				notes = append(notes, record.Shape.Notes...)
+			} else {
+				notes = append(notes, "矢量形状已栅格化为像素。")
+			}
 		case KindOther:
 			notes = append(notes, "该 Photoshop 图层类型不受支持，已按像素导入。")
 		}
@@ -124,17 +150,50 @@ func Build(doc Document) (*Import, error) {
 			a := adj.Adjustment
 			layer.Adjustment = &a
 		}
-		if !isGroup && record.Adjustment == nil && record.Image != nil {
+		if !isGroup && record.Adjustment == nil && (record.Image != nil || textImage != nil) {
+			image := record.Image
+			if textImage != nil {
+				image = textImage
+			}
 			assetName := record.ID + ".png"
-			out.Assets[assetName] = record.Image
+			out.Assets[assetName] = image
 			layer.ImageFile = &assetName
-			origin := [2]float64{float64(record.Left), float64(record.Top)}
+			origin := [2]float64{record.OriginX, record.OriginY}
+			if textImage != nil {
+				origin = textOrigin
+			}
 			w, h := float64(record.Width), float64(record.Height)
+			if textImage != nil {
+				w, h = float64(textImage.W), float64(textImage.H)
+			}
 			if w <= 0 || h <= 0 {
-				w, h = float64(record.Image.W), float64(record.Image.H)
+				w, h = float64(image.W), float64(image.H)
 			}
 			layer.Transform = domain.Transform{
-				Origin: origin, Size: [2]float64{w, h}, Sampling: domain.SamplingNearest,
+				Origin:   origin,
+				Size:     [2]float64{w, h},
+				Rotation: record.Rotation,
+				FlipY:    record.FlipY,
+				Sampling: domain.SamplingNearest,
+			}
+			// Live metadata: a text layer stays retypeable, a shape layer
+			// redraws when scaled (the PNG remains the display fallback).
+			if textStyle != nil {
+				layer.Text = textStyle
+			}
+			if record.Shape != nil {
+				kind := domain.ShapeRectangle
+				switch record.Shape.Kind {
+				case "Ellipse":
+					kind = domain.ShapeEllipse
+				}
+				layer.Shape = &domain.ShapeStyle{
+					Kind:         kind,
+					Red:          record.Shape.Red,
+					Green:        record.Shape.Green,
+					Blue:         record.Shape.Blue,
+					CornerRadius: record.Shape.CornerRadius,
+				}
 			}
 		}
 		if record.Mask != nil && len(record.Mask) > 0 {
@@ -307,4 +366,25 @@ func domainUUID() string {
 		out = append(out, hexDigits[v>>4], hexDigits[v&0xF])
 	}
 	return string(out)
+}
+
+// textLayerOrigin computes the layer transform's top-left for a rendered
+// text image (PSDText.layerTransform): the image anchor — the padding
+// corner for a fixed box, the alignment anchor plus first baseline for
+// point text — is rotated (and flipped) about the image centre, then the
+// document anchor is placed on it.
+func textLayerOrigin(text *ParsedText, imgW, imgH float64) [2]float64 {
+	ax, ay := float64(layerrender.TextPadding), float64(layerrender.TextPadding)
+	if !text.AnchorIsFrame {
+		ax, ay = layerrender.TextAnchor(text.Style, imgW)
+	}
+	lx, ly := ax-imgW/2, ay-imgH/2
+	if text.FlipY {
+		ly = -ly
+	}
+	rad := text.Rotation * math.Pi / 180
+	rx := lx*math.Cos(rad) - ly*math.Sin(rad)
+	ry := lx*math.Sin(rad) + ly*math.Cos(rad)
+	cx, cy := text.Anchor[0]-rx, text.Anchor[1]-ry
+	return [2]float64{cx - imgW/2, cy - imgH/2}
 }
