@@ -337,10 +337,10 @@
           run: () => runAndClose("Menus:Zoom Out"),
         },
         {
+          // 变换控件还没画（票 17）：菜单项先留着显示键位，按下不做事。
           label: "显示变换控件",
           hint: hintFor("Menus:Show Transform Controls"),
-          disabled: !hasLayer,
-          run: () => runAndClose("Menus:Show Transform Controls"),
+          disabled: true,
         },
       ],
     },

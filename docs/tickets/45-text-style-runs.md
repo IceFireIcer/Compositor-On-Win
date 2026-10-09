@@ -8,6 +8,9 @@
 
 - [x] 逐 run 样式（colorRuns/fontRuns）编辑与渲染测试（TypeToolTests 样式语义）
 - [x] 字距/行高（TextKit leading/kern 语义）与原版排版对齐（抽样对照）
+      —— 说明：Windows 上跑不了 TextKit，所以"抽样对照"是**按原版公式手算的固定样例**
+      （行高 144/174/384/474、tracking 逐字符含末字符、对齐的容器宽 = width − 2×padding），
+      没有 macOS golden 可对；仓里 `tests/golden/ref` 只覆盖 C 内核滤镜。
 - [x] 字体枚举/选择器/回退字体策略
 - [x] 样式随 manifest v11 往返
 
@@ -19,7 +22,7 @@
 `setRunColor`/`setRunFont`（空段或整段 → 改基础字段并清 runs；逐 UTF-16 码元展开后合并相等
 邻居）、`uniformColorIn`/`uniformFontIn`（选区取值，混排返回 null → 选项栏显示"多种字体"）、
 `reconcileRunsForEdit`（编辑后 run 跟随，含代理对与"提升为基础样式"）、`dropRuns`。44 个测试
-（textRuns.test.ts）逐条对应 TypeToolTests.swift:354-497。Go 侧 `internal/domain/text.go:
+（textRuns.test.ts）覆盖 TypeToolTests.swift:354-497 那段（该区间 6 个 `@Test`）的全部语义点。Go 侧 `internal/domain/text.go:
 ValidateRuns` + `internal/project/validate.go` + `internal/bridge/text.go` 三处同规则校验，
 渲染在 `internal/layerrender/text.go`（每个 rune 用自己的面孔测宽/画字，颜色逐字形蒙版），
 测试 `text_runs_test.go`。
@@ -70,5 +73,8 @@ ProjectStore.swift:15,21），Open 仍按文件声明版本校验；回归测试
 4. **像素操作不清 `layer.Text`**：原版会失效可编辑文字（TypeTool.swift:216-221），Go 侧笔刷/
    滤镜/几何都不清，.comp 里会留下"已被重绘却仍标可编辑"的文字元数据。
 5. 字体索引把每个字体文件字节常驻内存（fontindex.go:191），全机字体多时占用可观。
-6. `domain/validate.go` 的 `validateText` 是 `domain/text.go: ValidateRuns` 的弱化重复
-   （当前不可达，但会分叉）。
+6. run 校验原先有三份（`domain/text.go: ValidateRuns`、`domain/validate.go: validateText`、
+   `project/validate.go: colorRunsValid/fontRunsValid`）且已经分叉——`Document.Validate`
+   会走 validateText（**可达**，不是死代码），而溢出保护与颜色/字体名规则只有 ValidateRuns
+   有，同一个 manifest 可能"过了一道门、被另一道拒"。现已统一：后两处都改成调用
+   `TextStyle.ValidateRuns()`。

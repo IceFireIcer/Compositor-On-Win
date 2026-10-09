@@ -14,10 +14,12 @@ package bridge
 //	LayerEffects.swift       remove (182), removeSelectedEffect (357)
 //	EditorSession.swift      nudgeLayer (537), commitTransform's edit name (485)
 //
-// Every op validates its whole plan against a candidate copy of the document
-// before committing anything, so a rejected request leaves sess.doc
-// byte-identical; Workspace.EditActive rolls the document back as a second
-// line of defence.
+// Every op validates its request before touching the document, so a rejected
+// request leaves sess.doc byte-identical; the structural ops (duplicate,
+// group, ungroup, clipping, merge) additionally validate the whole candidate
+// hierarchy before committing, while the pointer-level ones (deleteLayerMask,
+// deleteEffect, nudge) check their fields and mutate in place.
+// Workspace.EditActive rolls the document back as a second line of defence.
 //
 // One deliberate difference from the ticket text: the bitmaps of layers a
 // command removes stay in sess.bitmaps. Go's history stores the manifest only
@@ -460,7 +462,7 @@ func planDuplicateLayer(payload string) (string, func(*session) error, error) {
 	if p.ID == "" && len(p.IDs) == 0 {
 		return "", nil, fmt.Errorf("duplicateLayer 缺少 id")
 	}
-	return "Duplicate Layer", func(sess *session) error {
+	return "拷贝图层", func(sess *session) error {
 		return duplicateLayersInSession(sess, p.ID, p.IDs)
 	}, nil
 }
@@ -641,7 +643,7 @@ func planGroupLayers(payload string) (string, func(*session) error, error) {
 	if len(p.IDs) == 0 && p.ID == "" {
 		return "", nil, fmt.Errorf("groupLayers 缺少 ids")
 	}
-	return "Group Layers", func(sess *session) error {
+	return "编组", func(sess *session) error {
 		ids := p.IDs
 		if len(ids) == 0 {
 			ids = []string{p.ID}
@@ -780,7 +782,7 @@ func planUngroupLayer(payload string) (string, func(*session) error, error) {
 	if p.ID == "" {
 		return "", nil, fmt.Errorf("ungroupLayer 缺少 id")
 	}
-	return "Ungroup Layers", func(sess *session) error {
+	return "取消编组", func(sess *session) error {
 		return ungroupLayerInSession(sess, p.ID)
 	}, nil
 }
@@ -866,11 +868,11 @@ func planSetClippingMask(payload string) (string, func(*session) error, error) {
 		return "", nil, fmt.Errorf("setClippingMask 缺少 clip")
 	}
 	if *p.Clip {
-		return "Create Clipping Mask", func(sess *session) error {
+		return "创建剪贴蒙版", func(sess *session) error {
 			return linkClippingMask(sess, p.ID)
 		}, nil
 	}
-	return "Release Clipping Mask", func(sess *session) error {
+	return "释放剪贴蒙版", func(sess *session) error {
 		return releaseClippingMask(sess, p.ID)
 	}, nil
 }
@@ -980,7 +982,7 @@ func planDeleteLayerMask(payload string) (string, func(*session) error, error) {
 	if p.ID == "" {
 		return "", nil, fmt.Errorf("deleteLayerMask 缺少 id")
 	}
-	return "Delete Layer Mask", func(sess *session) error {
+	return "删除图层蒙版", func(sess *session) error {
 		layer, err := layerByID(sess.doc, p.ID)
 		if err != nil {
 			return err
@@ -998,15 +1000,17 @@ func planDeleteLayerMask(payload string) (string, func(*session) error, error) {
 	}, nil
 }
 
-// effectTitles maps the wire kind to the menu title layerOps.ts
-// EFFECT_KIND_TITLES / Swift LayerEffectKind.rawValue spell.
+// effectTitles maps the wire kind to the Chinese menu title (the repository
+// spells every history transaction in Chinese — document.go's op contract).
+// The kinds themselves are layerOps.ts EffectKind / Swift LayerEffectKind
+// rawValues.
 var effectTitles = map[string]string{
-	"stroke":       "Stroke",
-	"shadow":       "Drop Shadow",
-	"colorOverlay": "Color Overlay",
-	"innerShadow":  "Inner Shadow",
-	"outerGlow":    "Outer Glow",
-	"innerGlow":    "Inner Glow",
+	"stroke":       "描边",
+	"shadow":       "投影",
+	"colorOverlay": "颜色叠加",
+	"innerShadow":  "内阴影",
+	"outerGlow":    "外发光",
+	"innerGlow":    "内发光",
 }
 
 type deleteEffectPayload struct {
@@ -1026,7 +1030,7 @@ func planDeleteEffect(payload string) (string, func(*session) error, error) {
 	if !ok {
 		return "", nil, fmt.Errorf("未知特效 kind %q", p.Kind)
 	}
-	return "Remove " + title, func(sess *session) error {
+	return "删除" + title, func(sess *session) error {
 		layer, err := layerByID(sess.doc, p.ID)
 		if err != nil {
 			return err
@@ -1119,7 +1123,7 @@ func planNudgeLayer(payload string) (string, func(*session) error, error) {
 			return "", nil, fmt.Errorf("nudgeLayer 偏移 %v 超出 ±%d px", delta, maxNudgeDelta)
 		}
 	}
-	return "Transform Layer", func(sess *session) error {
+	return "移动图层", func(sess *session) error {
 		layer, err := layerByID(sess.doc, p.ID)
 		if err != nil {
 			return err
@@ -1162,7 +1166,7 @@ func planMergeLayers(payload string) (string, func(*session) error, error) {
 	// "Merge Down" is mergeTitle's fallback when there is no plan
 	// (LayerMerge.swift:30); the mutator renames the transaction to the action
 	// the document actually picked.
-	return "Merge Down", func(sess *session) error {
+	return "向下合并", func(sess *session) error {
 		return mergeLayersInSession(sess, p)
 	}, nil
 }
@@ -1212,7 +1216,7 @@ func mergePlanFor(doc *domain.Document, anchor string, selected []string) (*merg
 			name:     topLayer.Name,
 			parentID: cloneIDPtr(topLayer.ParentID),
 			anchor:   top,
-			action:   "Merge Layers",
+			action:   "合并图层",
 		}, nil
 	}
 
@@ -1247,7 +1251,7 @@ func mergePlanFor(doc *domain.Document, anchor string, selected []string) (*merg
 			name:     active.Name,
 			parentID: cloneIDPtr(active.ParentID),
 			anchor:   active.ID,
-			action:   "Merge Group",
+			action:   "合并组",
 		}, nil
 	}
 	parent := parentIDOf(active)
@@ -1271,7 +1275,7 @@ func mergePlanFor(doc *domain.Document, anchor string, selected []string) (*merg
 		name:     belowLayer.Name,
 		parentID: cloneIDPtr(active.ParentID),
 		anchor:   active.ID,
-		action:   "Merge Down",
+		action:   "向下合并",
 	}, nil
 }
 

@@ -889,11 +889,17 @@ export function mergePlan(ctx: LayerContext): MergePlan | null {
     if (!ordered.some((l) => !isGroup(l))) return null;
     const top = [...ordered].reverse().find((l) => ctx.selectedLayerIDs.includes(l.id));
     if (!top) return null;
+    // A folder selected together with its own child would put the result
+    // inside a folder that is itself being merged away (Swift builds the same
+    // plan and LayerHierarchy.validate rejects it; Go's mergeLayers rejects it
+    // too, so the menu must not offer an action that always fails).
+    const parent = top.parentID ?? null;
+    if (parent !== null && picked.has(parent)) return null;
     return {
       ids: ordered.map((l) => l.id),
       removed: picked,
       name: top.name,
-      parentID: top.parentID ?? null,
+      parentID: parent,
       anchor: top.id,
       action: "Merge Layers",
     };

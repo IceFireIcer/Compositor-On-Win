@@ -63,7 +63,6 @@ describe("shortcutActions 与定义表对齐", () => {
       "Menus:Actual Pixels",
       "Menus:Zoom In",
       "Menus:Zoom Out",
-      "Menus:Show Transform Controls",
       "Menus:Copy Merged",
       "Menus:Select All",
       "Menus:Deselect",
@@ -158,7 +157,10 @@ describe("shortcutActions 与定义表对齐", () => {
       // 填充/清除：票 23 的填充命令还没接到 Go（没有 fill RPC）
       "Menus:Fill with Foreground",
       "Menus:Fill with Background",
-      // 变换会话没有画布入口：票 17 只有纯函数（transformSession.ts）
+      // 变换会话没有画布入口：票 17 只有纯函数（transformSession.ts）。
+      // ⌘H 原先接的是 showsTransformControls，但那个 store 没有任何消费者
+      // （画布不画变换控件），等于白吞一个键 —— 等票 17 落地再接。
+      "Menus:Show Transform Controls",
       "Menus:Transform Layer / Selection",
       "Canvas & Layers:Apply current canvas operation",
       // 视图开关：票 14 只有纯函数，画布既不渲染参考线也没有开关 store

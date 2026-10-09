@@ -67,6 +67,10 @@ func (s *Store) Open(dir string) (*domain.Document, error) {
 // never be saved again — validate.go's gates are written against the declared
 // version and would reject the document's own new data. Open() still validates
 // with the version the file declares, so the gates keep doing their job.
+//
+// The caller's document keeps the version it was loaded with: Version records
+// what the file on disk declared, and nothing decides behaviour from it at run
+// time (the gates read it at Open, and Save stamps the copy it writes).
 func (s *Store) Save(dir string, doc *domain.Document, assets map[string][]byte) error {
 	stamped := *doc
 	stamped.Version = domain.FormatVersion

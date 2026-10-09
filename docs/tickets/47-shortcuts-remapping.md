@@ -11,7 +11,7 @@
       Layers + 9 Text Editing），票面的"~114"是约数；表驱动测试逐条誊写三方组（id/key/modifiers）。
 - [x] 重映射 UI：录制、冲突提示、恢复默认、持久化
 - [x] 三域分流：文本框内不抢画布快捷键（BlendShortcutTests 语义）
-- [x] **底层命令已存在的全部接线**（原票面写"全部工具/命令挂接"；见下方"依赖登记"——其余 24 条
+- [x] **底层命令已存在的全部接线**（原票面写"全部工具/命令挂接"；见下方"依赖登记"——其余 25 条
       的底层命令本身属于尚未完成的票，字面意义上的"全部"在本票内不可能完成，已逐条登记归属）
 
 对等矩阵：P01、C14、故事 52。
@@ -44,7 +44,7 @@ INPUT/TEXTAREA/contentEditable（含影子 DOM 上溯）或文字会话打开时
 打开时画布池让位、菜单池照常。未注册动作不抢键（否则 Tab 焦点遍历、方向键滚动会被吞），
 已注册动作一律 preventDefault；keyup 只处理按住型条目（空格临时抓手）。
 
-**动作面（`actions.ts`，89 条注册 / 113 条定义，24 条按依赖登记未接）。** 菜单命令（撤销重做/新建/打开/保存/导出/关闭/缩放/
+**动作面（`actions.ts`，88 条注册 / 113 条定义，25 条按依赖登记未接）。** 菜单命令（撤销重做/新建/打开/保存/导出/关闭/缩放/
 反相/主体选择/调整/几何/图层命令族）、工具字母全部 17 个、色板交换与重置、混合模式循环
 （走 LayerOp，可撤销，符合 BlendShortcutTests）、数字键不透明度（两键拼两位数，0.6s 窗口）、
 方向键 Nudge（±1/±10 px）、删除、文字命令 9 条、内容感知填充、笔刷大小/硬度。
@@ -66,22 +66,23 @@ Layers 三上下文，用 render.Render 合成参与层、被移除层的剪贴�
 `planLayerOp` 的 case 名单双向比对：前端发了 Go 不认的 op、或 Go 有没人用的 op，都会红。
 放在 Go 侧是因为 CI 与本机都跑 go test，且不需要 node 类型。
 
-## 依赖登记：仍未接线的 24 条（每条都因为底层命令还没落地）
+## 依赖登记：仍未接线的 25 条（每条都因为底层命令还没落地）
 
 | 定义 | 归属 |
 | --- | --- |
 | Cut / Copy / Paste（⌘X/C/V） | 票 48（`state/selectionCommands.ts` 的纯函数在前端拿不到图层像素；`winclip` 只有 PutBitmap） |
-| Fill with Foreground / Background（⌥⌫ / ⌘⌫） | 无票（C15/C16 ☐）：引擎 `render.FillColor/FillForeground` 已在，缺 bridge RPC + 历史包装 |
+| Fill with Foreground / Background（⌥⌫ / ⌘⌫） | 票 23（它含填充命令；引擎侧只有 `render.FillColor`（带 FillMode），**没有** FillForeground 之类的命名封装），缺的是 bridge RPC + 历史包装；对等矩阵 C15/C16 仍 ☐ |
 | Transform Layer / Selection（⌘T） | 票 17（`transformSession.ts` 会话只有纯函数，Go 无 setTransform，画布未接交互） |
+| Show Transform Controls（⌘H） | 票 17：原先接的是 `showsTransformControls`，但画布不画变换控件、该 store 除测试外无消费者 —— 等于白吞一个键，故改为未接线，菜单项禁用保留键位提示 |
 | Apply current canvas operation（⏎） | 票 17/18（crop/transform 会话没有画布入口；crop 提交可复用 CanvasSize 的 offset） |
 | Show Grid / Guides / Rulers / Snap / Lock Guides | 票 14（只有 snap.ts/guides.ts 纯函数；画布不渲染参考线/标尺，没有开关 store） |
-| Toggle Levels preview（⌥P） | 票 33/31（FilterSession 没有 preview 字段，Go 的预览开关也没暴露） |
+| Toggle Levels preview（⌥P） | 票 33/31：Go 的 filter session 已有 `preview`/`previewSrc`（filter_session.go:49-50），缺的是"显示/隐藏预览"开关的 RPC/字段与 Levels 对话框里的复选框 |
 | Cycle tool mode（Tab） | 票 15/21（没有任何工具 mode 状态） |
 | Cycle shape kind（⇧U） | 票 25（`shapeKind` 状态与形状会话/端点都缺） |
 | Move selected pixels ×8（⌘←/…） | 票 16（S05 浮动选区 ☐；Go 无像素移位原语） |
 | Hide Compositor（⌥⌘H） | 不适用：macOS 专属（feature-parity「明确不做」第 4 条）；若要等价物应登记到票 49 的窗口区 |
 
-`actions.test.ts` 把这 24 条**逐条钉住**（多一条少一条都会失败），所以"未接线的就是这份清单"
+`actions.test.ts` 把这 25 条**逐条钉住**（多一条少一条都会失败），所以"未接线的就是这份清单"
 是测试保证的，不是注释承诺。
 
 ## 已知差异 / 留待后续

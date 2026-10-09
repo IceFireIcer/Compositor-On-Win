@@ -59,8 +59,11 @@ func (s *Service) DocumentSnapshot() (string, error) {
 
 // LayerOp applies one layer command to the active document and returns the
 // fresh envelope. ops: setActive / setVisible / rename / setOpacity /
-// setBlendMode / deleteLayer / addLayer / moveLayer. Every op runs inside a
-// history transaction (中文命令名); a document change bumps rev.
+// setBlendMode / deleteLayer / addLayer / setAdjustment / moveLayer, plus the
+// ticket-47 command family (layer_commands.go): duplicateLayer / groupLayers /
+// ungroupLayer / setClippingMask / deleteLayerMask / deleteEffect / nudgeLayer /
+// mergeLayers. Every op runs inside a history transaction (中文命令名); a
+// document change bumps rev.
 func (s *Service) LayerOp(op string, payload string) (string, error) {
 	if s.ws == nil {
 		return "", errNoDocument

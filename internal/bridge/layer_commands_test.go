@@ -226,8 +226,8 @@ func TestDuplicateLayerCopiesOneLayerAboveWithIndependentPixels(t *testing.T) {
 	if e.Doc.ActiveLayerID == nil || *e.Doc.ActiveLayerID != copied.ID {
 		t.Fatalf("活动图层 = %v，想要副本 %s", e.Doc.ActiveLayerID, copied.ID)
 	}
-	if got := undoNameOf(t, svc); got != "Duplicate Layer" {
-		t.Fatalf("undoName = %q，想要 Duplicate Layer", got)
+	if got := undoNameOf(t, svc); got != "拷贝图层" {
+		t.Fatalf("undoName = %q，想要 拷贝图层", got)
 	}
 
 	// 位图独立：内容一致、底层数组不同、改副本不影响原图。
@@ -396,8 +396,8 @@ func TestGroupLayersWrapsSelectionInNewFolder(t *testing.T) {
 	if e.Doc.ActiveLayerID == nil || *e.Doc.ActiveLayerID != folder.ID {
 		t.Fatalf("活动图层 = %v，想要新文件夹 %s", e.Doc.ActiveLayerID, folder.ID)
 	}
-	if got := undoNameOf(t, svc); got != "Group Layers" {
-		t.Fatalf("undoName = %q，想要 Group Layers", got)
+	if got := undoNameOf(t, svc); got != "编组" {
+		t.Fatalf("undoName = %q，想要 编组", got)
 	}
 }
 
@@ -490,8 +490,8 @@ func TestUngroupLayerSplicesChildrenInPlaceAndActivatesTheFirst(t *testing.T) {
 	if e.Doc.ActiveLayerID == nil || *e.Doc.ActiveLayerID != cA {
 		t.Fatalf("活动图层 = %v，想要落在原文件夹位置的首个子层 %s", e.Doc.ActiveLayerID, cA)
 	}
-	if got := undoNameOf(t, svc); got != "Ungroup Layers" {
-		t.Fatalf("undoName = %q，想要 Ungroup Layers", got)
+	if got := undoNameOf(t, svc); got != "取消编组" {
+		t.Fatalf("undoName = %q，想要 取消编组", got)
 	}
 }
 
@@ -545,8 +545,8 @@ func TestSetClippingMaskLinksToLowerSiblingAndSharesItsBase(t *testing.T) {
 	if !pointsTo(snapshotLayer(t, e.Doc, clipped).MaskSourceID, base) {
 		t.Fatalf("剪贴来源 = %v，想要下方兄弟 %s", snapshotLayer(t, e.Doc, clipped).MaskSourceID, base)
 	}
-	if got := undoNameOf(t, svc); got != "Create Clipping Mask" {
-		t.Fatalf("undoName = %q，想要 Create Clipping Mask", got)
+	if got := undoNameOf(t, svc); got != "创建剪贴蒙版" {
+		t.Fatalf("undoName = %q，想要 创建剪贴蒙版", got)
 	}
 	// 上面的层复用同一基底。
 	e = mustLayerOp(t, svc, "setClippingMask", payloadJSON(t, map[string]any{"id": top, "clip": true}))
@@ -576,8 +576,8 @@ func TestSetClippingMaskReleaseClearsTheSharedBaseChain(t *testing.T) {
 	if snapshotLayer(t, e.Doc, c1).MaskSourceID != nil || snapshotLayer(t, e.Doc, c2).MaskSourceID != nil {
 		t.Fatal("解除基底应释放共享它的上方兄弟")
 	}
-	if got := undoNameOf(t, svc); got != "Release Clipping Mask" {
-		t.Fatalf("undoName = %q，想要 Release Clipping Mask", got)
+	if got := undoNameOf(t, svc); got != "释放剪贴蒙版" {
+		t.Fatalf("undoName = %q，想要 释放剪贴蒙版", got)
 	}
 	// 解除一层只影响它自己与共享基底的上方兄弟。
 	made := mustLayerOp(t, svc, "setClippingMask", payloadJSON(t, map[string]any{"id": c1, "clip": true}))
@@ -634,8 +634,8 @@ func TestDeleteLayerMaskClearsEveryMaskFieldButKeepsClipping(t *testing.T) {
 	if !pointsTo(got.MaskSourceID, base) {
 		t.Fatal("剪贴蒙版不是蒙版字段，不应被删除")
 	}
-	if got := undoNameOf(t, svc); got != "Delete Layer Mask" {
-		t.Fatalf("undoName = %q，想要 Delete Layer Mask", got)
+	if got := undoNameOf(t, svc); got != "删除图层蒙版" {
+		t.Fatalf("undoName = %q，想要 删除图层蒙版", got)
 	}
 }
 
@@ -665,15 +665,15 @@ func TestDeleteEffectRemovesOneKindAndTheLastTakesTheRecord(t *testing.T) {
 	if effects == nil || effects.Shadow != nil || effects.Stroke == nil {
 		t.Fatalf("删 shadow 后 effects = %+v", effects)
 	}
-	if got := undoNameOf(t, svc); got != "Remove Drop Shadow" {
-		t.Fatalf("undoName = %q，想要 Remove Drop Shadow", got)
+	if got := undoNameOf(t, svc); got != "删除投影" {
+		t.Fatalf("undoName = %q，想要 删除投影", got)
 	}
 	e = mustLayerOp(t, svc, "deleteEffect", payloadJSON(t, map[string]any{"id": id, "kind": "stroke"}))
 	if snapshotLayer(t, e.Doc, id).Effects != nil {
 		t.Fatal("最后一个特效应带走整个 effects 记录")
 	}
-	if got := undoNameOf(t, svc); got != "Remove Stroke" {
-		t.Fatalf("undoName = %q，想要 Remove Stroke", got)
+	if got := undoNameOf(t, svc); got != "删除描边" {
+		t.Fatalf("undoName = %q，想要 删除描边", got)
 	}
 }
 
@@ -707,8 +707,8 @@ func TestNudgeLayerMovesTheTransformOrigin(t *testing.T) {
 	if e.Rev != 1 {
 		t.Fatalf("rev = %d，想要 1", e.Rev)
 	}
-	if got := undoNameOf(t, svc); got != "Transform Layer" {
-		t.Fatalf("undoName = %q，想要 Transform Layer", got)
+	if got := undoNameOf(t, svc); got != "移动图层" {
+		t.Fatalf("undoName = %q，想要 移动图层", got)
 	}
 	if _, err := svc.Undo(); err != nil {
 		t.Fatal(err)
@@ -771,8 +771,8 @@ func TestMergeDownBakesParticipantsIntoTheAnchorSlot(t *testing.T) {
 	if e.Doc.ActiveLayerID == nil || *e.Doc.ActiveLayerID != merged.ID {
 		t.Fatalf("活动图层 = %v，想要结果层", e.Doc.ActiveLayerID)
 	}
-	if got := undoNameOf(t, svc); got != "Merge Down" {
-		t.Fatalf("undoName = %q，想要 Merge Down", got)
+	if got := undoNameOf(t, svc); got != "向下合并" {
+		t.Fatalf("undoName = %q，想要 向下合并", got)
 	}
 	if got := activeSessionOf(t, svc).hist.UndoCount(); got != 1 {
 		t.Fatalf("⌘E 必须只记一步，得到 %d", got)
@@ -837,8 +837,8 @@ func TestMergeGroupReplacesTheFolderWithOneLayer(t *testing.T) {
 	if merged.ParentID != nil {
 		t.Fatal("结果层应继承文件夹的父级（这里是根级）")
 	}
-	if got := undoNameOf(t, svc); got != "Merge Group" {
-		t.Fatalf("undoName = %q，想要 Merge Group", got)
+	if got := undoNameOf(t, svc); got != "合并组" {
+		t.Fatalf("undoName = %q，想要 合并组", got)
 	}
 	if bmp := activeSessionOf(t, svc).bitmaps[*merged.ImageFile]; bmp == nil || bmp.W != 5 || bmp.H != 5 {
 		t.Fatalf("结果位图 = %v，想要 5×5（内容包围盒 1,1–6,6）", bmp)
@@ -865,8 +865,8 @@ func TestMergeLayersCombinesTheSelectionIntoTheTopmostSlot(t *testing.T) {
 	if merged.Name != "f" || merged.ParentID != nil {
 		t.Fatalf("结果层应取名/落位自最上的被选层: %+v", merged)
 	}
-	if got := undoNameOf(t, svc); got != "Merge Layers" {
-		t.Fatalf("undoName = %q，想要 Merge Layers", got)
+	if got := undoNameOf(t, svc); got != "合并图层" {
+		t.Fatalf("undoName = %q，想要 合并图层", got)
 	}
 	// 内容 = a 的 (1,1)-(2,2) ∪ c 的 (2,2)-(4,4)。
 	if merged.Transform.Origin != [2]float64{1, 1} || merged.Transform.Size != [2]float64{3, 3} {
@@ -948,8 +948,8 @@ func TestMergeLayersDefaultsToTheActiveLayer(t *testing.T) {
 	if got := flatNames(e.Doc); !reflect.DeepEqual(got, []string{"base"}) {
 		t.Fatalf("层序 = %v，想要 [base]（id 省略时默认活动层）", got)
 	}
-	if got := undoNameOf(t, svc); got != "Merge Down" {
-		t.Fatalf("undoName = %q，想要 Merge Down", got)
+	if got := undoNameOf(t, svc); got != "向下合并" {
+		t.Fatalf("undoName = %q，想要 向下合并", got)
 	}
 }
 

@@ -317,7 +317,8 @@ func wrapHardLine(buf *sfnt.Buffer, line []styledRune, ppem, tracking, maxWidth 
 			end = i + 1
 			if line[i].r == ' ' {
 				cut, next = i, i+1 // break after the space, dropping it
-			} else if i+1 < len(line) && (isWideRune(line[i].r) || isWideRune(line[i+1].r)) {
+			} else if i+1 < len(line) && (isWideRune(line[i].r) || isWideRune(line[i+1].r)) &&
+				!cannotStartLine(line[i+1].r) && !cannotEndLine(line[i].r) {
 				cut, next = i+1, i+1
 			}
 		}
@@ -336,7 +337,8 @@ func wrapHardLine(buf *sfnt.Buffer, line []styledRune, ppem, tracking, maxWidth 
 
 // isWideRune reports whether a rune belongs to a script whose characters each
 // form their own break opportunity (CJK ideographs, kana, hangul, fullwidth
-// forms) — the ranges UAX #14 gives the ID/HL classes.
+// forms) — the ranges UAX #14 gives the ID/HL classes, minus the punctuation
+// the two functions below keep off the edges.
 func isWideRune(r rune) bool {
 	switch {
 	case r >= 0x1100 && r <= 0x115F, // Hangul Jamo initial consonants
@@ -351,6 +353,32 @@ func isWideRune(r rune) bool {
 		r >= 0xFF00 && r <= 0xFF60, // fullwidth forms
 		r >= 0xFFE0 && r <= 0xFFE6,
 		r >= 0x20000 && r <= 0x3FFFD: // CJK extensions B and beyond
+		return true
+	}
+	return false
+}
+
+// cannotStartLine reports the CJK closing punctuation and small kana that must
+// not begin a line (UAX #14's CL/NS classes: 、。，．：；？！）］｝〉》」』】〙〛 and
+// the small kana ぁぃ…ゎヽヾー々). AppKit's byWordWrapping honors the same
+// prohibition, so a break opportunity is refused in front of them.
+func cannotStartLine(r rune) bool {
+	switch r {
+	case '、', '。', '，', '．', '：', '；', '？', '！', '’', '”',
+		'）', '］', '｝', '〉', '》', '」', '』', '】', '〕', '〗', '〙', '〛',
+		'ヽ', 'ヾ', 'ー', '々', '〜', '…', '‥', '・', 'ゝ', 'ゞ', 'ぁ', 'ぃ', 'ぅ', 'ぇ', 'ぉ',
+		'っ', 'ゃ', 'ゅ', 'ょ', 'ゎ', 'ァ', 'ィ', 'ゥ', 'ェ', 'ォ', 'ッ', 'ャ', 'ュ', 'ョ', 'ヮ':
+		return true
+	}
+	return false
+}
+
+// cannotEndLine reports the CJK opening punctuation that must not end a line
+// (UAX #14's OP class). The space rule already keeps ASCII spaces off the
+// line's tail.
+func cannotEndLine(r rune) bool {
+	switch r {
+	case '（', '［', '｛', '〈', '《', '「', '『', '【', '〔', '〖', '〘', '〚', '‘', '“':
 		return true
 	}
 	return false

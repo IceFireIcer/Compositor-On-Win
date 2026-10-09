@@ -285,36 +285,12 @@ func utf16Len(s string) int {
 	return n
 }
 
+// validateText applies the per-run rules through their single definition,
+// TextStyle.ValidateRuns (text.go): this file used to carry a weaker copy, so
+// the same manifest could pass Document.Validate and be rejected by the bridge
+// or the project store. One rule, one place.
 func validateText(t *TextStyle) error {
-	limit := utf16Len(t.Content)
-	runs := struct {
-		name  string
-		items []struct{ location, length int }
-	}{}
-	_ = runs
-	for i, r := range t.ColorRuns {
-		if r.Length < 1 {
-			return fmt.Errorf("colorRuns[%d] 长度必须为正", i)
-		}
-		if i > 0 && r.Location < t.ColorRuns[i-1].Location+t.ColorRuns[i-1].Length {
-			return fmt.Errorf("colorRuns[%d] 与前一个 run 重叠或未按序", i)
-		}
-		if r.Location+r.Length > limit {
-			return fmt.Errorf("colorRuns[%d] 超出文本范围（UTF-16 长度 %d）", i, limit)
-		}
-	}
-	for i, r := range t.FontRuns {
-		if r.Length < 1 {
-			return fmt.Errorf("fontRuns[%d] 长度必须为正", i)
-		}
-		if i > 0 && r.Location < t.FontRuns[i-1].Location+t.FontRuns[i-1].Length {
-			return fmt.Errorf("fontRuns[%d] 与前一个 run 重叠或未按序", i)
-		}
-		if r.Location+r.Length > limit {
-			return fmt.Errorf("fontRuns[%d] 超出文本范围（UTF-16 长度 %d）", i, limit)
-		}
-	}
-	return nil
+	return t.ValidateRuns()
 }
 
 func rangeCheck(name string, value, min, max float64) error {

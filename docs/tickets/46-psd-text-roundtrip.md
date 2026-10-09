@@ -48,7 +48,8 @@ Photoshop 名字（与原版一致，未改文件语义）；`missingFontNotes` 
 （去重），未映射 → "字体"X"未安装，文字以系统字体绘制。"（逐义对应
 PSDText.missingFontNote），有映射 → "已按"Y"替代绘制"（原版没有映射表，这是超集）。图层仍然
 可编辑、原名保留，两条路径都有不依赖本机字体的测试。`fontmap.go` 正向映射补到 32 条、
-反向 PostScript 名补到 10 个家族（目标逐个用本机 425 个 face 核对），
+反向 PostScript 名补到 10 个家族（目标逐个用本机 425 个 face 人工核对，这一步没有测试落点；
+测试只保证"每个 target 在期望表里且有条目"），
 `TestMapToPostScriptCoversEveryTarget` 从空断言换成显式期望表，新增
 `TestMapToPostScriptIsIdempotent`。
 

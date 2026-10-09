@@ -53,7 +53,6 @@ import { resetPaletteColors, swapPaletteColors } from "../state/palette";
 import { currentSelection, selectionPayload, setSelectionFromMaskData } from "../state/selection";
 import { deselect, invertSelection, selectAll } from "../state/selectionCommands";
 import { selectTool } from "../state/tools";
-import { showsTransformControls } from "../state/transformSession";
 import { fitViewport, keyboardZoom, zoomToValue } from "../state/viewport";
 import {
   activeTab,
@@ -428,7 +427,6 @@ export const shortcutActions: ShortcutActions = {
   "Menus:Actual Pixels": () => actualPixels(),
   "Menus:Zoom In": () => zoomStep(1),
   "Menus:Zoom Out": () => zoomStep(-1),
-  "Menus:Show Transform Controls": () => showsTransformControls.update((v) => !v),
   "Menus:Copy Merged": () => {
     if (currentTab()) void copyMerged().catch((err) => console.warn("拷贝合并失败", err));
   },

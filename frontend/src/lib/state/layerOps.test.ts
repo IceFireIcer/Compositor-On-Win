@@ -17,6 +17,7 @@ import {
   groupSelectedLayers,
   linkMask,
   mergeLayers,
+  mergePlan,
   mergeTitle,
   menuTitle,
   moveActiveLayer,
@@ -520,6 +521,23 @@ describe("merge family (⌘E)", () => {
     const merged = r!.layers[0]!;
     expect(merged.name).toBe("f");
     expect(merged.parentID).toBeUndefined();
+  });
+
+  it("a folder selected with its own child cannot merge (Go rejects the same plan)", () => {
+    // Go's mergeLayers refuses a result whose parent is itself part of the
+    // merge (LayerMerge.swift builds the same invalid plan); the menu must not
+    // offer an action that always fails.
+    const c = ctx(
+      [layer("f", "f", { isGroup: true }), layer("c", "c", { parentID: "f" }), layer("d")],
+      "f",
+      ["f", "c"],
+    );
+    expect(mergePlan(c)).toBeNull();
+    expect(canMergeLayers(c)).toBe(false);
+    expect(mergeLayers(c)).toBeNull();
+    // The same folder on its own still merges its contents.
+    const alone = ctx([layer("f", "f", { isGroup: true }), layer("c", "c", { parentID: "f" }), layer("d")], "f", ["f"]);
+    expect(mergePlan(alone)?.action).toBe("Merge Group");
   });
 
   it("layers clipped to anything merged now clip to the result", () => {

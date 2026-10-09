@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"math"
 	"strings"
-	"unicode/utf8"
 
 	"compositor-win/internal/domain"
 )
@@ -278,50 +277,12 @@ func textStyleValid(t *domain.TextStyle) bool {
 			return false
 		}
 	}
-	return colorRunsValid(t) && fontRunsValid(t)
-}
-
-func colorRunsValid(t *domain.TextStyle) bool {
-	if t.ColorRuns == nil {
-		return true
-	}
-	if len(t.ColorRuns) == 0 {
-		return false
-	}
-	end := 0
-	for _, run := range t.ColorRuns {
-		if run.Location < end || run.Length <= 0 {
-			return false
-		}
-		if !finite01(run.Red) || !finite01(run.Green) || !finite01(run.Blue) {
-			return false
-		}
-		end = run.Location + run.Length
-	}
-	return end <= utf16Len(t.Content)
-}
-
-func fontRunsValid(t *domain.TextStyle) bool {
-	if t.FontRuns == nil {
-		return true
-	}
-	if len(t.FontRuns) == 0 {
-		return false
-	}
-	end := 0
-	for _, run := range t.FontRuns {
-		if run.Location < end || run.Length <= 0 {
-			return false
-		}
-		// fontName.count is Swift's character count; runes are the closest
-		// Go measure. Newlines never occur in a PostScript name.
-		if run.FontName == "" || utf8.RuneCountInString(run.FontName) > 200 ||
-			strings.ContainsAny(run.FontName, "\n\r\v\f") {
-			return false
-		}
-		end = run.Location + run.Length
-	}
-	return end <= utf16Len(t.Content)
+	// The run rules live in one place — domain.TextStyle.ValidateRuns — so a
+	// style cannot be valid for one carrier and invalid for another. This file
+	// used to carry a weaker copy (no 0–1 color check, no font-name rules, no
+	// overflow guard), which let the same manifest pass one gate and fail the
+	// next.
+	return t.ValidateRuns() == nil
 }
 
 // utf16Len counts UTF-16 code units, the unit text runs are measured in

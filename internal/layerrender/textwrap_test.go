@@ -170,6 +170,39 @@ func countSpaces(wrapped, original string) int {
 	return before - after
 }
 
+// CJK closing punctuation must not start a line (UAX #14 CL/NS; AppKit's
+// byWordWrapping refuses the break too), and opening punctuation must not end
+// one. The break has to move to the previous character boundary instead.
+func TestWrapHardLineKeepsClosingPunctuationOffTheLineStart(t *testing.T) {
+	face := cjkFace(t)
+	const ppem = 40.0
+	text := "中文、字测试"
+	var buf sfnt.Buffer
+	two := measureLine(&buf, runsOf("中文", face), ppem, 0)
+	// Exactly two glyphs fit, so the greedy break would land after 「文」 and
+	// put 「、」 at the head of the next line.
+	maxWidth := two + 1
+
+	lines := layoutLines([][]styledRune{runsOf(text, face)}, ppem, 0, maxWidth)
+	if got := joinRunes(lines); got != text {
+		t.Fatalf("断行不应丢字：%q → %q", text, got)
+	}
+	for i, line := range lines {
+		if len(line) == 0 {
+			continue
+		}
+		if cannotStartLine(line[0].r) {
+			t.Fatalf("第 %d 行以收尾标点开头：%q", i, joinRunes([][]styledRune{line}))
+		}
+		if cannotEndLine(line[len(line)-1].r) {
+			t.Fatalf("第 %d 行以起始标点结尾：%q", i, joinRunes([][]styledRune{line}))
+		}
+	}
+	if len(lines) < 2 {
+		t.Fatalf("文本仍应断行，得到 %d 行", len(lines))
+	}
+}
+
 func TestWrapHardLineKeepsWideTextInsideTheBox(t *testing.T) {
 	face := cjkFace(t)
 	const ppem = 40.0
