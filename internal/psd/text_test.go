@@ -9,8 +9,10 @@ import (
 	"math"
 	"strings"
 	"testing"
+	"unicode/utf16"
 
 	"compositor-win/internal/domain"
+	"compositor-win/internal/layerrender"
 	"compositor-win/internal/render"
 )
 
@@ -31,15 +33,10 @@ func ident(name string) []byte {
 }
 
 func unicodeStr(s string) []byte {
-	out := u32be(uint32(len([]rune(s))))
-	for _, r := range s {
-		if r > 0xFFFF {
-			r1 := 0xD800 + ((r - 0x10000) >> 10)
-			r2 := 0xDC00 + ((r - 0x10000) & 0x3FF)
-			out = append(out, byte(r1>>8), byte(r1), byte(r2>>8), byte(r2))
-		} else {
-			out = append(out, byte(r>>8), byte(r))
-		}
+	units := utf16.Encode([]rune(s))
+	out := u32be(uint32(len(units)))
+	for _, unit := range units {
+		out = append(out, byte(unit>>8), byte(unit))
 	}
 	return out
 }
@@ -705,5 +702,162 @@ func TestBuilderUnrenderableTextFallsBackToPixels(t *testing.T) {
 	}
 	if rec.Image == nil {
 		t.Fatal("存储像素应保留")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// ticket 46 extensions: run extraction edge cases
+
+// TestTextRunsWithIdenticalStylesKeepNoNoteAndNoRuns: several style runs that
+// only repeat the base style are not a difference — no note, no runs.
+func TestTextRunsWithIdenticalStylesKeepNoNoteAndNoRuns(t *testing.T) {
+	engine := fixtureMultiRunEngineData("Hello", []string{"Segoe UI"}, []fixtureRun{
+		{length: 2, size: 24, leading: 30},
+		{length: 3, size: 24, leading: 30},
+	}, 0)
+	tysh := fixtureTySh([6]float64{1, 0, 0, 1, 40, 50}, []descItem{
+		{key: "Txt ", value: descValue{typ: "TEXT", text: "Hello"}},
+		{key: "EngineData", value: descValue{typ: "tdta", data: engine}},
+	}, "")
+	rec := readTextRecord(t, tysh)
+	if rec.Text == nil {
+		t.Fatal("text should import")
+	}
+	if len(rec.Text.Notes) != 0 {
+		t.Errorf("notes = %v, want none", rec.Text.Notes)
+	}
+	if len(rec.Text.Style.ColorRuns) != 0 || len(rec.Text.Style.FontRuns) != 0 {
+		t.Errorf("runs = %+v / %+v, want none", rec.Text.Style.ColorRuns, rec.Text.Style.FontRuns)
+	}
+}
+
+// TestTextRunLengthFallsBackToTheStyleSheet: a file whose RunLengthArray is
+// missing still yields the per-run spans from the StyleSheet's own length.
+func TestTextRunLengthFallsBackToTheStyleSheet(t *testing.T) {
+	engine := []byte("<<\n/EngineDict <<\n/Editor << /Text (Hello) >>\n" +
+		"/StyleRun << /RunArray [\n" +
+		" << /StyleSheet << /StyleSheetData << /Font 0 /FontSize 24 /AutoLeading false /Leading 30 /RunLength 2 >> >> >>\n" +
+		" << /StyleSheet << /StyleSheetData << /Font 0 /FontSize 24 /AutoLeading false /Leading 30 /RunLength 3\n" +
+		"  /FillColor << /Values [ 1 1 0 0 ] >> >> >> >>\n" +
+		"] >>\n/ParagraphRun << /RunArray [ << /ParagraphSheet << /Properties << /Justification 0 >> >> >> ] >>\n>>\n" +
+		"/ResourceDict << /FontSet [ << /Name (Segoe UI) >> ] >>\n>>\n")
+	tysh := fixtureTySh([6]float64{1, 0, 0, 1, 40, 50}, []descItem{
+		{key: "Txt ", value: descValue{typ: "TEXT", text: "Hello"}},
+		{key: "EngineData", value: descValue{typ: "tdta", data: engine}},
+	}, "")
+	rec := readTextRecord(t, tysh)
+	if rec.Text == nil {
+		t.Fatal("text should import")
+	}
+	want := domain.TextColorRun{Location: 2, Length: 3, Red: 1, Green: 0, Blue: 0}
+	if len(rec.Text.Style.ColorRuns) != 1 || rec.Text.Style.ColorRuns[0] != want {
+		t.Errorf("colorRuns = %+v, want [%+v]", rec.Text.Style.ColorRuns, want)
+	}
+}
+
+// TestBuilderSubstitutesPerRunFaces: a per-run face the machine lacks is
+// substituted in the drawn copy and named in the report, while the model
+// keeps Photoshop's spelling. Skips when the machine has Helvetica (no
+// substitute note) or lacks Arial (no substitute).
+func TestBuilderSubstitutesPerRunFaces(t *testing.T) {
+	if layerrender.FontInstalled("Helvetica") {
+		t.Skip("Helvetica is installed; no substitution note")
+	}
+	if !layerrender.FontInstalled("Arial") {
+		t.Skip("Arial is not installed; no substitute to name")
+	}
+	engine := fixtureMultiRunEngineData("Hi yo", []string{"Segoe UI", "Helvetica"}, []fixtureRun{
+		{length: 2, size: 20, leading: 24, red: 0, green: 0, blue: 0},
+		{length: 3, font: 1, size: 20, leading: 24, red: 0, green: 0, blue: 0},
+	}, 0)
+	tysh := fixtureTySh([6]float64{1, 0, 0, 1, 5, 30}, []descItem{
+		{key: "Txt ", value: descValue{typ: "TEXT", text: "Hi yo"}},
+		{key: "EngineData", value: descValue{typ: "tdta", data: engine}},
+	}, "")
+	rec := readTextRecord(t, tysh)
+	if rec.Text == nil || len(rec.Text.Style.FontRuns) != 1 {
+		t.Fatalf("fontRuns = %+v", rec.Text)
+	}
+	built, err := Build(Document{Width: 80, Height: 40, Resolution: 72, Layers: []Record{rec}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := built.Document.Layers[0].Text; got == nil || got.FontRuns[0].FontName != "Helvetica" {
+		t.Fatalf("the model must keep the Photoshop name: %+v", got)
+	}
+	want := "字体“Helvetica”未安装，已按“Arial”替代绘制。"
+	found := false
+	for _, conv := range built.Conversions {
+		if conv.Message == want {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("conversions = %+v, want %q", built.Conversions, want)
+	}
+}
+
+// readTextRecord builds a one-layer document around tysh and reads it back.
+func readTextRecord(t *testing.T, tysh []byte) Record {
+	t.Helper()
+	canvas := solidBitmap(120, 60, 0, 0, 0, 0)
+	layer := fixtureRecord{id: "T1", name: "Type", visible: true, opacity: 1, blendKey: "norm"}
+	data := buildWithExtras(t, fixtureDoc{width: 120, height: 60, resolution: 72,
+		layers: []fixtureRecord{layer}}, canvas, map[string]map[string][]byte{"T1": {"TySh": tysh}})
+	doc := mustRead(t, data, 1<<30)
+	if len(doc.Layers) != 1 {
+		t.Fatalf("layers = %d", len(doc.Layers))
+	}
+	return doc.Layers[0]
+}
+
+// ---------------------------------------------------------------------------
+// ticket 46 extensions: the FillColor channel forms
+
+// TestEngineColorUsesTheFirstValueAsGray ports PSDText.color (PSDText.swift:
+// 216-224): four channel values are alpha plus RGB, three are RGB, and one or
+// two are a gray level — the two-value form is a gray plus its alpha, which
+// older writers store — read from the first value. Values above 1 are 0–255
+// bytes.
+func TestEngineColorUsesTheFirstValueAsGray(t *testing.T) {
+	cases := []struct {
+		name   string
+		values []float64
+		want   [3]float64
+	}{
+		{"one value", []float64{0.25}, [3]float64{0.25, 0.25, 0.25}},
+		{"two values", []float64{0.25, 1}, [3]float64{0.25, 0.25, 0.25}},
+		{"two 0–255 values", []float64{128, 255}, [3]float64{128.0 / 255, 128.0 / 255, 128.0 / 255}},
+		{"three values", []float64{0.1, 0.2, 0.3}, [3]float64{0.1, 0.2, 0.3}},
+		{"four values", []float64{1, 0.1, 0.2, 0.3}, [3]float64{0.1, 0.2, 0.3}},
+		{"no values", nil, [3]float64{0, 0, 0}},
+	}
+	for _, c := range cases {
+		r, g, b := engineColor(c.values)
+		if r != c.want[0] || g != c.want[1] || b != c.want[2] {
+			t.Errorf("%s: engineColor(%v) = %v,%v,%v, want %v", c.name, c.values, r, g, b, c.want)
+		}
+	}
+}
+
+// TestTextTwoValueFillColorImportsAsGray reads the two-value form through the
+// reader: a file whose FillColor carries [gray alpha] imports the gray as the
+// base colour, exactly as PSDText does.
+func TestTextTwoValueFillColorImportsAsGray(t *testing.T) {
+	engine := []byte("<<\n/EngineDict <<\n/Editor << /Text (Gray) >>\n" +
+		"/StyleRun << /RunArray [ << /StyleSheet << /StyleSheetData << /Font 0 /FontSize 24 /AutoLeading false /Leading 30\n" +
+		"  /FillColor << /Values [ 0.25 1 ] >> >> >> >> ] >>\n" +
+		"/ParagraphRun << /RunArray [ << /ParagraphSheet << /Properties << /Justification 0 >> >> >> ] >>\n>>\n" +
+		"/ResourceDict << /FontSet [ << /Name (Segoe UI) >> ] >>\n>>\n")
+	rec := readTextRecord(t, fixtureTySh([6]float64{1, 0, 0, 1, 0, 0}, []descItem{
+		{key: "Txt ", value: descValue{typ: "TEXT", text: "Gray"}},
+		{key: "EngineData", value: descValue{typ: "tdta", data: engine}},
+	}, ""))
+	if rec.Text == nil {
+		t.Fatal("text should import")
+	}
+	if rec.Text.Style.Red != 0.25 || rec.Text.Style.Green != 0.25 || rec.Text.Style.Blue != 0.25 {
+		t.Errorf("color = %v,%v,%v, want the two values read as gray 0.25",
+			rec.Text.Style.Red, rec.Text.Style.Green, rec.Text.Style.Blue)
 	}
 }

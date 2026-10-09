@@ -16,11 +16,22 @@ import (
 
 // Font is one installed face.
 type Font struct {
-	Data    []byte
-	Sfnt    *sfnt.Font
-	PSName  string
-	Family  string
-	FileURL string
+	Data   []byte
+	Sfnt   *sfnt.Font
+	PSName string
+	Family string
+	// Subfamily is the face's style name within the family ("Regular",
+	// "Bold", ...), from name ID 2 — the font picker lists it per face.
+	Subfamily string
+	FileURL   string
+}
+
+// FontInfo is one installed face as the frontend's font picker sees it.
+// Field names are the JSON contract with frontend/src/lib/state/fonts.ts.
+type FontInfo struct {
+	Family         string `json:"family"`
+	PostScriptName string `json:"postScriptName"`
+	Subfamily      string `json:"subfamily"`
 }
 
 // DefaultFontName is the Windows system font used when a PSD font name has
@@ -72,6 +83,55 @@ func Resolve(name string) (*Font, bool) {
 		return f, false
 	}
 	return nil, false
+}
+
+// ListInstalledFonts enumerates every face parsed successfully from the
+// Windows font directories, sorted by family then subfamily (both
+// case-insensitively) and deduplicated by PostScript name. It powers the
+// text tool's font picker; the list is machine-wide and independent of any
+// open document.
+func ListInstalledFonts() []FontInfo {
+	idx := loadIndex()
+	out := make([]FontInfo, 0, len(idx.byPS))
+	for _, f := range idx.byPS {
+		out = append(out, FontInfo{
+			Family:         f.Family,
+			PostScriptName: f.PSName,
+			Subfamily:      f.Subfamily,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if c := compareFold(out[i].Family, out[j].Family); c != 0 {
+			return c < 0
+		}
+		if c := compareFold(out[i].Subfamily, out[j].Subfamily); c != 0 {
+			return c < 0
+		}
+		return compareFold(out[i].PostScriptName, out[j].PostScriptName) < 0
+	})
+	// The index already dedupes exact PostScript names; collapse faces that
+	// differ only in case, keeping the first in sort order (deterministic).
+	seen := make(map[string]bool, len(out))
+	deduped := out[:0]
+	for _, f := range out {
+		key := strings.ToLower(f.PostScriptName)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		deduped = append(deduped, f)
+	}
+	return deduped
+}
+
+// compareFold orders by lowercased text, with the exact spelling as a
+// deterministic tiebreak (case-sensitive order).
+func compareFold(a, b string) int {
+	la, lb := strings.ToLower(a), strings.ToLower(b)
+	if la != lb {
+		return strings.Compare(la, lb)
+	}
+	return strings.Compare(a, b)
 }
 
 func normalizeName(s string) string {
@@ -167,7 +227,11 @@ func indexFaces(data []byte) []*Font {
 		if err2 != nil || family == "" {
 			family = ps
 		}
-		out = append(out, &Font{Data: data, Sfnt: f, PSName: ps, Family: family})
+		subfamily, err3 := f.Name(&buf, sfnt.NameIDSubfamily)
+		if err3 != nil {
+			subfamily = ""
+		}
+		out = append(out, &Font{Data: data, Sfnt: f, PSName: ps, Family: family, Subfamily: subfamily})
 	}
 	if f, err := sfnt.Parse(data); err == nil {
 		parse(f)

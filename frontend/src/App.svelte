@@ -9,8 +9,6 @@
     applySnapshot,
     activeTab,
     hasDocument,
-    openProject,
-    saveProject,
     type PendingConversion,
   } from "./lib/state/workspace";
   import PsdConversionSheet from "./lib/components/PsdConversionSheet.svelte";
@@ -23,24 +21,26 @@
   import MenuBar from "./lib/components/MenuBar.svelte";
   import FilterDialog from "./lib/components/FilterDialog.svelte";
   import CameraRawPanel from "./lib/components/CameraRawPanel.svelte";
-  import { watchFilterPreviews, beginFilter, filterSession } from "./lib/state/filters";
+  import { watchFilterPreviews, filterSession } from "./lib/state/filters";
   import { healSettings, updateHealSettings } from "./lib/state/tools";
-  import {
-    copyMerged,
-    exportDialog,
-    exportNotice,
-    exportPNG,
-    openExportJPEG,
-  } from "./lib/state/export";
+  import { exportDialog, exportNotice } from "./lib/state/export";
   import ExportDialog from "./lib/components/ExportDialog.svelte";
   import GeometrySheet from "./lib/components/GeometrySheet.svelte";
   import TextOptionsBar from "./lib/components/TextOptionsBar.svelte";
   import { geometrySheet } from "./lib/state/geometry";
   import RawDevelopSheet from "./lib/components/RawDevelopSheet.svelte";
   import { rawDevelop } from "./lib/state/rawdevelop";
+  import KeyboardShortcutsSheet from "./lib/components/KeyboardShortcutsSheet.svelte";
+  import {
+    installAppShortcuts,
+    newCanvasSheet,
+    openProjectSafe,
+    pendingConversions,
+    saveProjectSafe,
+  } from "./lib/shortcuts/actions";
+  import { shortcutsSheet } from "./lib/shortcuts/settings";
 
   let version = $state("…");
-  let sheetOpen = $state(false);
 
   const current = $derived(activeTab($workspace));
   // The zoom readout subscribes to the viewport store (device px per doc px).
@@ -48,7 +48,7 @@
 
   // Welcome screen whenever the workspace empties (first launch or last tab closed).
   $effect(() => {
-    if (!hasDocument($workspace)) sheetOpen = true;
+    if (!hasDocument($workspace)) newCanvasSheet.set(true);
   });
 
   // Keep the document store (layers + render rev) in sync with the active
@@ -96,73 +96,12 @@
     return stop;
   });
 
-  // Image-menu shortcuts: ⌘M 曲线 / ⌘L 色阶 / ⌘U 色相饱和度 / ⌘I 反相.
-  function onKeydown(event: KeyboardEvent): void {
-    if (!(event.metaKey || event.ctrlKey) || $filterSession) return;
-    // File-export shortcuts (ticket 42): ⇧⌘E 导出 PNG / ⇧⌥⌘S 导出 JPEG /
-    // ⇧⌘C 拷贝合并 — the original's C06/C07/C12 bindings.
-    // Document geometry (ticket 43): ⌥⌘C 画布大小 / ⌥⌘I 图像大小.
-    if (event.altKey && !event.shiftKey) {
-      const geometry = event.key.toLowerCase();
-      if (geometry === "c") {
-        event.preventDefault();
-        geometrySheet.set("canvasSize");
-        return;
-      }
-      if (geometry === "i") {
-        event.preventDefault();
-        geometrySheet.set("imageSize");
-        return;
-      }
-    }
-    if (event.shiftKey) {
-      const file = event.key.toLowerCase();
-      if (file === "e" && !event.altKey) {
-        event.preventDefault();
-        void exportPNG().catch((err) => console.warn("导出 PNG 失败", err));
-        return;
-      }
-      if (file === "s" && event.altKey) {
-        event.preventDefault();
-        void openExportJPEG();
-        return;
-      }
-      if (file === "c" && !event.altKey) {
-        event.preventDefault();
-        void copyMerged().catch((err) => console.warn("拷贝合并失败", err));
-        return;
-      }
-    }
-    const key = event.key.toLowerCase();
-    if (key !== "m" && key !== "l" && key !== "u" && key !== "i") return;
-    const doc = current;
-    if (!doc) return;
-    event.preventDefault();
-    const map: Record<string, { kind: string; label: string }> = {
-      m: { kind: "adjust:Curves", label: "曲线" },
-      l: { kind: "adjust:Levels", label: "色阶" },
-      u: { kind: "adjust:Hue/Saturation", label: "色相/饱和度" },
-    };
-    if (key === "i") {
-      void (async () => {
-        const { ApplyFilter } = await import("../wailsjs/go/bridge/Service");
-        const { applyDocumentSnapshot } = await import("./lib/state/document");
-        if (!doc.id) return;
-        try {
-          applyDocumentSnapshot(
-            await ApplyFilter("invert", "", "{}", 0, ""),
-          );
-        } catch (err) {
-          console.warn("反相失败", err);
-        }
-      })();
-      return;
-    }
-    const target = map[key];
-    if (target) void beginFilter(target.kind, target.label, true);
-  }
-
+  // The three-domain shortcut dispatcher (ticket 47): 菜单 / 画布 / 文字 分流，
+  // 输入框里不抢画布快捷键（BlendShortcutTests 语义）。动作表在
+  // lib/shortcuts/actions.ts —— App 这里只负责装上/拆掉。
   onMount(() => {
+    const teardownShortcuts = installAppShortcuts();
+
     void (async () => {
       try {
         version = await Version();
@@ -185,35 +124,21 @@
     };
     window.addEventListener("resize", onResize);
     return () => {
+      teardownShortcuts();
       clearTimeout(timer);
       window.removeEventListener("resize", onResize);
     };
   });
 
   function newCanvas(): void {
-    sheetOpen = true;
+    newCanvasSheet.set(true);
   }
 
   // PSD 转换报告（票 39）：报告完再应用。
-  let psdReport = $state<PendingConversion[] | null>(null);
-
-  // Bridge errors (plain `vite dev` has no window.go) stay non-fatal.
-  function openProjectSafe(): void {
-    void openProject()
-      .then((result) => {
-        if (result !== "opened" && result !== "cancelled" && result.pending) {
-          psdReport = result.conversions;
-        }
-      })
-      .catch((err) => console.warn("打开项目失败", err));
-  }
-
-  function saveProjectSafe(): void {
-    void saveProject().catch((err) => console.warn("保存项目失败", err));
-  }
+  const psdReport = $derived<PendingConversion[] | null>($pendingConversions);
 </script>
 
-<svelte:window onkeydown={onKeydown} onmousemove={movePanelDrag} onmouseup={endPanelDrag} />
+<svelte:window onmousemove={movePanelDrag} onmouseup={endPanelDrag} />
 
 <div class="app">
   <header class="toolbar">
@@ -344,11 +269,15 @@
 </div>
 
 <NewCanvasSheet
-  open={sheetOpen}
+  open={$newCanvasSheet}
   onclose={() => {
-    sheetOpen = false;
+    newCanvasSheet.set(false);
   }}
 />
+
+{#if $shortcutsSheet}
+  <KeyboardShortcutsSheet />
+{/if}
 
 {#if $filterSession && $filterSession.kind !== "cameraRaw"}
   <FilterDialog />
@@ -359,7 +288,7 @@
 {/if}
 
 {#if psdReport}
-  <PsdConversionSheet conversions={psdReport} onclose={() => (psdReport = null)} />
+  <PsdConversionSheet conversions={psdReport} onclose={() => pendingConversions.set(null)} />
 {/if}
 
 {#if $rawDevelop}

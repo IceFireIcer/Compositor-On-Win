@@ -1,11 +1,22 @@
 package psd
 
-// Text layer parsing (PSDText, ticket 39): a Photoshop 6 type layer
+// Text layer parsing (PSDText, tickets 39 and 46): a Photoshop 6 type layer
 // (`TySh`) becomes the editor's text model — uniform scale/rotation/flip
 // from the 2×3 transform, engine-dictionary style (font, size, color,
 // tracking, leading, alignment) and the anchor. Anything the model cannot
 // represent (vertical text, shear, uneven scale) returns nil and the layer
 // stays the raster Photoshop stores for it.
+//
+// Multi-run rule (ticket 46): Photoshop splits the text into style runs.
+// The first run is the layer's base style; later runs are imported as
+// per-run overrides when their differences are representable — a different
+// colour becomes a domain.TextColorRun, a different face a
+// domain.TextFontRun, both measured in UTF-16 units of the content, built
+// from the EngineData run lengths. A run that differs in size, tracking,
+// leading, scales or faux weight cannot be stored (runs carry colour and
+// face only): the original's "Only the first text style was kept." note is
+// kept for that dimension, and the representable colour/face differences of
+// that same run are still extracted.
 
 import (
 	"math"
@@ -83,7 +94,11 @@ func parseText(extra map[string][]byte) *ParsedText {
 			content = cleanedText(&raw)
 		}
 	}
-	if content == nil || *content == "" || len([]rune(*content)) > 100_000 {
+	// The limit counts UTF-16 units — the unit the model measures content and
+	// runs in, and the unit project/validate.go:254 enforces — so a run of
+	// emoji cannot smuggle in twice the limit as runes. textStyleValid repeats
+	// the test once the engine style is in place.
+	if content == nil || *content == "" || domain.TextUTF16Len(*content) > 100_000 {
 		return nil
 	}
 
@@ -136,9 +151,15 @@ func parseText(extra map[string][]byte) *ParsedText {
 	}
 }
 
-// textStyleValid is LayerTextStyle.isValid for the fields we import.
+// textStyleValid is LayerTextStyle.isValid for the fields we import
+// (TypeTool.swift:35-62): content length in UTF-16 units, a box inside the
+// document limits, finite size/colour/tracking/leading, and per-run colour and
+// face overrides that follow the domain's run rules. A style the model could
+// not store — or the project could not save — must not import: the layer stays
+// the raster Photoshop wrote.
 func textStyleValid(s domain.TextStyle) bool {
-	if len([]rune(s.Content)) > 100_000 {
+	// content.utf16.count: UTF-16 units, the unit project/validate.go:254 uses.
+	if domain.TextUTF16Len(s.Content) > 100_000 {
 		return false
 	}
 	if s.BoxSize != nil {
@@ -167,7 +188,12 @@ func textStyleValid(s domain.TextStyle) bool {
 	if math.IsNaN(s.Leading) || math.IsInf(s.Leading, 0) || !(0 <= s.Leading && s.Leading <= 5000) {
 		return false
 	}
-	return true
+	// colorRunsAreValid / fontRunsAreValid (TypeTool.swift:43-62), shared with
+	// every other carrier of a TextStyle (domain.TextStyle.ValidateRuns): runs
+	// sorted, non-overlapping, of positive length, inside the content's UTF-16
+	// units, with 0-1 colours and storable face names. The error itself is
+	// irrelevant here — the gate is all-or-nothing.
+	return s.ValidateRuns() == nil
 }
 
 type textPlacement struct {
@@ -284,15 +310,9 @@ func applyTextStyle(style *domain.TextStyle, engine *engineDict, pixelScale floa
 	} else if b := engineBool(walk(data, "FauxItalic")); b != nil && *b {
 		*notes = append(*notes, "Faux bold or faux italic was omitted.")
 	}
-	if len(runs) > 1 {
-		firstSig := runSignature(runs[0])
-		for _, other := range runs[1:] {
-			if runSignature(other) != firstSig {
-				*notes = append(*notes, "Only the first text style was kept.")
-				break
-			}
-		}
-	}
+	// Ticket 46: the first run is the base style; later runs contribute
+	// per-run colour and face overrides where the model can hold them.
+	extractRunOverrides(style, engine, runs, fonts, notes)
 	paragraphs := engineArray(walk(engine, "EngineDict", "ParagraphRun", "RunArray"))
 	paragraph := paragraphs
 	if len(paragraphs) > 0 {
@@ -317,6 +337,153 @@ func applyTextStyle(style *domain.TextStyle, engine *engineDict, pixelScale floa
 		style.Alignment = domain.TextAlignmentLeft
 		*notes = append(*notes, "Full justification was imported as left alignment.")
 	}
+}
+
+// extractRunOverrides is the ticket 46 multi-run rule (see the file header).
+// It walks the style runs beside the first one, converts their character
+// lengths into UTF-16 positions into the content, and keeps the differences
+// the model can hold: a run whose face differs from the first run's becomes
+// a TextFontRun, a run whose colour differs becomes a TextColorRun. A run
+// that differs in size, tracking, leading, scales or faux weight keeps the
+// original's first-style note, and its colour and face differences are kept
+// all the same. Runs that would break the domain's rules (unsorted,
+// overlapping, empty or beyond the content) are dropped.
+//
+// One run per StyleSheet, even when two adjacent runs carry equal values: this
+// is deliberately asymmetric with the writer, which folds equal adjacent
+// stretches into a single run (writetext.go engineStyleRuns). Ticket 39
+// accepted the reader's one-run-per-StyleSheet behaviour, so it is pinned by
+// TestImportKeepsAdjacentEqualRunsApart rather than changed; the round trip
+// normalizes the fold away (roundtrip_text_test.go normalizeRoundTripStyle).
+func extractRunOverrides(style *domain.TextStyle, engine *engineDict, runs []engineValue, fonts []engineValue, notes *[]string) {
+	if len(runs) < 2 {
+		return
+	}
+	first := runStyle(runs[0])
+	lengths := engineArray(walk(engine, "EngineDict", "StyleRun", "RunLengthArray"))
+	counts := make([]int, len(runs))
+	for i := range runs {
+		counts[i] = runLength(lengths, i, runLengthFromSheet(runs[i]))
+	}
+	spans := utf16Spans(style.Content, counts)
+	noted := false
+	for i := 1; i < len(runs); i++ {
+		start, end := spans[i][0], spans[i][1]
+		run := runStyle(runs[i])
+		if run.extra != first.extra {
+			// The difference itself is unrepresentable whether or not the run
+			// could be placed: the note is not tied to a span.
+			if !noted {
+				*notes = append(*notes, "Only the first text style was kept.")
+				noted = true
+			}
+		}
+		if start >= end || end > utf16Len(style.Content) {
+			continue // a run Photoshop let escape the content: unusable
+		}
+		if run.font >= 0 && run.font < len(fonts) {
+			name := ""
+			if fd, ok := fonts[run.font].(*engineDict); ok {
+				name = engineString(walk(fd, "Name"))
+			}
+			if name != "" && name != style.FontName {
+				style.FontRuns = append(style.FontRuns, domain.TextFontRun{
+					Location: start, Length: end - start, FontName: name,
+				})
+			}
+		}
+		if run.red != style.Red || run.green != style.Green || run.blue != style.Blue {
+			style.ColorRuns = append(style.ColorRuns, domain.TextColorRun{
+				Location: start, Length: end - start,
+				Red: run.red, Green: run.green, Blue: run.blue,
+			})
+		}
+	}
+}
+
+// utf16Spans converts the EngineData run lengths — counts of characters, the
+// unit Photoshop measures runs in — into UTF-16 spans of the content, the
+// unit the model measures runs in (domain.validate.go). Each rune past the
+// boundary adds its UTF-16 width, so a run that ends after a surrogate pair
+// lands past both of its units; a run past the content's end collapses to
+// an empty span and is dropped by the caller.
+func utf16Spans(content string, lengths []int) [][2]int {
+	prefix := make([]int, 0, len([]rune(content))+1)
+	prefix = append(prefix, 0)
+	for _, r := range content {
+		prefix = append(prefix, prefix[len(prefix)-1]+utf16Width(r))
+	}
+	last := len(prefix) - 1
+	spans := make([][2]int, len(lengths))
+	charIndex := 0
+	for i, n := range lengths {
+		start, end := charIndex, charIndex+n
+		if start > last {
+			start = last
+		}
+		if end > last {
+			end = last
+		}
+		if end < start {
+			end = start
+		}
+		spans[i] = [2]int{prefix[start], prefix[end]}
+		charIndex = end
+	}
+	return spans
+}
+
+// runStyle is the style-sheet data one run contributes: the fields the
+// first-style note compares (PSDText.Signature) split into the terms ticket
+// 46 needs — `extra` is the whole signature minus colour and font index,
+// `red`/`green`/`blue` its colour, `font` the font-set index the run paints
+// with.
+type engineRunStyle struct {
+	font             int
+	red, green, blue float64
+	extra            engineRunSignature
+}
+
+func runStyle(run engineValue) engineRunStyle {
+	sig := runSignature(run)
+	extra := sig
+	extra.red, extra.green, extra.blue = 0, 0, 0
+	extra.font = 0
+	return engineRunStyle{
+		font:  int(math.Round(sig.font)),
+		red:   sig.red,
+		green: sig.green,
+		blue:  sig.blue,
+		extra: extra,
+	}
+}
+
+// runLength reads RunLengthArray[i]: the run's length in characters. A
+// missing array falls back to the length Photoshop also writes on the run's
+// own StyleSheet ("RunLength"), which is the same count.
+func runLength(lengths []engineValue, index, fallback int) int {
+	if index < len(lengths) {
+		if n := engineNumber(lengths[index]); n != nil && !math.IsInf(*n, 0) && *n > 0 {
+			return int(math.Round(*n))
+		}
+	}
+	return fallback
+}
+
+// runLengthFromSheet reads the character count a StyleSheet carries itself;
+// zero when it does not.
+func runLengthFromSheet(run engineValue) int {
+	d, ok := run.(*engineDict)
+	if !ok {
+		return 0
+	}
+	if sd, ok := walk(d, "StyleSheet", "StyleSheetData").(*engineDict); ok {
+		d = sd
+	}
+	if n := engineNumber(walk(d, "RunLength")); n != nil && !math.IsInf(*n, 0) && *n > 0 {
+		return int(math.Round(*n))
+	}
+	return 0
 }
 
 // runSignature is PSDText.Signature: the style fields that decide whether
@@ -376,6 +543,11 @@ type engineRunSignature struct {
 	red, green, blue               float64
 }
 
+// engineColor is PSDText.color (PSDText.swift:216-224): alpha plus RGB in
+// the four-value form, RGB in the three-value form, and otherwise the first
+// value as a gray level — so the two-value form (a gray and its alpha, which
+// older writers store) reads its gray from values[0] just as the one-value
+// form does. No values at all is black.
 func engineColor(values []float64) (r, g, b float64) {
 	unit := func(v float64) float64 {
 		if v > 1 {
@@ -388,7 +560,7 @@ func engineColor(values []float64) (r, g, b float64) {
 		return unit(values[1]), unit(values[2]), unit(values[3])
 	case len(values) == 3:
 		return unit(values[0]), unit(values[1]), unit(values[2])
-	case len(values) == 1:
+	case len(values) == 2, len(values) == 1:
 		return unit(values[0]), unit(values[0]), unit(values[0])
 	}
 	return 0, 0, 0

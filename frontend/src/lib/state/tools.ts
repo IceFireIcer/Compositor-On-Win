@@ -57,3 +57,51 @@ export const healSettings = writable<HealSettings>({
 export function updateHealSettings(patch: Partial<HealSettings>): void {
   healSettings.update((s) => ({ ...s, ...patch }));
 }
+
+/** 吃笔刷设置的工具（原版 NavigationTool.isBrushTool）：[ ] 与 Shift-[ ] 只对这些工具生效。 */
+export const BRUSH_TOOLS: ReadonlySet<string> = new Set([
+  "brush",
+  "spotHealing",
+  "cloneStamp",
+  "blur",
+]);
+
+/** 笔刷直径范围（原版 changeBrushSize 的 1...2000）。 */
+export const MIN_BRUSH_DIAMETER = 1;
+export const MAX_BRUSH_DIAMETER = 2000;
+
+/**
+ * 原版 `changeBrushSize`（EditorSession+Brush.swift:257）：步长五分之一，
+ * 但至少 1 像素——2 缩小五分之一会四舍五入回 2，最小笔刷就出不来了。
+ * 结果夹在 1…2000。
+ */
+export function steppedBrushSize(current: number, increase: boolean): number {
+  const base = Number.isFinite(current) ? current : MIN_BRUSH_DIAMETER;
+  const stepped = increase
+    ? Math.max(base + 1, Math.round(base * 1.2))
+    : Math.min(base - 1, Math.round(base / 1.2));
+  return Math.min(MAX_BRUSH_DIAMETER, Math.max(MIN_BRUSH_DIAMETER, stepped));
+}
+
+/**
+ * 原版 `changeBrushHardness`（EditorSession+Brush.swift:248）：Photoshop 的
+ * 25% 档（0/25/50/75/100%），80% 往上走到 100%、往下走到 75%。
+ */
+export function steppedBrushHardness(current: number, increase: boolean): number {
+  const base = Number.isFinite(current) ? Math.min(1, Math.max(0, current)) : 0;
+  const quarter = base * 4;
+  const step = increase ? Math.floor(quarter + 0.001) + 1 : Math.ceil(quarter - 0.001) - 1;
+  return Math.min(4, Math.max(0, step)) / 4;
+}
+
+/** [ / ]：按原版步长改当前笔刷直径（非笔刷工具不生效）。 */
+export function changeBrushSize(tool: string, increase: boolean): void {
+  if (!BRUSH_TOOLS.has(tool)) return;
+  healSettings.update((s) => ({ ...s, diameter: steppedBrushSize(s.diameter, increase) }));
+}
+
+/** Shift-[ / Shift-]：按原版 25% 档改当前笔刷硬度。 */
+export function changeBrushHardness(tool: string, increase: boolean): void {
+  if (!BRUSH_TOOLS.has(tool)) return;
+  healSettings.update((s) => ({ ...s, hardness: steppedBrushHardness(s.hardness, increase) }));
+}

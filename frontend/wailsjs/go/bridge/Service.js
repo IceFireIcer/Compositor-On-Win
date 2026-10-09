@@ -126,6 +126,10 @@ export function LevelsAuto(arg1) {
   return window['go']['bridge']['Service']['LevelsAuto'](arg1);
 }
 
+export function ListFonts() {
+  return window['go']['bridge']['Service']['ListFonts']();
+}
+
 export function OpenProjectDialog() {
   return window['go']['bridge']['Service']['OpenProjectDialog']();
 }

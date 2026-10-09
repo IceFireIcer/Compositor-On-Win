@@ -277,6 +277,24 @@ func planLayerOp(op string, payload string) (string, func(*session) error, error
 			return nil
 		}, nil
 
+	// Ticket 47: the C46–C53 layer command family (internal/bridge/layer_commands.go).
+	case "duplicateLayer":
+		return planDuplicateLayer(payload)
+	case "groupLayers":
+		return planGroupLayers(payload)
+	case "ungroupLayer":
+		return planUngroupLayer(payload)
+	case "setClippingMask":
+		return planSetClippingMask(payload)
+	case "deleteLayerMask":
+		return planDeleteLayerMask(payload)
+	case "deleteEffect":
+		return planDeleteEffect(payload)
+	case "nudgeLayer":
+		return planNudgeLayer(payload)
+	case "mergeLayers":
+		return planMergeLayers(payload)
+
 	default:
 		return "", nil, fmt.Errorf("未知操作 %q", op)
 	}

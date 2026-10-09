@@ -33,6 +33,12 @@ type textCommitRequest struct {
 
 	BoxSize *[2]float64 `json:"boxSize,omitempty"` // paragraph frame, layer px
 
+	// Per-run overrides (ticket 45; manifest v10/v11): UTF-16 spans of
+	// Content. Omitted — or an empty array, both mean "no overrides" — when
+	// the whole text uses the base color and face.
+	ColorRuns []domain.TextColorRun `json:"colorRuns,omitempty"`
+	FontRuns  []domain.TextFontRun  `json:"fontRuns,omitempty"`
+
 	// Anchor: the box's top-left (paragraph text) or the first baseline's
 	// start (point text), in document pixels — the original's click rules.
 	Anchor [2]float64 `json:"anchor"`
@@ -109,6 +115,21 @@ func textStyleFromRequest(req textCommitRequest) (domain.TextStyle, *[2]float64,
 		}
 		style.BoxSize = req.BoxSize
 		boxSize = req.BoxSize
+	}
+	// Per-run overrides: spans are validated against this request's content
+	// (UTF-16 units), so an edit that shortens the text below a run's end is
+	// rejected instead of keeping a stale out-of-range run. Empty arrays
+	// normalize to nil — the frontend may send either spelling of "no
+	// overrides", but a stored style must never carry an empty-but-present
+	// array (the manifest rejects it).
+	if len(req.ColorRuns) > 0 {
+		style.ColorRuns = req.ColorRuns
+	}
+	if len(req.FontRuns) > 0 {
+		style.FontRuns = req.FontRuns
+	}
+	if err := style.ValidateRuns(); err != nil {
+		return style, nil, err
 	}
 	return style, boxSize, nil
 }

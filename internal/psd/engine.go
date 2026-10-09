@@ -8,6 +8,7 @@ package psd
 import (
 	"encoding/binary"
 	"math"
+	"strconv"
 	"strings"
 	"unicode/utf16"
 )
@@ -224,8 +225,10 @@ func (c *engineCursor) parseNumber() *float64 {
 		return nil
 	}
 	text := string(c.bytes[start:c.index])
-	var value float64
-	if _, err := fmtSscan(text, &value); err != nil {
+	// ParseFloat is what Swift's Double(_:String) does: correctly rounded,
+	// so an encoder writing strconv.FormatFloat(-1) reads back bit-exact.
+	value, err := strconv.ParseFloat(text, 64)
+	if err != nil {
 		return nil
 	}
 	return &value
@@ -727,73 +730,3 @@ func (r *tdReader) reference() bool {
 	}
 	return true
 }
-
-// fmtSscan parses a float the way strconv would but keeps the port honest
-// about rejecting trailing garbage (engine numbers never have any).
-func fmtSscan(text string, out *float64) (int, error) {
-	value := 0.0
-	digits := false
-	i := 0
-	neg := false
-	if i < len(text) && (text[i] == '+' || text[i] == '-') {
-		neg = text[i] == '-'
-		i++
-	}
-	for ; i < len(text) && text[i] >= '0' && text[i] <= '9'; i++ {
-		value = value*10 + float64(text[i]-'0')
-		digits = true
-	}
-	if i < len(text) && text[i] == '.' {
-		i++
-		frac := 0.1
-		for ; i < len(text) && text[i] >= '0' && text[i] <= '9'; i++ {
-			value += float64(text[i]-'0') * frac
-			frac /= 10
-			digits = true
-		}
-	}
-	if !digits {
-		return 0, errNotNumber
-	}
-	if i < len(text) && (text[i] == 'e' || text[i] == 'E') {
-		i++
-		exp := 0
-		expNeg := false
-		if i < len(text) && (text[i] == '+' || text[i] == '-') {
-			expNeg = text[i] == '-'
-			i++
-		}
-		expDigits := false
-		for ; i < len(text) && text[i] >= '0' && text[i] <= '9'; i++ {
-			exp = exp*10 + int(text[i]-'0')
-			expDigits = true
-		}
-		if expDigits {
-			for exp > 0 {
-				if expNeg {
-					value /= 10
-				} else {
-					value *= 10
-				}
-				exp--
-				if math.IsInf(value, 0) {
-					break
-				}
-			}
-		}
-	}
-	if i != len(text) {
-		return 0, errNotNumber
-	}
-	if neg {
-		value = -value
-	}
-	*out = value
-	return 1, nil
-}
-
-type simpleError string
-
-func (e simpleError) Error() string { return string(e) }
-
-const errNotNumber = simpleError("not a number")

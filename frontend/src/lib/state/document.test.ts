@@ -99,6 +99,107 @@ describe("document snapshot parsing (ticket 04 wiring)", () => {
   });
 });
 
+describe("text record runs (ticket 45)", () => {
+  function textLayer(text: Record<string, unknown>): string {
+    return wire(1, {
+      documentID: "d",
+      layers: [{ id: "t1", name: "T", isVisible: true, text, transform: { origin: [0, 0], size: [10, 10] } }],
+    });
+  }
+
+  const base = { content: "Hello", fontName: "Segoe UI", fontSize: 24, red: 0, green: 0, blue: 0, alignment: "Left", tracking: 0, leading: 0 };
+
+  it("parses well-formed colorRuns and fontRuns", () => {
+    const s = parseDocumentSnapshot(
+      textLayer({
+        ...base,
+        colorRuns: [{ location: 0, length: 2, red: 1, green: 0, blue: 0 }],
+        fontRuns: [{ location: 2, length: 3, fontName: "Menlo" }],
+      }),
+    );
+    expect(s.layers[0].text?.colorRuns).toEqual([{ location: 0, length: 2, red: 1, green: 0, blue: 0 }]);
+    expect(s.layers[0].text?.fontRuns).toEqual([{ location: 2, length: 3, fontName: "Menlo" }]);
+  });
+
+  it("treats absent or empty run arrays as uniform (undefined)", () => {
+    const s = parseDocumentSnapshot(textLayer({ ...base }));
+    expect(s.layers[0].text?.colorRuns).toBeUndefined();
+    expect(s.layers[0].text?.fontRuns).toBeUndefined();
+    const empty = parseDocumentSnapshot(textLayer({ ...base, colorRuns: [], fontRuns: [] }));
+    expect(empty.layers[0].text?.colorRuns).toBeUndefined();
+    expect(empty.layers[0].text?.fontRuns).toBeUndefined();
+  });
+
+  it("drops malformed runs without throwing", () => {
+    const s = parseDocumentSnapshot(
+      textLayer({
+        ...base,
+        colorRuns: [
+          "garbage",
+          null,
+          { location: 0, length: 0, red: 1, green: 0, blue: 0 }, // length 0
+          { location: 1, length: -2, red: 1, green: 0, blue: 0 }, // negative
+          { location: Number.NaN, length: 2, red: 1, green: 0, blue: 0 }, // non-finite
+          { location: 2, length: 2, red: "red", green: 0, blue: 0 }, // bad channel
+          { location: 6, length: 2, red: 1, green: 0, blue: 0 }, // 起点在内容之外
+        ],
+        fontRuns: [
+          { location: 0, length: 2, fontName: "" }, // empty name
+          { location: 0, length: 2, fontName: "Bad\nName" }, // newline
+          { location: 0, length: 2, fontName: 42 }, // not a string
+        ],
+      }),
+    );
+    expect(s.layers[0].text?.colorRuns).toBeUndefined();
+    expect(s.layers[0].text?.fontRuns).toBeUndefined();
+  });
+
+  it("clamps channels to 0–1 and truncates runs past the content", () => {
+    const s = parseDocumentSnapshot(
+      textLayer({
+        ...base,
+        colorRuns: [{ location: 3, length: 9, red: 2, green: -1, blue: 0.5 }],
+      }),
+    );
+    expect(s.layers[0].text?.colorRuns).toEqual([{ location: 3, length: 2, red: 1, green: 0, blue: 0.5 }]);
+  });
+
+  it("sorts runs and drops overlaps, keeping the first", () => {
+    const s = parseDocumentSnapshot(
+      textLayer({
+        ...base,
+        colorRuns: [
+          { location: 2, length: 3, red: 0, green: 0, blue: 1 },
+          { location: 0, length: 2, red: 1, green: 0, blue: 0 },
+          { location: 1, length: 2, red: 0, green: 1, blue: 0 }, // overlaps the kept {0,2}
+        ],
+      }),
+    );
+    expect(s.layers[0].text?.colorRuns).toEqual([
+      { location: 0, length: 2, red: 1, green: 0, blue: 0 },
+      { location: 2, length: 3, red: 0, green: 0, blue: 1 },
+    ]);
+  });
+
+  it("measures UTF-16 units: a run over an emoji is two units long", () => {
+    const s = parseDocumentSnapshot(
+      textLayer({
+        ...base,
+        content: "😀!",
+        colorRuns: [{ location: 0, length: 2, red: 1, green: 0, blue: 0 }],
+      }),
+    );
+    expect(s.layers[0].text?.colorRuns).toEqual([{ location: 0, length: 2, red: 1, green: 0, blue: 0 }]);
+  });
+
+  it("drops a run that starts exactly at the content end", () => {
+    const s = parseDocumentSnapshot(
+      textLayer({ ...base, colorRuns: [{ location: 5, length: 1, red: 1, green: 0, blue: 0 }] }),
+    );
+    expect(s.layers[0].text?.colorRuns).toBeUndefined();
+  });
+});
+
 describe("applyDocumentSnapshot rev cache + guards", () => {
   it("applies a fresh snapshot and reports the change", () => {
     expect(applyDocumentSnapshot(wire(3, docJson()))).toBe(true);
@@ -176,6 +277,13 @@ describe("layerOps wire contract", () => {
     expect(svc.LayerOp).toHaveBeenCalledWith(op, JSON.stringify(payload));
   }
 
+  /** The mock always answers rev 9, so a second op in one test needs the store
+   * rolled back to an older rev — otherwise the rev cache swallows it. */
+  function rearm(): void {
+    svc.LayerOp.mockClear();
+    applyDocumentSnapshot(wire(1, docJson()));
+  }
+
   it("setActive sends {id}", async () => {
     await expectOp(layerOps.setActive("l1"), "setActive", { id: "l1" });
   });
@@ -192,10 +300,12 @@ describe("layerOps wire contract", () => {
     await expectOp(layerOps.setOpacity("l2", 0.25), "setOpacity", { id: "l2", opacity: 0.25 });
   });
 
-  it("setBlendMode sends the raw mode string", async () => {
+  it("setBlendMode sends the raw mode string under Go's \"mode\" field", async () => {
+    // The Go payload spells the field "mode" (layerOpPayload.Mode); sending
+    // "blendMode" left the op with an empty mode and failed validation.
     await expectOp(layerOps.setBlendMode("l2", "Linear Dodge (Add)"), "setBlendMode", {
       id: "l2",
-      blendMode: "Linear Dodge (Add)",
+      mode: "Linear Dodge (Add)",
     });
   });
 
@@ -209,6 +319,68 @@ describe("layerOps wire contract", () => {
 
   it("moveLayer sends the bottom→top target index", async () => {
     await expectOp(layerOps.moveLayer("l1", 1), "moveLayer", { id: "l1", to: 1 });
+  });
+
+  // --- ticket 47: the C46–C53 layer command family -----------------------
+
+  it("duplicateLayer sends {id} for one layer and {ids} for several", async () => {
+    await expectOp(layerOps.duplicateLayer("l1"), "duplicateLayer", { id: "l1" });
+    rearm();
+    await expectOp(layerOps.duplicateLayer(undefined, ["l1", "l2"]), "duplicateLayer", {
+      ids: ["l1", "l2"],
+    });
+  });
+
+  it("groupLayers sends the sibling ids plus the active hint", async () => {
+    await expectOp(layerOps.groupLayers(["l1", "l2"], "l2"), "groupLayers", {
+      ids: ["l1", "l2"],
+      id: "l2",
+    });
+    // Without an explicit active id the topmost selected layer is the hint.
+    rearm();
+    await expectOp(layerOps.groupLayers(["l1", "l2"]), "groupLayers", {
+      ids: ["l1", "l2"],
+      id: "l2",
+    });
+  });
+
+  it("ungroupLayer sends {id}", async () => {
+    await expectOp(layerOps.ungroupLayer("g1"), "ungroupLayer", { id: "g1" });
+  });
+
+  it("setClippingMask sends the requested direction", async () => {
+    await expectOp(layerOps.setClippingMask("l2", true), "setClippingMask", {
+      id: "l2",
+      clip: true,
+    });
+    rearm();
+    await expectOp(layerOps.setClippingMask("l2", false), "setClippingMask", {
+      id: "l2",
+      clip: false,
+    });
+  });
+
+  it("deleteLayerMask and deleteEffect send their targets", async () => {
+    await expectOp(layerOps.deleteLayerMask("l1"), "deleteLayerMask", { id: "l1" });
+    rearm();
+    await expectOp(layerOps.deleteEffect("l1", "shadow"), "deleteEffect", {
+      id: "l1",
+      kind: "shadow",
+    });
+  });
+
+  it("mergeLayers omits the id unless one is pinned", async () => {
+    await expectOp(layerOps.mergeLayers(), "mergeLayers", {});
+    rearm();
+    await expectOp(layerOps.mergeLayers("l3"), "mergeLayers", { id: "l3" });
+  });
+
+  it("nudgeLayer sends the document-pixel delta", async () => {
+    await expectOp(layerOps.nudgeLayer("l1", -1, 10), "nudgeLayer", {
+      id: "l1",
+      dx: -1,
+      dy: 10,
+    });
   });
 
   it("applies the op's returned snapshot (rev + layers refresh)", async () => {

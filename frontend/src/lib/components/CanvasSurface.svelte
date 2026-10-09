@@ -7,28 +7,34 @@
     PIXEL_GRID_ZOOM,
     documentPoint,
     documentRect,
-    fitViewport,
-    keyboardZoom,
     keyboardZoomTarget,
     panByStore,
     pointsPerPixel,
     resizeViewport,
     viewport,
     zoomAt,
-    zoomToValue,
   } from "../state/viewport";
   import { Modifier, applyKey, clearModifiers, modifierBits } from "../state/modifiers";
   import { activeTool } from "../state/tools";
   import { eyedropperClick } from "../state/filters";
   import { currentSelection } from "../state/selection";
   import {
+    TEXT_BOX_HANDLES,
+    editorBoxSize,
+    heldSelection,
+    resizeTextBox,
+    sessionTextBox,
+    setTextBox,
     textSession,
     startPointText,
     startBoxText,
     editTextLayerAt,
-    commitTextSession,
-    cancelTextSession,
+    type TextBoxHandle,
+    type TextBoxRect,
+    type TextStyle,
+    type TextSession,
   } from "../state/text";
+  import { dropRuns, reconcileRunsForEdit } from "../state/textRuns";
 
   /** One marching-ants loop as an SVG path (doc pixel coordinates). */
   function loopPath(loop: { x: number; y: number }[]): string {
@@ -65,10 +71,21 @@
   let textDragRect = $state<{ x: number; y: number; w: number; h: number } | null>(null);
   let textEditor = $state<HTMLTextAreaElement | undefined>();
 
+  // 只在 textarea 元素第一次出现时聚焦（原版 draftID 变化才算 fresh）：
+  // 会话对象的每次更新（内容、选区写回）不代表重新打开，不能重复 focus()——
+  // 否则点选项栏输入框时 blur 回写选区会把焦点抢回画布。
+  let focusedEditor: HTMLTextAreaElement | undefined;
   $effect(() => {
-    // Focus the inline editor as soon as the session opens (IME composes
-    // natively in the textarea over the canvas).
-    if ($textSession && textEditor) textEditor.focus();
+    const el = textEditor;
+    const sess = $textSession;
+    if (!sess) {
+      focusedEditor = undefined;
+      return;
+    }
+    if (el && el !== focusedEditor) {
+      focusedEditor = el;
+      el.focus();
+    }
   });
 
   function textColor(): string {
@@ -78,23 +95,191 @@
     return `rgb(${byte(sess.style.red)}, ${byte(sess.style.green)}, ${byte(sess.style.blue)})`;
   }
 
-  async function finishText(): Promise<void> {
-    try {
-      await commitTextSession();
-    } catch (err) {
-      console.warn("文字提交失败", err);
+  // --- 逐 run 样式（票 45）：选区同步 + 编辑时的 run 迁移 ---------------------
+  // textarea 是纯文本控件，画不出逐 run 的混排颜色/字体——完整结果在提交后由
+  // Go 渲染端画到画布上，这里只预览基础样式。选中范围与 run 迁移的语义与原版
+  // TypeTool.swift / InlineTextEditor.swift 一致，纯函数在 textRuns.ts。
+
+  /** beforeinput 捕获到的编辑范围（DOM 更新前），input 时用于 run 迁移。 */
+  let pendingEdit: { start: number; end: number } | null = null;
+
+  function sameSel(
+    a: { start: number; end: number } | null,
+    b: { start: number; end: number } | null,
+  ): boolean {
+    if (a === null || b === null) return a === b;
+    return a.start === b.start && a.end === b.end;
+  }
+
+  /** 写回选区（UTF-16 码元偏移，与 DOM selectionStart/End 同一坐标系）。 */
+  function setSelection(next: { start: number; end: number } | null): void {
+    textSession.update((s) => {
+      if (!s || sameSel(s.selection, next)) return s;
+      return { ...s, selection: next };
+    });
+  }
+
+  /** 读 textarea 的当前选区；收拢的光标或未知都写 null。 */
+  function syncSelection(): void {
+    const el = textEditor;
+    if (!el) return;
+    const start = el.selectionStart ?? 0;
+    const end = el.selectionEnd ?? 0;
+    setSelection(start === end ? null : { start, end });
+  }
+
+  /**
+   * 失焦：保留选区（票 45）。选项栏的字体选择器/颜色控件一夺焦，textarea 的
+   * 高亮就塌陷，但逐 run 的字体与颜色要应用到"刚才选中的那批字母"——原版
+   * InlineTextEditor.swift:26-36 的 holdsSelection/keepSelection 正是为此。
+   * 编辑器内真正的塌陷（点击/按键）走 syncSelection，不受这里影响。
+   */
+  function onTextBlur(): void {
+    const el = textEditor;
+    if (!el) return;
+    const start = el.selectionStart ?? 0;
+    const end = el.selectionEnd ?? 0;
+    setSelection(heldSelection(get(textSession), end > start ? { start, end } : null));
+  }
+
+  // --- 段落框缩放（票 45 / X01 尾项）-----------------------------------------
+  // 原版 InlineTextEditor 的 8 向手柄：拖角/边改 boxSize，点文本第一次拖手柄
+  // 先按当前显示尺寸物化成段落框（InlineTextEditor.swift:450-456）。手柄元素
+  // 只负责指针，几何全在 text.ts 的纯函数里（resizeTextBox）。
+  let boxDrag: { handle: TextBoxHandle; box: TextBoxRect; at: { x: number; y: number } } | null = null;
+
+  function startBoxResize(e: PointerEvent, handle: TextBoxHandle): void {
+    const sess = get(textSession);
+    if (!sess || e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    boxDrag = { handle, box: sessionTextBox(sess), at: docPixelOf(e) };
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+  }
+
+  function onBoxResizeMove(e: PointerEvent): void {
+    if (!boxDrag) return;
+    const p = docPixelOf(e);
+    setTextBox(resizeTextBox(boxDrag.box, boxDrag.handle, p.x - boxDrag.at.x, p.y - boxDrag.at.y));
+  }
+
+  function endBoxResize(e: PointerEvent): void {
+    if (!boxDrag) return;
+    boxDrag = null;
+    const el = e.currentTarget as HTMLElement;
+    if (typeof el.hasPointerCapture === "function" && el.hasPointerCapture(e.pointerId)) {
+      el.releasePointerCapture(e.pointerId);
     }
   }
 
-  function onTextKeydown(e: KeyboardEvent): void {
-    if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
-      e.preventDefault();
-      void finishText();
-    } else if (e.key === "Escape") {
-      e.preventDefault();
-      cancelTextSession();
-    }
+  /**
+   * 合成编辑与浏览器撤销/重做不能按码元对齐：前者 IME 会绕过 beforeinput 的
+   * 逐字符范围，后者的 textarea 撤销只回退文本、不回退 runs。
+   */
+  function undiffableInputType(inputType: string): boolean {
+    return (
+      /composition/i.test(inputType) ||
+      inputType === "historyUndo" ||
+      inputType === "historyRedo"
+    );
   }
+
+  /** beforeinput 的目标范围（Chromium/WebKit 支持）；不可用时退回 DOM 选区。 */
+  function beforeInputRange(
+    e: InputEvent,
+    el: HTMLTextAreaElement,
+  ): { start: number; end: number } {
+    try {
+      const ranges = e.getTargetRanges();
+      if (ranges.length > 0) {
+        return { start: ranges[0].startOffset, end: ranges[0].endOffset };
+      }
+    } catch {
+      // 个别实现不支持 getTargetRanges：退回选区（选择替换、粘贴等仍能对上）
+    }
+    return { start: el.selectionStart ?? 0, end: el.selectionEnd ?? 0 };
+  }
+
+  /**
+   * 捕获编辑范围（原版 shouldChangeTextIn(affectedCharRange, replacementString)，
+   * 在内容变化之前）。捕获不到就不迁移，交给 input 时丢 runs。
+   */
+  function onTextBeforeInput(e: InputEvent): void {
+    pendingEdit = null;
+    const el = textEditor;
+    if (!el || e.isComposing || undiffableInputType(e.inputType)) return;
+    pendingEdit = beforeInputRange(e, el);
+  }
+
+  /**
+   * 校验捕获范围与新旧内容一致，返回这次编辑插入的码元数；对不上返回 null
+   * （粘贴到别处、词级删除、拖放搬移文本等）。插入长度也可以从两个值反推，
+   * 所以「粘贴长度未知」只要范围对得上仍能迁移。
+   */
+  function verifiedInserted(
+    oldValue: string,
+    newValue: string,
+    edit: { start: number; end: number },
+  ): number | null {
+    const { start, end } = edit;
+    if (!(start >= 0 && end >= start && end <= oldValue.length)) return null;
+    const inserted = newValue.length - (oldValue.length - (end - start));
+    if (inserted < 0) return null;
+    if (newValue.slice(0, start) !== oldValue.slice(0, start)) return null;
+    if (newValue.slice(start + inserted) !== oldValue.slice(end)) return null;
+    return inserted;
+  }
+
+  /** 有 runs 时按捕获范围迁移；对不上（或没捕获到）就丢 runs——原版回退。 */
+  function styleAfterEdit(
+    style: TextStyle,
+    oldValue: string,
+    newValue: string,
+    edit: { start: number; end: number } | null,
+  ): TextStyle {
+    if (!style.colorRuns && !style.fontRuns) return style;
+    if (!edit) return dropRuns(style);
+    const inserted = verifiedInserted(oldValue, newValue, edit);
+    if (inserted === null) return dropRuns(style);
+    // 用编辑前的内容长度——原版 replaceCharacters 在 content 变化之前调用。
+    return reconcileRunsForEdit(style, edit.start, edit.end, inserted, oldValue.length);
+  }
+
+  /**
+   * input：DOM 已经更新。内容写回会话时先迁移 runs（用编辑前的内容长度），
+   * 再写新内容与 DOM 选区。
+   */
+  function onTextInput(e: Event): void {
+    const el = e.target as HTMLTextAreaElement;
+    const value = el.value;
+    const edit = pendingEdit;
+    pendingEdit = null;
+    const start = el.selectionStart ?? 0;
+    const end = el.selectionEnd ?? 0;
+    const nextSelection = start === end ? null : { start, end };
+    textSession.update((s) => {
+      if (!s) return s;
+      if (s.content === value) {
+        return sameSel(s.selection, nextSelection) ? s : { ...s, selection: nextSelection };
+      }
+      const next: TextSession = {
+        ...s,
+        content: value,
+        style: styleAfterEdit(s.style, s.content, value, edit),
+        selection: nextSelection,
+      };
+      return next;
+    });
+  }
+
+  // 会话内容变化（新建/载入既有文字）后读一次 DOM 选区写回会话。只在编辑器
+  // 仍持有焦点时读：失焦后 DOM 保留旧选区，不该把 blur 写下的 null 复活。
+  $effect(() => {
+    const content = $textSession?.content;
+    const el = textEditor;
+    if (content === undefined || !el || document.activeElement !== el) return;
+    syncSelection();
+  });
 
   const vp = $derived($viewport);
   const ppp = $derived(pointsPerPixel(vp));
@@ -150,8 +335,9 @@
     return () => el.removeEventListener("wheel", onWheel);
   });
 
-  // Window-level keyboard: modifier bits everywhere, zoom shortcuts while the
-  // surface is mounted (guarding text entry), Space = temporary hand tool.
+  // Window-level keyboard: modifier bits everywhere and Space = temporary hand
+  // tool. Zoom/Fit/Actual Pixels and the text keys belong to the shortcut layer
+  // (ticket 47), which dispatches through the remappable shortcut table.
   $effect(() => {
     const editable = (t: EventTarget | null): boolean => {
       const el = t as HTMLElement | null;
@@ -165,28 +351,6 @@
       if (applyKey(e.code, true)) {
         // Keep Space from re-clicking focused buttons and scrolling pages.
         if (e.code === "Space" || e.code.startsWith("Alt")) e.preventDefault();
-        return;
-      }
-      if (!(e.ctrlKey || e.metaKey)) return;
-      switch (e.code) {
-        case "Equal":
-        case "NumpadAdd":
-          e.preventDefault();
-          keyboardZoom(1, doc.width, doc.height);
-          break;
-        case "Minus":
-        case "NumpadSubtract":
-          e.preventDefault();
-          keyboardZoom(-1, doc.width, doc.height);
-          break;
-        case "Digit0":
-          e.preventDefault();
-          fitViewport(doc.width, doc.height);
-          break;
-        case "Digit1":
-          e.preventDefault();
-          zoomToValue(1, doc.width, doc.height); // actual pixels
-          break;
       }
     };
     const onKeyUp = (e: KeyboardEvent) => {
@@ -254,6 +418,10 @@
   });
 
   function onPointerDown(e: PointerEvent): void {
+    const spaceHeld = ($modifierBits & Modifier.Space) !== 0;
+    // 行内文字编辑器优先接管左键按下（放置光标、拖选）：让 textarea 拿到
+    // 焦点，不让 Type 工具重开会话；空格/手形工具的平移仍然优先。
+    if (e.button === 0 && !spaceHeld && $activeTool !== "hand" && isTextEditorTarget(e.target)) return;
     // An armed Levels eyedropper swallows plain clicks before any tool.
     if (e.button === 0 && !panDrag && !painting) {
       const p = docPixelOf(e);
@@ -262,7 +430,6 @@
         return;
       }
     }
-    const spaceHeld = ($modifierBits & Modifier.Space) !== 0;
     if (e.button === 1 || ((spaceHeld || $activeTool === "hand") && e.button === 0)) {
       panDrag = { x: e.clientX, y: e.clientY };
       panning = true;
@@ -383,6 +550,9 @@
   function onContextMenu(e: MouseEvent): void {
     e.preventDefault(); // Alt-click / right-click belong to the tools
   }
+
+  const isTextEditorTarget = (t: EventTarget | null): boolean =>
+    t instanceof Node && !!textEditor && textEditor.contains(t);
 </script>
 
 <!--
@@ -439,36 +609,67 @@
       ></div>
     {/if}
     {#if textDragRect}
+      <!-- 拖拽框（文档像素）按 ppp 换算到 .doc 的 CSS 像素，缩放时跟手。 -->
       <div
         class="text-box-drag"
-        style:left="{textDragRect.x}px"
-        style:top="{textDragRect.y}px"
-        style:width="{textDragRect.w}px"
-        style:height="{textDragRect.h}px"
+        style:left="{textDragRect.x * ppp}px"
+        style:top="{textDragRect.y * ppp}px"
+        style:width="{textDragRect.w * ppp}px"
+        style:height="{textDragRect.h * ppp}px"
       ></div>
     {/if}
     {#if $textSession}
-      <!-- Inline editor: a real textarea over the canvas, so IME composes
-           natively; ⌘回车提交 / Esc 取消. -->
+      <!-- 行内编辑器：画布上的原生 textarea，IME 由 WebView2 原生合成。
+           提交/取消（⌘回车 / Esc）与方向键间距归快捷表层（票 47），这里
+           不再有 keydown 处理。几何按 ppp 换算——editorAt/boxSize/字号/行高
+           是文档像素，.doc 已按 doc.width * ppp 定位与缩放，乘上 ppp 后
+           任意缩放级别都落在同一个文档点上。纯 textarea 画不出逐 run 的
+           混排颜色/字体（浏览器限制），提交后由 Go 渲染端按 colorRuns/
+           fontRuns 画出完整结果——这里只是基础样式的预览。 -->
+      {@const tbox = editorBoxSize($textSession)}
       <textarea
         bind:this={textEditor}
         class="text-editor"
-        style:left="{$textSession.editorAt.x}px"
-        style:top="{$textSession.editorAt.y}px"
-        style:width="{$textSession.boxSize ? $textSession.boxSize[0] : Math.max(120, $textSession.style.fontSize * 6)}px"
-        style:height="{$textSession.boxSize ? $textSession.boxSize[1] : Math.max(40, $textSession.style.fontSize * 1.8)}px"
-        style:font-size="{$textSession.style.fontSize}px"
-        style:line-height="{$textSession.style.leading > 0 ? $textSession.style.leading : $textSession.style.fontSize * 1.2}px"
+        style:left="{$textSession.editorAt.x * ppp}px"
+        style:top="{$textSession.editorAt.y * ppp}px"
+        style:width="{tbox[0] * ppp}px"
+        style:height="{tbox[1] * ppp}px"
+        style:font-size="{$textSession.style.fontSize * ppp}px"
+        style:line-height="{($textSession.style.leading > 0
+          ? $textSession.style.leading
+          : $textSession.style.fontSize * 1.2) * ppp}px"
+        style:letter-spacing="{$textSession.style.tracking * ppp}px"
+        style:text-align={$textSession.style.alignment.toLowerCase()}
         style:color={textColor()}
         style:font-family={$textSession.style.fontName}
         value={$textSession.content}
-        oninput={(e) => {
-          const v = (e.target as HTMLTextAreaElement).value;
-          textSession.update((s2) => (s2 ? { ...s2, content: v } : s2));
-        }}
-        onkeydown={onTextKeydown}
+        onbeforeinput={onTextBeforeInput}
+        oninput={onTextInput}
+        onselect={syncSelection}
+        onkeyup={syncSelection}
+        onmouseup={syncSelection}
+        onblur={onTextBlur}
         placeholder="输入文字…"
       ></textarea>
+      <!-- 8 向缩放手柄：角/边跟手改段落框；点文本第一次拖手柄先物化成框。 -->
+      <div
+        class="text-frame"
+        style:left="{$textSession.editorAt.x * ppp}px"
+        style:top="{$textSession.editorAt.y * ppp}px"
+        style:width="{tbox[0] * ppp}px"
+        style:height="{tbox[1] * ppp}px"
+      >
+        {#each TEXT_BOX_HANDLES as handle (handle)}
+          <div
+            class="text-handle {handle}"
+            role="presentation"
+            onpointerdown={(e) => startBoxResize(e, handle)}
+            onpointermove={onBoxResizeMove}
+            onpointerup={endBoxResize}
+            onpointercancel={endBoxResize}
+          ></div>
+        {/each}
+      </div>
     {/if}
   </div>
 </div>
@@ -481,17 +682,47 @@
     pointer-events: none;
   }
 
+  /* 与 Go 光栅端对齐：TextPadding 是 12（layerrender/text.go），所以内容区
+     也留 12px，盒内宽度 = boxSize − 24，提交前后换行位置一致；字距与对齐由
+     letter-spacing / text-align 反映（原版每帧重光栅所以天然所见即所得）。 */
   .text-editor {
     position: absolute;
+    box-sizing: border-box;
     background: rgba(255, 255, 255, 0.04);
     border: 1px dashed var(--accent, #3b82f6);
     outline: none;
     resize: none;
     overflow: hidden;
-    padding: 2px 4px;
+    padding: 12px;
     white-space: pre-wrap;
     caret-color: var(--accent, #3b82f6);
   }
+
+  /* 段落框的手柄层：overlay 不吃事件，只有 8 个方块吃（原版 6pt 手柄）。 */
+  .text-frame {
+    position: absolute;
+    pointer-events: none;
+  }
+
+  .text-handle {
+    position: absolute;
+    width: 8px;
+    height: 8px;
+    margin: -4px 0 0 -4px;
+    background: var(--bg-panel, #2a2a2e);
+    border: 1px solid var(--accent, #3b82f6);
+    border-radius: 1px;
+    pointer-events: auto;
+  }
+
+  .text-handle.nw { left: 0; top: 0; cursor: nwse-resize; }
+  .text-handle.n  { left: 50%; top: 0; cursor: ns-resize; }
+  .text-handle.ne { left: 100%; top: 0; cursor: nesw-resize; }
+  .text-handle.w  { left: 0; top: 50%; cursor: ew-resize; }
+  .text-handle.e  { left: 100%; top: 50%; cursor: ew-resize; }
+  .text-handle.sw { left: 0; top: 100%; cursor: nesw-resize; }
+  .text-handle.s  { left: 50%; top: 100%; cursor: ns-resize; }
+  .text-handle.se { left: 100%; top: 100%; cursor: nwse-resize; }
 
   .canvas-stage {
     position: absolute;

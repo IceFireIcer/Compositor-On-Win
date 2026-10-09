@@ -67,20 +67,25 @@ func Build(doc Document) (*Import, error) {
 		var textOrigin [2]float64
 		if record.Kind == KindText && record.Text != nil {
 			style := record.Text.Style
-			if image, ok := layerrender.TextImage(style); ok {
+			// Faces this machine does not have are drawn with the Windows
+			// family the mapping table names (ticket 46). The model keeps
+			// Photoshop's own names, so the layer still exports as the PSD
+			// spelled it; only the pixels and the note name the substitute.
+			renderStyle := substituteFaces(style)
+			if image, ok := layerrender.TextImage(renderStyle); ok {
 				renderedText = true
 				textImage = image
 				textStyle = &style
-				textOrigin = textLayerOrigin(record.Text, float64(image.W), float64(image.H))
+				placed := *record.Text
+				placed.Style = renderStyle
+				textOrigin = textLayerOrigin(&placed, float64(image.W), float64(image.H))
 			}
 		}
 		switch record.Kind {
 		case KindText:
 			if renderedText && record.Text != nil {
 				notes = append(notes, record.Text.Notes...)
-				if !layerrender.FontInstalled(record.Text.Style.FontName) {
-					notes = append(notes, fmt.Sprintf("字体“%s”未安装，文字以系统字体绘制。", record.Text.Style.FontName))
-				}
+				notes = append(notes, missingFontNotes(record.Text.Style)...)
 			} else {
 				notes = append(notes, "可编辑的 Photoshop 文字已成为像素，无法再重新输入。")
 			}
@@ -366,6 +371,68 @@ func domainUUID() string {
 		out = append(out, hexDigits[v>>4], hexDigits[v&0xF])
 	}
 	return string(out)
+}
+
+// substituteFaces copies a style with the faces this machine lacks replaced
+// by the Windows family the mapping table names (ticket 46). The copy is
+// what gets drawn; the imported style keeps Photoshop's names.
+func substituteFaces(style domain.TextStyle) domain.TextStyle {
+	out := style
+	if windows, ok := substituteFace(style.FontName); ok {
+		out.FontName = windows
+	}
+	if len(style.FontRuns) > 0 {
+		out.FontRuns = make([]domain.TextFontRun, len(style.FontRuns))
+		copy(out.FontRuns, style.FontRuns)
+		for i := range out.FontRuns {
+			if windows, ok := substituteFace(out.FontRuns[i].FontName); ok {
+				out.FontRuns[i].FontName = windows
+			}
+		}
+	}
+	return out
+}
+
+// substituteFace maps a PSD face onto the installed Windows family standing
+// in for it: ok only when the table knows the name, this machine lacks the
+// original, and the substitute really is installed.
+func substituteFace(name string) (string, bool) {
+	if name == "" || layerrender.FontInstalled(name) {
+		return name, false
+	}
+	windows, ok := layerrender.MapToWindows(name)
+	if !ok || windows == name || !layerrender.FontInstalled(windows) {
+		return name, false
+	}
+	return windows, true
+}
+
+// missingFontNotes is PSDText.missingFontNote for every face the style
+// paints with — the base face and each per-run face, once each. A face the
+// mapping table knows names its Windows substitute; anything else keeps the
+// original's system-font wording. A missing face never fails the import.
+func missingFontNotes(style domain.TextStyle) []string {
+	var out []string
+	seen := map[string]bool{}
+	check := func(name string) {
+		if name == "" || seen[name] {
+			return
+		}
+		seen[name] = true
+		if layerrender.FontInstalled(name) {
+			return
+		}
+		if windows, ok := substituteFace(name); ok {
+			out = append(out, fmt.Sprintf("字体“%s”未安装，已按“%s”替代绘制。", name, windows))
+		} else {
+			out = append(out, fmt.Sprintf("字体“%s”未安装，文字以系统字体绘制。", name))
+		}
+	}
+	check(style.FontName)
+	for _, run := range style.FontRuns {
+		check(run.FontName)
+	}
+	return out
 }
 
 // textLayerOrigin computes the layer transform's top-left for a rendered

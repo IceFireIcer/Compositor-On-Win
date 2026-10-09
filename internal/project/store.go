@@ -58,11 +58,22 @@ func (s *Store) Open(dir string) (*domain.Document, error) {
 // no longer referenced by the document are removed after the manifest
 // commits (the agent contract: PNGs first, manifest rename last).
 // assets maps asset file names to complete PNG bytes.
+//
+// The written manifest always declares domain.FormatVersion: the original
+// builds a fresh ProjectManifest on every save (ProjectStore.swift:15,21 +
+// EditorSession+Projects.swift:14), so the version in an opened file is only
+// a read gate. Without this, a document opened from a v9/v10 package that
+// gained a newer field (colorRuns/fontRuns from ticket 45, guides, …) could
+// never be saved again — validate.go's gates are written against the declared
+// version and would reject the document's own new data. Open() still validates
+// with the version the file declares, so the gates keep doing their job.
 func (s *Store) Save(dir string, doc *domain.Document, assets map[string][]byte) error {
-	if err := validateDocument(doc); err != nil {
+	stamped := *doc
+	stamped.Version = domain.FormatVersion
+	if err := validateDocument(&stamped); err != nil {
 		return err
 	}
-	manifest, err := encodeManifest(doc)
+	manifest, err := encodeManifest(&stamped)
 	if err != nil {
 		return err
 	}

@@ -1,5 +1,6 @@
 import { get, writable } from "svelte/store";
 import * as BridgeService from "../../../wailsjs/go/bridge/Service";
+import type { ColorRun, FontRun } from "./text";
 
 /**
  * Frontend mirror of the Go document (internal/bridge.Service.DocumentSnapshot).
@@ -55,6 +56,10 @@ export interface TextRecord {
   tracking: number;
   leading: number;
   boxSize?: [number, number] | null;
+  /** v10 逐 run 颜色（UTF-16 码元下标）；缺省 = 全段统一。 */
+  colorRuns?: ColorRun[];
+  /** v11 逐 run 字体；缺省 = 全段统一。 */
+  fontRuns?: FontRun[];
 }
 
 export interface DocumentState {
@@ -199,8 +204,9 @@ function parseTextRecord(raw: unknown): TextRecord | null {
   if (Array.isArray(t.boxSize) && t.boxSize.length === 2) {
     boxSize = [asNumber(t.boxSize[0], 0), asNumber(t.boxSize[1], 0)];
   }
+  const content = typeof t.content === "string" ? t.content : "";
   return {
-    content: typeof t.content === "string" ? t.content : "",
+    content,
     fontName: typeof t.fontName === "string" ? t.fontName : "Segoe UI",
     fontSize: asNumber(t.fontSize, 72),
     red: asNumber(t.red, 0),
@@ -210,7 +216,79 @@ function parseTextRecord(raw: unknown): TextRecord | null {
     tracking: asNumber(t.tracking, 0),
     leading: asNumber(t.leading, 0),
     boxSize,
+    colorRuns: parseColorRuns(t.colorRuns, content.length),
+    fontRuns: parseFontRuns(t.fontRuns, content.length),
   };
+}
+
+/** 一个可用的 UTF-16 下标：有限数取整，否则 null（该 run 视为损坏丢弃）。 */
+function asIndexOrNull(v: unknown): number | null {
+  return typeof v === "number" && Number.isFinite(v) ? Math.trunc(v) : null;
+}
+
+/** 0–1 通道：有限数夹取；非数视为损坏（null）。 */
+function asChannelOrNull(v: unknown): number | null {
+  if (typeof v !== "number" || !Number.isFinite(v)) return null;
+  return Math.max(0, Math.min(1, v));
+}
+
+/** 原版字体名规则：非空、≤200 字符、不含换行。 */
+function validStoredFontName(name: string): boolean {
+  return name.length > 0 && [...name].length <= 200 && !/[\n\r\v\f\u0085\u2028\u2029]/.test(name);
+}
+
+/**
+ * 逐 run 防御性解析：损坏的 run 直接丢弃（下标非有限数/负数、length ≤ 0、
+ * 越界、通道非数、字体名非法），有限但超范围的通道夹到 0–1，run 超出 content
+ * 的部分截断。排序 + 去重叠，保证 textRuns.ts 的语义前提。空数组按缺省处理
+ * （原版约定 run 数组非空）。任何输入都不抛异常。
+ */
+function sanitizeRuns<T extends { location: number; length: number }>(
+  raw: unknown,
+  contentLength: number,
+  make: (item: Record<string, unknown>, location: number, length: number) => T | null,
+): T[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const candidates: T[] = [];
+  for (const item of raw) {
+    if (item == null || typeof item !== "object") continue;
+    const r = item as Record<string, unknown>;
+    const location = asIndexOrNull(r.location);
+    let length = asIndexOrNull(r.length);
+    if (location === null || length === null || location < 0 || length <= 0) continue;
+    if (location >= contentLength) continue;
+    length = Math.min(length, contentLength - location);
+    if (length <= 0) continue;
+    const run = make(r, location, length);
+    if (run) candidates.push(run);
+  }
+  candidates.sort((a, b) => a.location - b.location);
+  const runs: T[] = [];
+  let end = 0;
+  for (const run of candidates) {
+    if (run.location < end) continue; // 与已保留的前一 run 重叠：丢弃
+    end = run.location + run.length;
+    runs.push(run);
+  }
+  return runs.length > 0 ? runs : undefined;
+}
+
+function parseColorRuns(raw: unknown, contentLength: number): ColorRun[] | undefined {
+  return sanitizeRuns(raw, contentLength, (r, location, length) => {
+    const red = asChannelOrNull(r.red);
+    const green = asChannelOrNull(r.green);
+    const blue = asChannelOrNull(r.blue);
+    if (red === null || green === null || blue === null) return null;
+    return { location, length, red, green, blue };
+  });
+}
+
+function parseFontRuns(raw: unknown, contentLength: number): FontRun[] | undefined {
+  return sanitizeRuns(raw, contentLength, (r, location, length) => {
+    const fontName = typeof r.fontName === "string" ? r.fontName : "";
+    if (!validStoredFontName(fontName)) return null;
+    return { location, length, fontName };
+  });
 }
 
 function parseTransform(raw: unknown): { origin: [number, number]; size: [number, number]; rotation?: number } {
@@ -306,7 +384,18 @@ export type LayerOpName =
   | "setBlendMode"
   | "deleteLayer"
   | "addLayer"
-  | "moveLayer";
+  | "moveLayer"
+  // Ticket 47: the C46–C53 layer command family (Group/Ungroup/Clipping/
+  // Merge/Duplicate/Delete mask/Delete effect/Nudge) lives in Go so the
+  // document truth stays in one place.
+  | "duplicateLayer"
+  | "groupLayers"
+  | "ungroupLayer"
+  | "setClippingMask"
+  | "deleteLayerMask"
+  | "deleteEffect"
+  | "mergeLayers"
+  | "nudgeLayer";
 
 /**
  * One layer mutation → fresh snapshot applied to the store. Payload shapes
@@ -319,6 +408,14 @@ export type LayerOpName =
  *   deleteLayer {"id"}
  *   addLayer    {}
  *   moveLayer   {"id","to":targetIndex}   // index in the bottom→top array
+ *   duplicateLayer {"id"} | {"ids":[…]}   // copy above the source (ticket 47)
+ *   groupLayers {"ids":[…],"id"}         // folder around the selected siblings
+ *   ungroupLayer {"id"}                  // dissolve a folder in place
+ *   setClippingMask {"id","clip":bool}   // clip onto the contiguous sibling below
+ *   deleteLayerMask {"id"}
+ *   deleteEffect {"id","kind"}
+ *   mergeLayers {"id"}                   // ⌘E: Merge Down / Merge Group / Merge Layers
+ *   nudgeLayer {"id","dx","dy"}          // arrow-key nudge in document pixels
  */
 export async function runLayerOp(
   op: LayerOpName,
@@ -340,10 +437,32 @@ export const layerOps = {
   setVisible: (id: string, visible: boolean) => runLayerOp("setVisible", { id, visible }),
   rename: (id: string, name: string) => runLayerOp("rename", { id, name }),
   setOpacity: (id: string, opacity: number) => runLayerOp("setOpacity", { id, opacity }),
-  setBlendMode: (id: string, blendMode: string) => runLayerOp("setBlendMode", { id, blendMode }),
+  // Go's layerOpPayload spells this field "mode" (internal/bridge/document.go);
+  // sending "blendMode" left the op with an empty mode and failed validation.
+  setBlendMode: (id: string, mode: string) => runLayerOp("setBlendMode", { id, mode }),
   deleteLayer: (id: string) => runLayerOp("deleteLayer", { id }),
   addLayer: () => runLayerOp("addLayer", {}),
   moveLayer: (id: string, to: number) => runLayerOp("moveLayer", { id, to }),
+
+  // --- ticket 47: the C46–C53 layer command family -------------------------
+  /** ⌘J — copy a layer (or several) above its source. */
+  duplicateLayer: (id?: string, ids?: readonly string[]) =>
+    runLayerOp("duplicateLayer", ids && ids.length > 0 ? { ids: [...ids] } : { id }),
+  /** ⌘G — wrap the selected siblings in a folder. */
+  groupLayers: (ids: readonly string[], activeId?: string) =>
+    runLayerOp("groupLayers", { ids: [...ids], id: activeId ?? ids[ids.length - 1] ?? "" }),
+  /** ⇧⌘G — dissolve the active folder, children keep their slots. */
+  ungroupLayer: (id: string) => runLayerOp("ungroupLayer", { id }),
+  /** ⌥⌘G — clip onto (or release from) the contiguous sibling below. */
+  setClippingMask: (id: string, clip: boolean) => runLayerOp("setClippingMask", { id, clip }),
+  /** Delete the layer's raster mask (Layer ▸ Delete Layer Mask). */
+  deleteLayerMask: (id: string) => runLayerOp("deleteLayerMask", { id }),
+  /** Delete one layer effect (Layer ▸ Layer Style ▸ …). */
+  deleteEffect: (id: string, kind: string) => runLayerOp("deleteEffect", { id, kind }),
+  /** ⌘E — merge down / merge group / merge selected, as one undo step. */
+  mergeLayers: (id?: string) => runLayerOp("mergeLayers", id === undefined ? {} : { id }),
+  /** Arrow-key nudge: move the layer by dx/dy document pixels. */
+  nudgeLayer: (id: string, dx: number, dy: number) => runLayerOp("nudgeLayer", { id, dx, dy }),
 };
 
 // ---------------------------------------------------------------------------

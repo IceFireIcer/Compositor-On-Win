@@ -65,6 +65,8 @@ export function LayerOp(arg1:string,arg2:string):Promise<string>;
 
 export function LevelsAuto(arg1:number):Promise<string>;
 
+export function ListFonts():Promise<string>;
+
 export function OpenProjectDialog():Promise<string>;
 
 export function PickImageImport():Promise<Array<string>>;

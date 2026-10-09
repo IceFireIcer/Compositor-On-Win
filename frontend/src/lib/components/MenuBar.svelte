@@ -5,17 +5,35 @@
     beginFilter,
     filterSession,
   } from "../state/filters";
-  import { document, applyDocumentSnapshot } from "../state/document";
+  import { document } from "../state/document";
   import { importImages } from "../state/workspace";
   import { copyMerged, exportPNG, openExportJPEG } from "../state/export";
   import { geometrySheet } from "../state/geometry";
-  import { Undo, Redo, ApplyFilter, SelectSubject, SelectObjectAt } from "../../../wailsjs/go/bridge/Service";
-  import { setSelectionFromMaskData } from "../state/selection";
+  import {
+    layerMenuState,
+    openGeometry,
+    openProjectSafe,
+    openShortcutsSheet,
+    runInvert,
+    runSelect,
+    runShortcut,
+    saveProjectSafe,
+  } from "../shortcuts/actions";
+  import { chordFor } from "../shortcuts/settings";
+  import { chordLabel } from "../shortcuts/chords";
+  import { registerCanvasModalGuard } from "../shortcuts/dispatch";
 
   /**
-   * The menu bar (CompositorApp.swift's menus): 文件 / 图像 / 滤镜. 图像
-   * carries the destructive adjustment entries and 反相/反相蒙版; 滤镜 the
-   * ten FilterKind items. Every item opens a live-preview dialog session.
+   * The menu bar (CompositorApp.swift's menus): 选择 / 文件 / 编辑 / 图像 /
+   * 滤镜. 编辑 is ticket 47's addition — 撤销 / 重做 / 键盘快捷键…, the last
+   * opening the remapping sheet (票 47 只有菜单入口，快捷键表单本身不再占一条
+   * 组合键). 图像 carries the destructive adjustment entries and 反相/反相蒙版;
+   * 滤镜 the ten FilterKind items.
+   *
+   * Hints now come from the shortcut table (`hintFor` → chordFor + chordLabel),
+   * so a remap in 键盘快捷键… is reflected here immediately. Items whose command
+   * lives in the action registry route through `runShortcut`, so hint and
+   * behavior cannot drift apart.
    */
 
   interface MenuItem {
@@ -33,58 +51,39 @@
   let open = $state<string | null>(null);
   const hasLayer = $derived(!!$document.activeLayerID);
   const dialogOpen = $derived($filterSession !== null);
+  // 图层菜单的标题/可用性来自被测试钉住的纯函数（state/layerOps.ts），
+  // 所以菜单、快捷键、Go 三处对"⌘E 现在合并什么"的看法一致。
+  const layerMenu = $derived(layerMenuState($document));
+
+  /** Current chord label for a definition id — the menu's live hint. */
+  function hintFor(id: string): string {
+    return chordLabel(chordFor(id));
+  }
+
+  // 反相/反相蒙版: 反相 rides ⌘I (single definition), the mask variant has no
+  // key of its own in the original, so it stays hint-less.
+  const ADJUSTMENT_HINT_IDS: Record<string, string> = {
+    "adjust:Curves": "Menus:Curves",
+    "adjust:Levels": "Menus:Levels",
+    "adjust:Hue/Saturation": "Menus:Hue/Saturation",
+  };
 
   function close(): void {
     open = null;
   }
 
-  // ⌘I semantics: a selected mask inverts the mask, otherwise the pixels.
-  // Mask selection is not wired yet, so 反相 targets pixels and 反相蒙版
-  // targets the mask (the Go side rejects layers without one).
-  /** Select Subject / Object Selection: the Go endpoint replies with a
-   * doc-space selection payload the store keeps for the ants + filters. */
-  async function runSelect(kind: "subject" | "object"): Promise<void> {
-    try {
-      const raw =
-        kind === "subject"
-          ? await SelectSubject()
-          : await SelectObjectAt(Math.floor($document.width / 2), Math.floor($document.height / 2));
-      const parsed = JSON.parse(raw) as {
-        selection: { x: number; y: number; w: number; h: number; mask: string };
-      };
-      const binary = atob(parsed.selection.mask);
-      const mask = new Uint8Array(binary.length);
-      for (let i = 0; i < binary.length; i++) mask[i] = binary.charCodeAt(i);
-      setSelectionFromMaskData(mask, parsed.selection.w, parsed.selection.h);
-    } catch (err) {
-      console.warn("主体选择失败", err);
-    }
+  async function runInvertMenu(kind: "invert" | "invertMask"): Promise<void> {
+    await runInvert(kind);
     close();
   }
 
-  async function runInvert(kind: "invert" | "invertMask"): Promise<void> {
-    const doc = $document;
-    if (!doc.docId || !doc.activeLayerID) return;
-    try {
-      applyDocumentSnapshot(await ApplyFilter(kind, doc.activeLayerID, "{}", 0, ""));
-    } catch (err) {
-      console.warn("反相失败", err);
-    }
+  async function runSelectMenu(kind: "subject" | "object"): Promise<void> {
+    await runSelect(kind);
     close();
   }
 
-  async function runUndoRedo(kind: "undo" | "redo"): Promise<void> {
-    try {
-      const raw = kind === "undo" ? await Undo() : await Redo();
-      applyDocumentSnapshot(raw);
-    } catch (err) {
-      console.warn(kind === "undo" ? "没有可撤销的操作" : "没有可重做的操作");
-    }
-    close();
-  }
-
-  function openGeometry(kind: "canvasSize" | "imageSize" | "trim"): void {
-    geometrySheet.set(kind);
+  function runAndClose(id: string): void {
+    runShortcut(id);
     close();
   }
 
@@ -120,66 +119,229 @@
       items: [
         {
           label: "选择主体",
-          hint: "⌥⌘A",
+          hint: hintFor("Menus:Select Subject"),
           disabled: !hasLayer || dialogOpen,
-          run: () => void runSelect("subject"),
+          run: () => void runSelectMenu("subject"),
         },
         {
           label: "对象选择（画布中心）",
           disabled: !hasLayer || dialogOpen,
-          run: () => void runSelect("object"),
+          run: () => void runSelectMenu("object"),
         },
       ],
     },
     {
       label: "文件",
       items: [
+        {
+          label: "新建画布…",
+          hint: hintFor("Menus:New Canvas"),
+          run: () => runAndClose("Menus:New Canvas"),
+        },
+        {
+          label: "打开项目…",
+          hint: hintFor("Menus:Open Project"),
+          run: () => {
+            close();
+            void openProjectSafe();
+          },
+        },
+        {
+          label: "保存",
+          hint: hintFor("Menus:Save"),
+          disabled: dialogOpen,
+          run: () => {
+            close();
+            void saveProjectSafe();
+          },
+        },
         { label: "导入图像…", disabled: dialogOpen, run: () => void runImportImages() },
         {
           label: "导出 PNG…",
-          hint: "⇧⌘E",
+          hint: hintFor("Menus:Export PNG"),
           disabled: !hasLayer || dialogOpen,
           run: () => void safe(exportPNG(), "导出 PNG 失败"),
         },
         {
           label: "导出 JPEG…",
-          hint: "⇧⌥⌘S",
+          hint: hintFor("Menus:Export JPEG"),
           disabled: !hasLayer || dialogOpen,
           run: () => openExportJPEG(),
         },
         {
           label: "拷贝合并",
-          hint: "⇧⌘C",
+          hint: hintFor("Menus:Copy Merged"),
           disabled: !hasLayer || dialogOpen,
           run: () => void safe(copyMerged(), "拷贝合并失败"),
         },
-        { label: "撤销", hint: "⌘Z", run: () => void runUndoRedo("undo") },
-        { label: "重做", hint: "⇧⌘Z", run: () => void runUndoRedo("redo") },
+        {
+          label: "关闭项目",
+          hint: hintFor("Menus:Close Project"),
+          run: () => runAndClose("Menus:Close Project"),
+        },
+      ],
+    },
+    {
+      label: "编辑",
+      items: [
+        { label: "撤销", hint: hintFor("Menus:Undo"), run: () => runAndClose("Menus:Undo") },
+        { label: "重做", hint: hintFor("Menus:Redo"), run: () => runAndClose("Menus:Redo") },
+        {
+          label: "键盘快捷键…",
+          disabled: dialogOpen,
+          run: () => {
+            openShortcutsSheet();
+            close();
+          },
+        },
       ],
     },
     {
       label: "图像",
       items: [
-        ...ADJUSTMENT_KINDS.map((k) => ({
-          label: k.label,
-          hint: k.placeholder,
-          disabled: !hasLayer || dialogOpen,
-          run: () => void beginFilter(k.id, k.label.replace(/…$/, ""), true),
-        })),
+        ...ADJUSTMENT_KINDS.map((k) => {
+          const definition = ADJUSTMENT_HINT_IDS[k.id];
+          return {
+            label: k.label,
+            hint: definition ? hintFor(definition) : k.placeholder,
+            disabled: !hasLayer || dialogOpen,
+            run: () => {
+              void beginFilter(k.id, k.label.replace(/…$/, ""), true);
+              close();
+            },
+          };
+        }),
         {
           label: "反相",
-          hint: "⌘I",
+          hint: hintFor("Menus:Invert Pixels / Mask"),
           disabled: !hasLayer || dialogOpen,
-          run: () => void runInvert("invert"),
+          run: () => void runInvertMenu("invert"),
         },
         {
           label: "反相蒙版",
           disabled: !hasLayer || dialogOpen,
-          run: () => void runInvert("invertMask"),
+          run: () => void runInvertMenu("invertMask"),
         },
-        { label: "画布大小…", hint: "⌥⌘C", disabled: !hasLayer || dialogOpen, run: () => openGeometry("canvasSize") },
-        { label: "图像大小…", hint: "⌥⌘I", disabled: !hasLayer || dialogOpen, run: () => openGeometry("imageSize") },
-        { label: "修剪…", disabled: !hasLayer || dialogOpen, run: () => openGeometry("trim") },
+        {
+          label: "画布大小…",
+          hint: hintFor("Menus:Canvas Size"),
+          disabled: !hasLayer || dialogOpen,
+          run: () => {
+            openGeometry("canvasSize");
+            close();
+          },
+        },
+        {
+          label: "图像大小…",
+          hint: hintFor("Menus:Image Size"),
+          disabled: !hasLayer || dialogOpen,
+          run: () => {
+            openGeometry("imageSize");
+            close();
+          },
+        },
+        {
+          label: "修剪…",
+          disabled: !hasLayer || dialogOpen,
+          run: () => {
+            geometrySheet.set("trim");
+            close();
+          },
+        },
+      ],
+    },
+    {
+      label: "图层",
+      items: [
+        {
+          label: "通过拷贝的图层",
+          hint: hintFor("Menus:Duplicate / Layer via Copy"),
+          disabled: !hasLayer || dialogOpen,
+          run: () => runAndClose("Menus:Duplicate / Layer via Copy"),
+        },
+        {
+          label: "编组",
+          hint: hintFor("Menus:Group Layers"),
+          disabled: !hasLayer || dialogOpen,
+          run: () => runAndClose("Menus:Group Layers"),
+        },
+        {
+          label: "取消编组",
+          hint: hintFor("Menus:Ungroup Layers"),
+          disabled: !layerMenu.canUngroup || dialogOpen,
+          run: () => runAndClose("Menus:Ungroup Layers"),
+        },
+        {
+          label: layerMenu.clippingTitle,
+          hint: hintFor("Menus:Toggle Clipping Mask"),
+          disabled: !layerMenu.canClip || dialogOpen,
+          run: () => runAndClose("Menus:Toggle Clipping Mask"),
+        },
+        {
+          label: layerMenu.mergeTitle,
+          hint: hintFor("Menus:Merge Layers"),
+          disabled: !layerMenu.canMerge || dialogOpen,
+          run: () => runAndClose("Menus:Merge Layers"),
+        },
+        {
+          label: "新建空图层",
+          hint: hintFor("Menus:New Blank Layer"),
+          disabled: !hasLayer || dialogOpen,
+          run: () => runAndClose("Menus:New Blank Layer"),
+        },
+        {
+          label: "上移一层",
+          hint: hintFor("Menus:Move Layer Up"),
+          disabled: !hasLayer || dialogOpen,
+          run: () => runAndClose("Menus:Move Layer Up"),
+        },
+        {
+          label: "下移一层",
+          hint: hintFor("Menus:Move Layer Down"),
+          disabled: !hasLayer || dialogOpen,
+          run: () => runAndClose("Menus:Move Layer Down"),
+        },
+        {
+          label: "删除图层",
+          hint: hintFor("Canvas & Layers:Delete selection / layer / effect / lasso point"),
+          disabled: !hasLayer || dialogOpen,
+          run: () => runAndClose("Canvas & Layers:Delete selection / layer / effect / lasso point"),
+        },
+      ],
+    },
+    {
+      label: "视图",
+      items: [
+        {
+          label: "适应窗口",
+          hint: hintFor("Menus:Fit Canvas"),
+          disabled: !hasLayer,
+          run: () => runAndClose("Menus:Fit Canvas"),
+        },
+        {
+          label: "实际像素",
+          hint: hintFor("Menus:Actual Pixels"),
+          disabled: !hasLayer,
+          run: () => runAndClose("Menus:Actual Pixels"),
+        },
+        {
+          label: "放大",
+          hint: hintFor("Menus:Zoom In"),
+          disabled: !hasLayer,
+          run: () => runAndClose("Menus:Zoom In"),
+        },
+        {
+          label: "缩小",
+          hint: hintFor("Menus:Zoom Out"),
+          disabled: !hasLayer,
+          run: () => runAndClose("Menus:Zoom Out"),
+        },
+        {
+          label: "显示变换控件",
+          hint: hintFor("Menus:Show Transform Controls"),
+          disabled: !hasLayer,
+          run: () => runAndClose("Menus:Show Transform Controls"),
+        },
       ],
     },
     {
@@ -189,7 +351,10 @@
           label: k.label,
           disabled: !hasLayer || dialogOpen,
           placeholder: k.placeholder,
-          run: () => void beginFilter(k.id, k.label.replace(/…$/, ""), false),
+          run: () => {
+            void beginFilter(k.id, k.label.replace(/…$/, ""), false);
+            close();
+          },
         })),
       ],
     },
@@ -202,6 +367,13 @@
   function onKeydown(event: KeyboardEvent): void {
     if (event.key === "Escape") close();
   }
+
+  // 展开的下拉与 AppKit 打开中的菜单一样"占键"：画布池在菜单展开时静默，
+  // 菜单池（Ctrl+S 一类）照常。
+  $effect(() => {
+    if (open === null) return;
+    return registerCanvasModalGuard(() => open !== null);
+  });
 </script>
 
 <svelte:document onclick={onDocClick} />
