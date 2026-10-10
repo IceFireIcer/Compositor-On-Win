@@ -10,6 +10,10 @@ export function ApplyLevelsSample(arg1, arg2, arg3, arg4) {
   return window['go']['bridge']['Service']['ApplyLevelsSample'](arg1, arg2, arg3, arg4);
 }
 
+export function ApplyUpdate() {
+  return window['go']['bridge']['Service']['ApplyUpdate']();
+}
+
 export function BeginBlobImport(arg1) {
   return window['go']['bridge']['Service']['BeginBlobImport'](arg1);
 }
@@ -66,6 +70,10 @@ export function CanvasSize(arg1) {
   return window['go']['bridge']['Service']['CanvasSize'](arg1);
 }
 
+export function CheckForUpdates() {
+  return window['go']['bridge']['Service']['CheckForUpdates']();
+}
+
 export function ClearRecentProjects() {
   return window['go']['bridge']['Service']['ClearRecentProjects']();
 }
@@ -92,6 +100,10 @@ export function CutSelection(arg1) {
 
 export function DocumentSnapshot() {
   return window['go']['bridge']['Service']['DocumentSnapshot']();
+}
+
+export function DownloadUpdate() {
+  return window['go']['bridge']['Service']['DownloadUpdate']();
 }
 
 export function EndExportPreview() {
@@ -248,6 +260,10 @@ export function Undo() {
 
 export function UpdateFilterPreview(arg1) {
   return window['go']['bridge']['Service']['UpdateFilterPreview'](arg1);
+}
+
+export function UpdateInfo() {
+  return window['go']['bridge']['Service']['UpdateInfo']();
 }
 
 export function Version() {

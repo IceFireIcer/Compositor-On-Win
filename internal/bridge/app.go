@@ -13,14 +13,15 @@ import (
 
 	"compositor-win/internal/project"
 	"compositor-win/internal/render"
+	"compositor-win/internal/update"
 )
 
-// wantVersion is the scaffold milestone version. Bumped per milestone.
-const wantVersion = "0.1.0"
-
-// Version reports the application version to the frontend status bar.
+// Version reports the application version to the frontend status bar and the
+// update checker. BuildVersion is injected by the release pipeline
+// (-ldflags -X compositor-win/internal/bridge.BuildVersion=…); the source value
+// is the development version.
 func Version() string {
-	return wantVersion
+	return BuildVersion
 }
 
 // Service is the object bound into the Wails runtime (see main.go Bind).
@@ -70,6 +71,13 @@ type Service struct {
 	recent     *RecentStore
 	shellMu    sync.Mutex
 	shellPaths []string
+
+	// Auto-update (ticket 50): the release CheckForUpdates found and the
+	// installer DownloadUpdate verified and saved.
+	updateMu      sync.Mutex
+	pendingUpdate *update.Release
+	updateFile    string
+	downloading   bool
 }
 
 // NewService wires the service onto a workspace (shared with the

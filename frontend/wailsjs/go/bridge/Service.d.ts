@@ -7,6 +7,8 @@ export function ApplyFilter(arg1:string,arg2:string,arg3:string,arg4:number,arg5
 
 export function ApplyLevelsSample(arg1:string,arg2:number,arg3:number,arg4:number):Promise<string>;
 
+export function ApplyUpdate():Promise<string>;
+
 export function BeginBlobImport(arg1:Array<string>):Promise<string>;
 
 export function BeginExportPreview():Promise<string>;
@@ -35,6 +37,8 @@ export function CancelPendingOpen():Promise<void>;
 
 export function CanvasSize(arg1:string):Promise<string>;
 
+export function CheckForUpdates():Promise<string>;
+
 export function ClearRecentProjects():Promise<string>;
 
 export function CommitFilter(arg1:string):Promise<string>;
@@ -48,6 +52,8 @@ export function CopySelection(arg1:string):Promise<string>;
 export function CutSelection(arg1:string):Promise<string>;
 
 export function DocumentSnapshot():Promise<string>;
+
+export function DownloadUpdate():Promise<string>;
 
 export function EndExportPreview():Promise<void>;
 
@@ -126,5 +132,7 @@ export function Trim(arg1:string):Promise<string>;
 export function Undo():Promise<string>;
 
 export function UpdateFilterPreview(arg1:string):Promise<string>;
+
+export function UpdateInfo():Promise<string>;
 
 export function Version():Promise<string>;

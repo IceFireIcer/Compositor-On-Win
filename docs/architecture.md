@@ -47,7 +47,7 @@
 | `Rendering/*.c`（9 内核 2,528 行） | Go `pixel` | 黄金基准验证移植 |
 | `UI/`（46 文件 SwiftUI + NativeLayerList 1,382 行 AppKit） | Svelte 组件 | NSTableView → 虚拟列表；浮动面板 → DOM 窗口 |
 | `KeyboardShortcuts.swift`（114 条表） | 前端 `lib/shortcuts` | Cmd→Ctrl 映射 |
-| Sparkle + appcast.xml | go-selfupdate 风格 + GitHub Releases | EdDSA 签名 feed |
+| Sparkle + appcast.xml | GitHub Releases 上的 `feed.json` + `internal/update`（自写，标准库 Ed25519 验签） | EdDSA 签名 feed；无第三方依赖（见 dependencies.md 的偏差说明） |
 | Apple Vision（主体/对象/背景） | ONNX Runtime + 开源分割模型 | 见 ADR-0005 |
 | QuickLook 包内预览 | 保留写入（跨平台通用），无 shell 钩子 | M9 复评缩略图处理器 |
 

@@ -30,7 +30,19 @@
 | ImageIO：HEIC 解码 | 41 ✅ | [libheif](https://github.com/strukturag/libheif) 1.23.5（LGPL-3.0，未启用 x265/GPL 编码 feature）+ 自写 cgo 绑定（internal/heicio） | vcpkg manifest（x64-mingw-static）+ CI binary cache |
 | ImageIO：导出 PNG/JPEG | 42 | 无依赖：Go `image/png`、`image/jpeg` 标准库 | — |
 | CoreText：文字引擎（排版/整形/栅格化） | 44 | [go-text/typesetting](https://github.com/go-text/typesetting)（MIT 主模块；子包 BSD-3/Unlicense；含 FreeType 许可条款的栅格化部分——均为宽松许可） | go.mod，纯 Go（票 44 实施时引入） |
-| Sparkle：自动更新（appcast.xml） | 50 | [creativeprojects/go-selfupdate](https://github.com/creativeprojects/go-selfupdate)（MIT）+ GitHub Releases + EdDSA 签名（矩阵 P04） | go.mod，纯 Go（票 50 实施时引入） |
+| Sparkle：自动更新（appcast.xml） | 50 ✅ | **无依赖**：自写 `internal/update`（标准库 `crypto/ed25519` 验签 + `net/http` 拉 feed）+ GitHub Releases 上的 `feed.json`（`scripts/genfeed` 生成/签名） | 不引入 go-selfupdate —— 见下方"与原计划的偏差" |
+
+## 二·补、与原计划的偏差（票 50 实施后回填）
+
+原本计划用 [creativeprojects/go-selfupdate](https://github.com/creativeprojects/go-selfupdate)（MIT）做自动更新，实施时改为**自写**：
+
+1. **模型不同**：go-selfupdate 的自更新是"替换正在运行的二进制"；票面要的是"差量或全量**安装器**"，
+   而 Windows 上由签名的 NSIS 安装器负责升级更符合系统习惯（快捷方式、`.comp` 关联、卸载项
+  都在安装器里，票 49 刚把它们做进注册表）。应用自己替换 exe 会绕过这些。
+2. **Ed25519 是标准库**：Go 的 `crypto/ed25519` 从 1.13 起就在标准库里，验签不需要第三方。
+   feed 的生成/签名同样只用标准库（`scripts/genfeed`）。于是本票**零新增依赖**，最符合
+   ADR-0006 的方向。
+3. 代价：差量更新（增量包）没做，只有全量安装器（票面允许"差量**或**全量"）。
 
 ## 三、已放弃的候选
 

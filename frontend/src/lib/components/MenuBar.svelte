@@ -26,6 +26,7 @@
     recentProjects,
     refreshRecentProjects,
   } from "../state/shell";
+  import { checkForUpdates } from "../state/update";
   import { chordFor } from "../shortcuts/settings";
   import { chordLabel } from "../shortcuts/chords";
   import { registerCanvasModalGuard } from "../shortcuts/dispatch";
@@ -386,6 +387,20 @@
           hint: hintFor("Canvas & Layers:Delete selection / layer / effect / lasso point"),
           disabled: !hasLayer || dialogOpen,
           run: () => runAndClose("Canvas & Layers:Delete selection / layer / effect / lasso point"),
+        },
+      ],
+    },
+    {
+      label: "帮助",
+      items: [
+        {
+          // C09：检查更新（票 50）。没有配置更新源的构建会说清楚，而不是假装检查。
+          label: "检查更新…",
+          disabled: dialogOpen,
+          run: () => {
+            close();
+            void checkForUpdates();
+          },
         },
       ],
     },

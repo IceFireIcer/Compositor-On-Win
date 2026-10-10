@@ -38,7 +38,7 @@
 | C06 | Export PNG… | ⇧⌘E | 48 | M7 | ☑ 票42 |
 | C07 | Export JPEG…（实时预览内可缩放） | ⇧⌥⌘S | 48 | M7 | ☑ 票42 |
 | C08 | Close Project / 退出逐标签确认 | ⌘W | 2 | M1 | ☐ |
-| C09 | Check for Updates… | — | 53 | M9 | ☐ |
+| C09 | Check for Updates… | — | 53 | M9 | ◐ 票50：`帮助 ▸ 检查更新…` → `CheckForUpdates`（feed 比版本）→ `UpdateSheet`（版本/发行说明/进度）→ 下载并校验（sha256 + Ed25519）→ 启动静默安装器；启动时静默检查一次。链路每环有测试，但**没有在真实 Release 上跑过**（首版发布才能确认），故记 ◐ |
 
 **Edit（剪贴板/填充组）**
 
@@ -225,7 +225,7 @@
 | P01 | ~114 条快捷键 + 重映射 + 冲突校验 | 前端快捷键表（Cmd→Ctrl） | 52 | M9 | ☑ 票47：原版实测 113 条逐条移植（表驱动测试）+ 重映射/冲突校验/持久化 + 三域分流；票48 接上 Cut/Copy/Paste 后未接线 22 条，已逐条登记归属 |
 | P02 | 剪贴板（像素/整层/合并） | Windows 剪贴板 | 55 | M9 | ☑ 票42+48：CF_DIB 写（拷贝合并/选区像素）+ 读（PNG 注册格式回落 CF_DIB，纯 Go 解码含 1/4/8/16/24/32bpp，PNG 解码有测试）+ 剪贴板序号做变更判定。**与 C11 同一 caveat：winclip 的 Win32 读写本体（C shim）无自动化测试，只在真机上跑**；`GetImage`/`Sequence`/`PutBitmap` 的实际行为需要手工验收（拷进画图、从浏览器拷图回来） |
 | P03 | 文件关联/最近文件/跳转列表 | NSIS + shell | 53 | M9 | ☑ 票49：`wails.json` 的 `info.fileAssociations` 经 NSIS 注册 `.comp` 关联（生成的宏写 `"$INSTDIR\Compositor.exe" "%1"`，双击/打开方式进标签）+ 最近文件（用户配置目录 JSON，打开与保存都记）+ 跳转列表（`SHAddToRecentDocs`）。真机跑通过、**无自动化断言**；覆盖图标实测会卡（见 P08） |
-| P04 | 安装包 + 签名 + 自动更新 | NSIS + GitHub Releases + EdDSA | 53 | M9 | ☐ |
+| P04 | 安装包 + 签名 + 自动更新 | NSIS + GitHub Releases + EdDSA | 53 | M9 | ◐ 票50：NSIS 安装包（票03）+ `signtool` 签名（证书只从 secrets/环境变量来；无证书降级为不签名，内层 exe 未签见票面已知差异）+ `feed.json`（appcast 等价物，`scripts/genfeed` 生成、Ed25519 签名、可逐字节复现）+ 应用内检查/下载/校验/静默升级 + release.yml/release.ps1/verify-install.ps1。**零新增依赖**；差量更新不做；**安装→升级→卸载未在干净环境执行、真 Release 端到端未跑**（故 ◐ 而非 ☑） |
 | P05 | 代理热更新（写 PNG→原子改名→~300ms 重载，保留视口选区） | fsnotify + digest | 56 | M1/M9 | ☐ |
 | P06 | 常暗深色 UI / 单窗口多标签 | Svelte 外壳 | 2/53 | M0 | ☐ |
 | P07 | 拖放导入（文件/截图/网页图） | WebView 拖放 | 55 | M9 | ◐ 票48：三来源都接了（Wails OnFileDrop 路径 → `ImportDroppedPaths`；截图/网页图 → 浏览器栅格化 + `BeginBlobImport` 上传面）；dragover 对 Files 与 text/uri-list/text/html 都取消默认（否则网页图那条永远收不到 drop），两路用 250ms 等待 + 750ms 去重窗口避免重复导入。Go 侧 8 个测试、前端判定与接线 13 个测试；**真机拖放交互未手工验收**（P07 仍 ◐ 的原因） |

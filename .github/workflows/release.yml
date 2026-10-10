@@ -1,0 +1,412 @@
+# 票 50：发布链路 —— 签名 NSIS 安装包 + Ed25519 签名更新 feed + GitHub Release。
+#
+# 与 scripts/release.ps1 的分工：两者步骤等价（构建 → 可选签名 → 改名 → genfeed → 清单），
+# 区别只在签名材料与更新私钥来自 GitHub secrets 而不是本机环境变量。降级路径
+# （没证书不签名、没私钥不生成 feed）只警告不失败，见票面验收 4。
+#
+# 快速检查（svelte-check / vitest / go vet / go test）由 verify.yml 在 push 与 PR 上负责；
+# 本工作流在 tag 上触发时，假定要发布的提交已经在 main 上过了 verify.yml。
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "版本号（不带 v 前缀，如 0.2.0）"
+        required: true
+        type: string
+
+permissions:
+  contents: write # softprops/action-gh-release 需要写 Release
+
+jobs:
+  release:
+    name: Build + sign + feed + Release
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    env:
+      # 更新私钥（base64 的 32 字节 Ed25519 seed）与签名证书。
+      # 都在脚本里判空：空 = 走降级路径（只警告）。
+      COMPOSITOR_UPDATE_KEY: ${{ secrets.COMPOSITOR_UPDATE_KEY }}
+      WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # CHANGELOG 段落 / git log 摘要需要历史
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      # ---- 环境准备：与 verify.yml 的 package 作业逐条对齐（mingw / vcpkg / npm / wails / nsis）----
+      - name: Install MinGW toolchain
+        run: choco install mingw -y --no-progress
+
+      - name: Restore vcpkg binary cache
+        uses: actions/cache@v4
+        with:
+          path: ~/AppData/Local/vcpkg/archives
+          key: vcpkg-x64-mingw-static-${{ hashFiles('vcpkg.json') }}
+
+      - name: Install LibRaw/libheif (vcpkg manifest)
+        run: |
+          git clone --depth 1 https://github.com/microsoft/vcpkg "$RUNNER_TEMP/vcpkg"
+          # vcpkg.json 固定了 baseline commit，浅克隆里没有它，按 SHA 单独取。
+          BASELINE=$(python -c "import json;print(json.load(open('vcpkg.json'))['builtin-baseline'])")
+          git -C "$RUNNER_TEMP/vcpkg" fetch --depth 1 origin "$BASELINE"
+          "$RUNNER_TEMP/vcpkg/bootstrap-vcpkg.bat" -disableMetrics
+          "$RUNNER_TEMP/vcpkg/vcpkg.exe" install --triplet x64-mingw-static
+
+      - name: Install Wails CLI
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@latest
+
+      # wails build -nsis 在缺 makensis 时只会警告并跳过安装器，所以必须显式装 NSIS。
+      - name: Install NSIS
+        run: choco install nsis -y --no-progress
+
+      # ---- 版本 ----------------
+      - name: Resolve version from tag / input
+        id: version
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ inputs.version }}"
+            VERSION="${VERSION#v}"
+          else
+            VERSION="${GITHUB_REF_NAME#v}"
+          fi
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-.+][0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error title=版本号无法解析::\"$VERSION\"（期望 0.2.0 或 0.2.0-beta.1；tag 触发时 tag 名要形如 v0.2.0）"
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "安装器资产名：Compositor-$VERSION-setup.exe"
+
+      # ---- 更新私钥 → 公钥（只用于构建注入；feed 在安装器签名之后按最终字节生成）----
+      # base64 解出 32 字节 seed（或 64 字节私钥）后，Ed25519 公钥就是私钥的后 32 字节，
+      # 用标准库现算即可，不必先跑一次 genfeed。
+      - name: Derive update public key (or fall back to unsigned feed)
+        id: pubkey
+        run: |
+          set -euo pipefail
+          PUBKEY=""
+          if [ -z "${COMPOSITOR_UPDATE_KEY:-}" ]; then
+            echo "::warning title=降级路径::COMPOSITOR_UPDATE_KEY 缺失：本次不生成 feed.json（应用内检查更新看不到这个版本）。"
+          else
+            cat > "$RUNNER_TEMP/pubkey.go" <<'GO'
+          package main
+
+          import (
+          	"crypto/ed25519"
+          	"encoding/base64"
+          	"fmt"
+          	"os"
+          )
+
+          func main() {
+          	raw, err := base64.StdEncoding.DecodeString(os.Getenv("COMPOSITOR_UPDATE_KEY"))
+          	if err != nil {
+          		fmt.Fprintln(os.Stderr, "COMPOSITOR_UPDATE_KEY is not valid base64:", err)
+          		os.Exit(1)
+          	}
+          	var key ed25519.PrivateKey
+          	switch len(raw) {
+          	case ed25519.SeedSize:
+          		key = ed25519.NewKeyFromSeed(raw)
+          	case ed25519.PrivateKeySize:
+          		key = ed25519.PrivateKey(raw)
+          	default:
+          		fmt.Fprintf(os.Stderr, "COMPOSITOR_UPDATE_KEY must be 32 or 64 bytes, got %d\n", len(raw))
+          		os.Exit(1)
+          	}
+          	fmt.Print(base64.StdEncoding.EncodeToString(key.Public().(ed25519.PublicKey)))
+          }
+          GO
+            if ! PUBKEY=$(go run "$RUNNER_TEMP/pubkey.go"); then
+              echo "::error title=发布密钥不可用::COMPOSITOR_UPDATE_KEY 不是 base64 的 32 字节 seed（或 64 字节私钥）：不会注入更新公钥，genfeed 也签不出 feed。"
+              exit 1
+            fi
+            echo "更新公钥：$PUBKEY"
+          fi
+          if [ -n "$PUBKEY" ]; then echo "has_pubkey=true" >> "$GITHUB_OUTPUT"; else echo "has_pubkey=false" >> "$GITHUB_OUTPUT"; fi
+          echo "pubkey=$PUBKEY" >> "$GITHUB_OUTPUT"
+
+      # ---- 签名材料（只从 secrets 来；绝不落进仓库）----
+      - name: Prepare signing certificate (secrets only)
+        id: sign
+        run: |
+          set -euo pipefail
+          CERT_B64="${WINDOWS_CERT_BASE64_SECRET:-}"
+          if [ -z "$CERT_B64" ]; then
+            echo "::warning title=降级路径::WINDOWS_CERT_BASE64 缺失或为空：跳过代码签名（安装器与 exe 不带 Authenticode 签名，SmartScreen 会拦）。若 secret 已配置，检查它是不是 base64 的 PFX。"
+            echo "sign=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          CERT="$RUNNER_TEMP/compositor-signing.pfx"
+          printf "%s" "$CERT_B64" | base64 -d > "$CERT"
+          if [ ! -s "$CERT" ]; then
+            echo "::error title=签名失败::WINDOWS_CERT_BASE64 解码后为空：secret 不是有效的 base64 PFX（Windows 上要用 [Convert]::ToBase64String([IO.File]::ReadAllBytes('cert.pfx')) 生成）。"
+            exit 1
+          fi
+          echo "cert=$CERT" >> "$GITHUB_OUTPUT"
+          echo "sign=true" >> "$GITHUB_OUTPUT"
+          if [ -z "${WINDOWS_CERT_PASSWORD:-}" ]; then
+            echo "::warning::WINDOWS_CERT_PASSWORD 为空：按无密码 PFX 处理。"
+          fi
+        env:
+          WINDOWS_CERT_BASE64_SECRET: ${{ secrets.WINDOWS_CERT_BASE64 }}
+
+      - name: Locate signtool
+        id: signtool
+        if: steps.sign.outputs.sign == 'true'
+        run: |
+          set -euo pipefail
+          SIGNTOOL=""
+          VSWHERE="/c/Program Files (x86)/Microsoft Visual Studio/Installer/vswhere.exe"
+          if [ -f "$VSWHERE" ]; then
+            VSPATH=$("$VSWHERE" -latest -products "*" -property installationPath | tr -d "\r")
+            if [ -n "$VSPATH" ]; then
+              SIGNTOOL=$(ls -1 "$(cygpath -u "$VSPATH")/SDK/bin"/*/x64/signtool.exe 2>/dev/null | sort -V | tail -n1 || true)
+            fi
+          fi
+          if [ -z "$SIGNTOOL" ]; then
+            SIGNTOOL=$(find "/c/Program Files (x86)/Windows Kits/10/bin" -name signtool.exe -path "*x64*" 2>/dev/null | sort -V | tail -n1 || true)
+          fi
+          if [ -z "$SIGNTOOL" ]; then
+            echo "::error title=签名失败::找不到 signtool.exe（vswhere 与 Windows Kits 目录都没探测到）。配了证书 secret 就必须能签，不允许静默跳过。"
+            exit 1
+          fi
+          echo "signtool=$SIGNTOOL" >> "$GITHUB_OUTPUT"
+          echo "signtool：$SIGNTOOL"
+
+      # ---- 构建 ----------------
+      # 安装器与 exe 的版本资源来自 wails.json 的 info.productVersion（wails v2.16 没有
+      # -productversion 之类的开关，核对过 build -help）。tag 版本经 -ldflags 只进
+      # internal/bridge.BuildVersion，两者必须同步，否则安装器的属性页/卸载项会显示旧版本，
+      # 与 feed 里的版本号对不上。这里**只在构建期**改一次：CI 的 checkout 是一次性的，
+      # 不回写仓库、也不提交。
+      - name: Sync wails.json productVersion (build-time only)
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json, os
+          version = os.environ["VERSION"]
+          with open("wails.json", encoding="utf-8") as handle:
+              config = json.load(handle)
+          info = config.setdefault("info", {})
+          previous = info.get("productVersion")
+          info["productVersion"] = version
+          with open("wails.json", "w", encoding="utf-8") as handle:
+              json.dump(config, handle, ensure_ascii=False, indent=2)
+              handle.write("\n")
+          # 只在构建期生效：workflow 不回写仓库。
+          print(f"wails.json info.productVersion: {previous} -> {version}（仅本次构建）")
+          PY
+          python -c "import json;c=json.load(open('wails.json',encoding='utf-8'));assert c['name']=='Compositor' and c['outputfilename']=='Compositor',c;print('wails.json 其余字段完好')"
+
+      - name: Build app + NSIS installer
+        id: build
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.version.outputs.version }}"
+          # 两个不同的 URL，别混：
+          #   FEED_URL      —— 应用要拉的那张 feed（releases/latest，通道稳定，永远指向最新一版）
+          #   INSTALLER_URL —— feed 里 installer.url 指的那个安装器（钉在本版本 tag 上）
+          # 早期版本这里把 FeedURL 注入成了安装器地址：发布版会去 GET 一个 50MB 的 exe、
+          # 解析失败、检查更新永远报 error。下面有断言挡住这种回归。
+          FEED_URL="https://github.com/${{ github.repository }}/releases/latest/download/feed.json"
+          INSTALLER_URL="https://github.com/${{ github.repository }}/releases/download/v$VERSION/Compositor-$VERSION-setup.exe"
+          case "$FEED_URL" in
+            */feed.json) ;;
+            *) echo "::error title=注入地址错误::internal/update.FeedURL 必须以 feed.json 结尾，实际是 $FEED_URL"; exit 1 ;;
+          esac
+          LDFLAGS="-X compositor-win/internal/update.FeedURL=$FEED_URL -X compositor-win/internal/bridge.BuildVersion=$VERSION"
+          if [ "${{ steps.pubkey.outputs.has_pubkey }}" = "true" ]; then
+            LDFLAGS="$LDFLAGS -X compositor-win/internal/update.PublicKeyB64=${{ steps.pubkey.outputs.pubkey }}"
+          fi
+          echo "ldflags：$LDFLAGS"
+          # 注入目标都是已声明的变量：internal/update.FeedURL / PublicKeyB64
+          # （internal/update/buildinfo.go）与 internal/bridge.BuildVersion（internal/bridge/update.go）。
+          # wails.json 的 info.productVersion 已在上一（Sync）步临时同步成本次版本：安装器与
+          # exe 的版本资源来自它，而 wails CLI 没有覆盖它的开关。
+          WAILS="$(go env GOPATH)/bin/wails"
+          "$WAILS" build -nsis -ldflags "$LDFLAGS"
+          echo "FEED_URL=$FEED_URL" >> "$GITHUB_ENV"
+          echo "INSTALLER_URL=$INSTALLER_URL" >> "$GITHUB_ENV"
+
+      - name: Sign app exe (skipped without secrets)
+        if: steps.sign.outputs.sign == 'true'
+        env:
+          CERT: ${{ steps.sign.outputs.cert }}
+          SIGNTOOL: ${{ steps.signtool.outputs.signtool }}
+        run: |
+          set -euo pipefail
+          APP="build/bin/Compositor.exe"
+          if [ ! -f "$APP" ]; then
+            echo "::error title=签名失败::构建没有产出 $APP。"
+            exit 1
+          fi
+          ARGS=(sign /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 /f "$CERT")
+          if [ -n "${WINDOWS_CERT_PASSWORD:-}" ]; then ARGS+=(/p "$WINDOWS_CERT_PASSWORD"); fi
+          if ! "$SIGNTOOL" "${ARGS[@]}" "$APP"; then
+            echo "::error title=签名失败::对 $APP 的 signtool sign 失败（检查证书密码 / 时间戳服务可达性）。"
+            exit 1
+          fi
+          "$SIGNTOOL" verify /pa "$APP"
+
+      # ---- 改名 + 签名安装器 ----------------
+      - name: Rename installer to Compositor-<ver>-setup.exe
+        id: installer
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.version.outputs.version }}"
+          mkdir -p dist
+          rm -f "dist/Compositor-$VERSION-setup.exe"
+          # wails 的 NSIS 产物名是 Compositor-<arch>-installer.exe（见 build/windows/installer/project.nsi 的 OutFile）。
+          SRC=$(ls -1t build/bin/*installer*.exe 2>/dev/null | head -n1 || true)
+          if [ -z "$SRC" ]; then
+            echo "::error title=构建失败::wails build -nsis 没在 build/bin 里留下 *installer*.exe（makensis 是否真的跑了？）。"
+            ls -la build/bin || true
+            exit 1
+          fi
+          echo "wails 产出：$SRC"
+          cp "$SRC" "dist/Compositor-$VERSION-setup.exe"
+          echo "installer=dist/Compositor-$VERSION-setup.exe" >> "$GITHUB_OUTPUT"
+
+      - name: Sign installer (skipped without secrets)
+        if: steps.sign.outputs.sign == 'true'
+        env:
+          CERT: ${{ steps.sign.outputs.cert }}
+          SIGNTOOL: ${{ steps.signtool.outputs.signtool }}
+          INSTALLER: ${{ steps.installer.outputs.installer }}
+        run: |
+          set -euo pipefail
+          ARGS=(sign /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 /f "$CERT")
+          if [ -n "${WINDOWS_CERT_PASSWORD:-}" ]; then ARGS+=(/p "$WINDOWS_CERT_PASSWORD"); fi
+          if ! "$SIGNTOOL" "${ARGS[@]}" "$INSTALLER"; then
+            echo "::error title=签名失败::对 $INSTALLER 的 signtool sign 失败（检查证书密码 / 时间戳服务可达性）。"
+            exit 1
+          fi
+          "$SIGNTOOL" verify /pa "$INSTALLER"
+          echo "::notice::安装器已签名并通过 signtool verify /pa。"
+          # 注意（已知差异）：wails build -nsis 是一趟完成"编译 exe + makensis 打包"，
+          # 所以装进安装包的 build/bin/Compositor.exe 本身没有 Authenticode 签名 ——
+          # 签名的是安装器外壳。要连内层 exe 也签，需要两趟构建（先 wails build 签 exe，
+          # 再对 project.nsi 跑 makensis）。见 docs/tickets/50-installer-autoupdate.md。
+          echo "::warning title=内层 exe 未签名::安装器已签名，但包内的 Compositor.exe 没有 Authenticode 签名（wails 一趟打包）。解包/便携使用的用户仍会看到未签名提示。"
+
+      - name: Warn when unsigned (degraded build path)
+        if: steps.sign.outputs.sign != 'true'
+        run: |
+          echo "::warning title=未签名的发行::本次没有代码签名证书（WINDOWS_CERT_BASE64 缺失）：安装器与 exe 都没有 Authenticode 签名，用户运行会看到 SmartScreen 警告。这是票面验收 4 的合法降级路径。"
+
+      # ---- 发行说明（CHANGELOG 段落，缺失则 git log 摘要）----
+      - name: Compose release notes
+        id: notes
+        run: |
+          set -euo pipefail
+          NOTES="$RUNNER_TEMP/release-notes.md"
+          node -e '
+            const fs = require("fs");
+            const ver = process.env.VERSION;
+            const esc = ver.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+            const re = new RegExp("^#{1,4}\\s*\\[?v?" + esc + "\\]?(\\s|$|\\[|\\()");
+            let body = null;
+            if (fs.existsSync("CHANGELOG.md")) {
+              const lines = fs.readFileSync("CHANGELOG.md", "utf8").split(/\r?\n/);
+              const start = lines.findIndex((l) => re.test(l));
+              if (start >= 0) {
+                let end = lines.length;
+                for (let j = start + 1; j < lines.length; j++) { if (/^#{1,4}\s/.test(lines[j])) { end = j; break; } }
+                body = lines.slice(start, end).join("\n");
+              }
+            }
+            if (!body) {
+              const log = require("child_process").execSync("git log --no-merges --pretty=format:- %s (%h) -n 40", { encoding: "utf8" });
+              body = "## Compositor " + ver + "\n\n（CHANGELOG.md 里没有本版本段落，这里是 git log 摘要）\n\n" + log;
+            }
+            fs.writeFileSync(process.env.NOTES, body);
+            console.log(body.slice(0, 800));
+          '
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          NOTES: ${{ runner.temp }}/release-notes.md
+        # 输出路径在下一步按 runner.temp 重新拼（runner 上下文不能直接进 $GITHUB_OUTPUT）。
+
+      # ---- 更新 feed（genfeed 是 feed 形状的唯一权威；本步骤只调它）----
+      # 位置在安装器签名之后：签名过的字节才是用户实际下载到的字节。
+      - name: Generate signed feed.json (scripts/genfeed)
+        if: steps.pubkey.outputs.has_pubkey == 'true'
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.version.outputs.version }}"
+          INSTALLER="${{ steps.installer.outputs.installer }}"
+          mkdir -p releases
+          if ! go run ./scripts/genfeed \
+                -installer "$INSTALLER" \
+                -version "$VERSION" \
+                -url "$INSTALLER_URL" \
+                -notes-file "$RUNNER_TEMP/release-notes.md" \
+                -out releases/feed.json; then
+            echo "::error title=feed 生成失败::scripts/genfeed 退出码非 0。COMPOSITOR_UPDATE_KEY 是不是 base64 的 32 字节 Ed25519 seed？"
+            exit 1
+          fi
+          if [ ! -s releases/feed.json ]; then
+            echo "::error title=feed 生成失败::genfeed 退出码 0 但 releases/feed.json 不存在或为空。"
+            exit 1
+          fi
+          node -e '
+            const fs = require("fs");
+            const f = JSON.parse(fs.readFileSync("releases/feed.json", "utf8"));
+            const want = process.env.VERSION;
+            const bad = [];
+            if (f.app !== "compositor") bad.push("app != compositor");
+            if (f.latest.version !== want) bad.push("latest.version != " + want);
+            if (!/^[0-9a-f]{64}$/.test(f.latest.installer.sha256 || "")) bad.push("sha256 不是 64 位十六进制");
+            if (!f.latest.installer.edSignature) bad.push("缺 edSignature");
+            if (bad.length) { console.error("feed 形状不对：" + bad.join(", ")); process.exit(1); }
+            console.log("feed 校验通过：version=" + f.latest.version + " size=" + f.latest.installer.size + " url=" + f.latest.installer.url);
+          '
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+
+      - name: Warn when feed skipped (degraded build path)
+        if: steps.pubkey.outputs.has_pubkey != 'true'
+        run: |
+          echo "::warning title=没有更新 feed::本次没有生成 releases/feed.json（没有 COMPOSITOR_UPDATE_KEY）。Release 只发安装器；应用内「检查更新」看不到这个版本。这是票面验收 4 的合法降级路径。"
+
+      - name: Publish Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Compositor ${{ steps.version.outputs.version }}
+          tag_name: v${{ steps.version.outputs.version }}
+          body_path: ${{ runner.temp }}/release-notes.md
+          draft: false
+          prerelease: ${{ contains(steps.version.outputs.version, '-') }}
+          files: |
+            dist/Compositor-${{ steps.version.outputs.version }}-setup.exe
+            releases/feed.json
+          fail_on_unmatched_files: false
+
+      - name: Upload workflow artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: compositor-release-${{ steps.version.outputs.version }}
+          if-no-files-found: error
+          path: |
+            dist/*.exe
+            dist/*.md
+            releases/feed.json

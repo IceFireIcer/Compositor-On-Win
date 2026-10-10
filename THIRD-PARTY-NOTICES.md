@@ -7,7 +7,9 @@ LGPL 依赖在文末单独一节声明（仅以动态库形式使用，源码不
 
 | 库 | 引入票 | 用途 |
 | --- | --- | --- |
-| [creativeprojects/go-selfupdate](https://github.com/creativeprojects/go-selfupdate) | 50（计划） | 自动更新（GitHub Releases + EdDSA） |
+（票 50 的自动更新最终**没有引入第三方库**：`internal/update` 只用 Go 标准库
+`crypto/ed25519` 验签 + `net/http` 拉 feed，feed 生成脚本 `scripts/genfeed` 同样只用标准库。
+原计划的 creativeprojects/go-selfupdate 未采用，原因见 [docs/dependencies.md](docs/dependencies.md)。）
 | [go-text/typesetting](https://github.com/go-text/typesetting) 主模块 | 44（计划） | 文字排版/整形 |
 
 ## BSD-3-Clause

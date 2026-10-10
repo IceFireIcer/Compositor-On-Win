@@ -7,7 +7,7 @@ func TestVersion(t *testing.T) {
 	if got == "" {
 		t.Fatal("Version() is empty")
 	}
-	if got != wantVersion {
-		t.Fatalf("Version() = %q, want %q", got, wantVersion)
+	if got != BuildVersion {
+		t.Fatalf("Version() = %q, want %q", got, BuildVersion)
 	}
 }

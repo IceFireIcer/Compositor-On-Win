@@ -45,6 +45,12 @@
     syncWindowChrome,
     watchShellPaths,
   } from "./lib/state/shell";
+  import UpdateSheet from "./lib/components/UpdateSheet.svelte";
+  import {
+    checkForUpdates,
+    loadUpdateInfo,
+    watchUpdateProgress,
+  } from "./lib/state/update";
   import { OnFileDrop } from "../wailsjs/runtime/runtime";
   import { importDroppedBlobs, importDroppedPaths } from "./lib/state/workspace";
   import {
@@ -228,6 +234,11 @@
     // 启动参数里带的文件（双击关联打开）。
     void handleShellPaths();
     void refreshRecentProjects();
+    // 更新检查（票 50）：静默跑一次，只有真有新版才弹表单；进度事件订阅在这里，
+    // 表单自己只管展示。
+    const stopUpdateProgress = watchUpdateProgress();
+    void loadUpdateInfo();
+    void checkForUpdates({ silent: true });
 
     void (async () => {
       try {
@@ -253,6 +264,7 @@
     return () => {
       teardownShortcuts();
       stopShellPaths();
+      stopUpdateProgress();
       clearTimeout(timer);
       window.removeEventListener("resize", onResize);
     };
@@ -409,6 +421,9 @@
 {#if $shortcutsSheet}
   <KeyboardShortcutsSheet />
 {/if}
+
+<!-- 检查更新（票 50）：菜单打开，或启动时的静默检查发现新版。 -->
+<UpdateSheet />
 
 {#if $filterSession && $filterSession.kind !== "cameraRaw"}
   <FilterDialog />

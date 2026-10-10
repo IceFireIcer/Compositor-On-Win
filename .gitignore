@@ -38,3 +38,6 @@ Thumbs.db
 # vcpkg manifest-mode install output (rebuilt from vcpkg.json)
 vcpkg_installed/
 .scratch/
+
+# 发布产物与更新 feed（票 50）：本地产物，绝不提交
+releases/
