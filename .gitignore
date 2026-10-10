@@ -44,3 +44,6 @@ releases/
 
 # 运行时诊断日志（本地排查用，不入库）
 app-*.log
+
+# 临时提交信息文件（本地用）
+.commitmsg*.tmp
