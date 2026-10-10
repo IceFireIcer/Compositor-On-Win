@@ -22,6 +22,10 @@ export function BeginHealStroke(arg1, arg2, arg3, arg4, arg5, arg6, arg7) {
   return window['go']['bridge']['Service']['BeginHealStroke'](arg1, arg2, arg3, arg4, arg5, arg6, arg7);
 }
 
+export function BeginBlobImport(arg1) {
+  return window['go']['bridge']['Service']['BeginBlobImport'](arg1);
+}
+
 export function BeginImageImport(arg1) {
   return window['go']['bridge']['Service']['BeginImageImport'](arg1);
 }
@@ -74,6 +78,14 @@ export function CopyMerged() {
   return window['go']['bridge']['Service']['CopyMerged']();
 }
 
+export function CopySelection(arg1) {
+  return window['go']['bridge']['Service']['CopySelection'](arg1);
+}
+
+export function CutSelection(arg1) {
+  return window['go']['bridge']['Service']['CutSelection'](arg1);
+}
+
 export function DocumentSnapshot() {
   return window['go']['bridge']['Service']['DocumentSnapshot']();
 }
@@ -114,12 +126,20 @@ export function ImageSize(arg1) {
   return window['go']['bridge']['Service']['ImageSize'](arg1);
 }
 
+export function ImportDroppedPaths(arg1) {
+  return window['go']['bridge']['Service']['ImportDroppedPaths'](arg1);
+}
+
 export function LayerHistogram() {
   return window['go']['bridge']['Service']['LayerHistogram']();
 }
 
 export function LayerOp(arg1, arg2) {
   return window['go']['bridge']['Service']['LayerOp'](arg1, arg2);
+}
+
+export function LayerViaCopy(arg1) {
+  return window['go']['bridge']['Service']['LayerViaCopy'](arg1);
 }
 
 export function LevelsAuto(arg1) {
@@ -132,6 +152,10 @@ export function ListFonts() {
 
 export function OpenProjectDialog() {
   return window['go']['bridge']['Service']['OpenProjectDialog']();
+}
+
+export function Paste() {
+  return window['go']['bridge']['Service']['Paste']();
 }
 
 export function PickImageImport() {
@@ -184,6 +208,10 @@ export function Startup(arg1) {
 
 export function StrokePoint(arg1, arg2) {
   return window['go']['bridge']['Service']['StrokePoint'](arg1, arg2);
+}
+
+export function TransferLayer(arg1, arg2) {
+  return window['go']['bridge']['Service']['TransferLayer'](arg1, arg2);
 }
 
 export function TextCommit(arg1) {

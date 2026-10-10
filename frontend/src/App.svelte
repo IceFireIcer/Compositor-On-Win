@@ -39,8 +39,93 @@
     saveProjectSafe,
   } from "./lib/shortcuts/actions";
   import { shortcutsSheet } from "./lib/shortcuts/settings";
+  import { OnFileDrop } from "../wailsjs/runtime/runtime";
+  import { importDroppedBlobs, importDroppedPaths } from "./lib/state/workspace";
+  import {
+    DROP_SETTLE_MS,
+    LAYER_DRAG_MIME,
+    browserImageFiles,
+    browserRasterizer,
+    prepareDroppedBlobs,
+    readDropPayload,
+    shouldImportDomDrop,
+  } from "./lib/state/dropimport";
 
   let version = $state("…");
+
+  // --- 拖放导入（票 48）-------------------------------------------------------
+  // Wails 的窗口级回调拿到的是**磁盘路径**（资源管理器、截图工具、其它应用
+  // 拖出的临时文件都算），覆盖 TIFF/PSD/HEIC/RAW 这些浏览器解不了的格式；
+  // DOM 的 drop 事件拿到的是**字节**（截图位图、网页图），由浏览器栅格化后
+  // 走上传面。两者可能同时收到同一次拖放，DOM 侧用去重窗口避开。
+  let wailsPathsAt: number | null = null;
+
+  async function reportImportFailures(failures: string[]): Promise<void> {
+    if (failures.length === 0) return;
+    window.alert(`\u5bfc\u5165\u672a\u80fd\u5b8c\u6210\n\n${failures.join("\n\n")}`);
+  }
+
+  async function onDroppedPaths(paths: string[]): Promise<void> {
+    if (paths.length === 0) return;
+    wailsPathsAt = Date.now();
+    try {
+      const result = await importDroppedPaths(paths);
+      await reportImportFailures(result.failures);
+    } catch (err) {
+      console.warn("拖放导入失败", err);
+      await reportImportFailures([err instanceof Error ? err.message : String(err)]);
+    }
+  }
+
+  function onDragOver(event: DragEvent): void {
+    // HTML5 规定：只有 dragover 里 preventDefault 过，drop 才会触发。所以文件
+    // （Files）与网页图（text/uri-list、text/html）两种载荷都要放开默认行为 ——
+    // 网页图那次拖拽的 types 里没有 Files，漏掉它这条来源就永远收不到 drop。
+    const types = event.dataTransfer?.types;
+    if (!types) return;
+    if (types.includes("Files") || types.includes("text/uri-list") || types.includes("text/html")) {
+      event.preventDefault();
+    }
+  }
+
+  async function onDrop(event: DragEvent): Promise<void> {
+    const dt = event.dataTransfer;
+    if (!dt) return;
+    if (dt.types.includes(LAYER_DRAG_MIME)) return; // 图层跨标签拖拽
+    if (!shouldImportDomDrop(wailsPathsAt, Date.now())) return; // Wails 已按路径导入
+    event.preventDefault();
+    // 等 Wails 的窗口级回调落地再判一次：两条路谁先到不确定，路径先到时
+    // DOM 这边必须让位，否则同一次拖放会导入两遍。
+    await new Promise((resolve) => setTimeout(resolve, DROP_SETTLE_MS));
+    if (!shouldImportDomDrop(wailsPathsAt, Date.now())) return;
+    const payload = readDropPayload(dt);
+    const files = browserImageFiles(payload.files);
+    const failures: string[] = [];
+    if (files.length > 0) {
+      const { ready, failed } = await prepareDroppedBlobs(files, browserRasterizer);
+      failures.push(...failed.map((name) => `${name}: \u6d4f\u89c8\u5668\u65e0\u6cd5\u89e3\u7801\u8fd9\u5f20\u56fe\u50cf`));
+      if (ready.length > 0) {
+        const result = await importDroppedBlobs(ready);
+        failures.push(...result.failures);
+      }
+    }
+    // 网页图（text/uri-list）：取回字节后走同一条上传路。跨域取不到就报出来。
+    for (const uri of payload.uris) {
+      try {
+        const response = await fetch(uri);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const blob = await response.blob();
+        const png = await browserRasterizer(blob);
+        if (!png) throw new Error("无法解码");
+        const name = decodeURIComponent(uri.split("/").pop() ?? "image") || "image";
+        const result = await importDroppedBlobs([{ name, blob: png }]);
+        failures.push(...result.failures);
+      } catch (err) {
+        failures.push(`${uri}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+    await reportImportFailures(failures);
+  }
 
   const current = $derived(activeTab($workspace));
   // The zoom readout subscribes to the viewport store (device px per doc px).
@@ -101,6 +186,10 @@
   // lib/shortcuts/actions.ts —— App 这里只负责装上/拆掉。
   onMount(() => {
     const teardownShortcuts = installAppShortcuts();
+    // 窗口级文件拖放：Wails 给的是路径（无路径的内存图像走 DOM 的 drop）。
+    OnFileDrop((_x, _y, paths) => {
+      void onDroppedPaths(paths);
+    }, false);
 
     void (async () => {
       try {
@@ -140,7 +229,10 @@
 
 <svelte:window onmousemove={movePanelDrag} onmouseup={endPanelDrag} />
 
-<div class="app">
+<!-- 拖放处理器挂在应用根上；这里不需要 ARIA 角色（role="application" 会关掉读屏的
+     虚拟光标导航），所以显式忽略静态元素交互的告警。 -->
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<div class="app" ondragover={onDragOver} ondrop={onDrop}>
   <header class="toolbar">
     <div class="brand">Compositor</div>
     <MenuBar />

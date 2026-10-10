@@ -18,7 +18,6 @@ import (
 
 	"compositor-win/internal/domain"
 	"compositor-win/internal/render"
-	"compositor-win/internal/winclip"
 )
 
 // exportSaveDialog is the picker behind Export PNG/JPEG; a field so tests
@@ -38,10 +37,6 @@ var (
 	pngFilter  = runtime.FileFilter{DisplayName: "PNG 图像", Pattern: "*.png"}
 	jpegFilter = runtime.FileFilter{DisplayName: "JPEG 图像", Pattern: "*.jpg;*.jpeg"}
 )
-
-// copyToClipboard is the seam behind CopyMerged; replaced in tests so the
-// suite never clobbers a real clipboard.
-var copyToClipboard = winclip.PutBitmap
 
 // flattenActive renders the committed document through the CPU compositor —
 // the export truth. Live filter previews do not substitute: an export
@@ -247,7 +242,7 @@ func (s *Service) CopyMerged() (string, error) {
 		return "", err
 	}
 	reply := copyMergedReply{Width: bmp.W, Height: bmp.H, Clipboard: false}
-	if clipErr := copyToClipboard(bmp.W, bmp.H, bmp.Pix); clipErr != nil {
+	if clipErr := clipboard.Put(bmp.W, bmp.H, bmp.Pix); clipErr != nil {
 		// The bitmap still exists; surface the refusal without failing.
 		fmt.Printf("拷贝合并：剪贴板不可用 %v\n", clipErr)
 	} else {

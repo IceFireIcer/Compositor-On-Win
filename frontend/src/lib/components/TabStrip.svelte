@@ -1,10 +1,31 @@
 <script lang="ts">
   import { SelectTab } from "../../../wailsjs/go/bridge/Workspace";
-  import { applySnapshot, closeTab, workspace, type DocTab } from "../state/workspace";
+  import { applySnapshot, closeTab, transferLayer, workspace, type DocTab } from "../state/workspace";
   import { pendingClose, requestClose, resolveClose } from "../state/confirm";
+  import { LAYER_DRAG_MIME } from "../state/dropimport";
   import ConfirmDialog from "./ConfirmDialog.svelte";
 
   let { onnew }: { onnew: () => void } = $props();
+
+  // 图层行拖到某个标签上 = 把该图层（连同子树）复制进那个项目（票 48；
+  // 原版是拖到标签上，ProjectWorkspace.copyLayer(_:into:at:)）。
+  let dragOver = $state<string | null>(null);
+
+  function onTabDragOver(event: DragEvent, id: string): void {
+    if (!event.dataTransfer?.types.includes(LAYER_DRAG_MIME)) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+    dragOver = id;
+  }
+
+  function onTabDrop(event: DragEvent, id: string): void {
+    const layerID = event.dataTransfer?.getData(LAYER_DRAG_MIME) ?? "";
+    dragOver = null;
+    if (layerID === "") return;
+    event.preventDefault();
+    if (id === $workspace.activeId) return; // 同一项目里拖 = 图层面板自己的排序
+    void transferLayer(layerID, id).catch((err) => console.warn("图层跨标签拖拽失败", err));
+  }
 
   function choose(id: string): void {
     void SelectTab(id).then(applySnapshot);
@@ -30,8 +51,12 @@
       role="tab"
       aria-selected={doc.id === $workspace.activeId}
       tabindex="0"
+      class:dragover={dragOver === doc.id}
       onclick={() => choose(doc.id)}
       onkeydown={(e) => e.key === "Enter" && choose(doc.id)}
+      ondragover={(e) => onTabDragOver(e, doc.id)}
+      ondragleave={() => (dragOver = null)}
+      ondrop={(e) => onTabDrop(e, doc.id)}
     >
       <span class="tab-name">{doc.name}</span>
       {#if doc.dirty}
@@ -83,6 +108,12 @@
 
   .tab.active {
     background: var(--accent-dim);
+  }
+
+  /* 图层拖到标签上时的落点提示。 */
+  .tab.dragover {
+    outline: 1px dashed var(--accent);
+    outline-offset: -2px;
   }
 
   .tab-name {

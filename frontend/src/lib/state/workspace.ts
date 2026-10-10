@@ -5,13 +5,16 @@ import {
   Snapshot as GetSnapshot,
 } from "../../../wailsjs/go/bridge/Workspace";
 import {
+  BeginBlobImport,
   BeginImageImport,
   CancelPendingOpen,
   ConfirmPendingOpen,
   FinishImageImport,
+  ImportDroppedPaths,
   OpenProjectDialog,
   PickImageImport,
   SaveProjectDialog,
+  TransferLayer as TransferLayerRPC,
 } from "../../../wailsjs/go/bridge/Service";
 import { rasterizeSVG, uploadRaster } from "./svg";
 import { clearDocument, loadDocument } from "./document";
@@ -138,26 +141,45 @@ export async function saveProject(): Promise<{ path: string; rev: number } | nul
 export async function importImages(): Promise<{ failures: string[]; raws: string[] } | null> {
   const paths = await PickImageImport();
   if (!paths || paths.length === 0) return null;
-  const begin = JSON.parse(await BeginImageImport(paths)) as {
-    items: {
-      path: string;
-      status: "ok" | "svg" | "error" | "raw";
-      name?: string;
-      svgW?: number;
-      svgH?: number;
-      svg?: string;
-      uploadUrl?: string;
-      error?: string;
-    }[];
-    hasDocument: boolean;
-    canvasW: number;
-    canvasH: number;
-  };
+  const begin = JSON.parse(await BeginImageImport(paths)) as ImportBegin;
+  return runImportBatch(begin);
+}
+
+/** One decoded import item (internal/bridge's importItem JSON). */
+export interface ImportItem {
+  path: string;
+  status: "ok" | "svg" | "error" | "raw" | "blob";
+  name?: string;
+  svgW?: number;
+  svgH?: number;
+  svg?: string;
+  uploadUrl?: string;
+  error?: string;
+}
+
+/** BeginImageImport / BeginBlobImport / ImportDroppedPaths' begin payload. */
+export interface ImportBegin {
+  items: ImportItem[];
+  hasDocument: boolean;
+  canvasW: number;
+  canvasH: number;
+}
+
+/**
+ * 一批已解码的导入清单：SVG 交给浏览器栅格化后 PUT 回来、RAW 排队进显影
+ * 表单、其余已在 Go 侧备好，最后一次性提交（一步撤销）。返回失败清单与
+ * RAW 队列。
+ */
+async function runImportBatch(
+  begin: ImportBegin,
+  blobs?: ReadonlyMap<string, Blob>,
+): Promise<{ failures: string[]; raws: string[] }> {
   const raws: string[] = [];
   const failures: string[] = [];
   for (const item of begin.items) {
     if (item.status === "error") {
-      const file = item.path.split(/[\/]/).pop() ?? item.path;
+      // Blob items have no path: name the dropped file instead.
+      const file = item.path ? (item.path.split(/[\/]/).pop() ?? item.path) : (item.name ?? "拖入的图像");
       failures.push(`${file}: ${item.error ?? "导入失败"}`);
       continue;
     }
@@ -166,16 +188,27 @@ export async function importImages(): Promise<{ failures: string[]; raws: string
       raws.push(item.path);
       continue;
     }
-    if (item.status === "svg") {
-      const { blob } = await rasterizeSVG(
-        item.svg ?? "",
-        item.svgW ?? 0,
-        item.svgH ?? 0,
-        begin.hasDocument ? begin.canvasW : null,
-        begin.hasDocument ? begin.canvasH : null,
-      );
+    if (item.status === "svg" || item.status === "blob") {
+      let blob: Blob | null = null;
+      if (item.status === "svg") {
+        blob = (
+          await rasterizeSVG(
+            item.svg ?? "",
+            item.svgW ?? 0,
+            item.svgH ?? 0,
+            begin.hasDocument ? begin.canvasW : null,
+            begin.hasDocument ? begin.canvasH : null,
+          )
+        ).blob;
+      } else {
+        blob = blobs?.get(item.uploadUrl ?? "") ?? null;
+      }
       if (!item.uploadUrl) {
-        failures.push(`${item.name ?? "SVG"}: 缺少上传地址`);
+        failures.push(`${item.name ?? "图像"}: 缺少上传地址`);
+        continue;
+      }
+      if (!blob) {
+        failures.push(`${item.name ?? "图像"}: 没有读到图像数据`);
         continue;
       }
       await uploadRaster(item.uploadUrl, blob);
@@ -189,4 +222,61 @@ export async function importImages(): Promise<{ failures: string[]; raws: string
     await queueRawDevelop(raws);
   }
   return { failures, raws };
+}
+/**
+ * 拖放进来的磁盘文件（票 48）：Go 侧一次解完整批；全部是栅格时直接提交
+ * （一步撤销）并返回空失败清单，出现 SVG/RAW/错误时回落到与"导入图像…"
+ * 相同的表单流程（SVG 由浏览器栅格化、RAW 排队进显影表单）。
+ */
+export async function importDroppedPaths(
+  paths: string[],
+): Promise<{ failures: string[]; raws: string[] }> {
+  if (paths.length === 0) return { failures: [], raws: [] };
+  const reply = JSON.parse(await ImportDroppedPaths(paths)) as {
+    committed?: boolean;
+    doc?: unknown;
+    begin?: ImportBegin;
+  };
+  if (reply.committed) {
+    applySnapshot(await GetSnapshot());
+    await loadDocument();
+    return { failures: [], raws: [] };
+  }
+  if (!reply.begin) return { failures: ["拖入的文件无法读取"], raws: [] };
+  return runImportBatch(reply.begin);
+}
+
+/**
+ * 拖放进来的**内存图像**（截图工具的位图、网页里拖来的图片）：没有磁盘
+ * 路径，走上传面 —— 浏览器把图像栅格化成 PNG，PUT 到 Go 的像素面，再提交。
+ * files 与 names 一一对应（Go 按顺序发上传 token）。
+ */
+export async function importDroppedBlobs(
+  files: readonly { name: string; blob: Blob }[],
+): Promise<{ failures: string[]; raws: string[] }> {
+  if (files.length === 0) return { failures: [], raws: [] };
+  const names = files.map((f) => (f.name.trim() === "" ? "Dropped" : f.name));
+  const begin = JSON.parse(await BeginBlobImport(names)) as ImportBegin;
+  if (begin.items.length !== names.length) {
+    // 上传 token 是按位次对齐的：数量对不上就宁可整体失败，也不要错配图像。
+    return { failures: ["拖入的图像与导入批次数量不一致"], raws: [] };
+  }
+  const blobs = new Map<string, Blob>();
+  begin.items.forEach((item, index) => {
+    const file = files[index];
+    if (item.uploadUrl && file) blobs.set(item.uploadUrl, file.blob);
+  });
+  return runImportBatch(begin, blobs);
+}
+
+/**
+ * 图层跨标签拖拽（票 48）：把图层（连同子树）从它所在的标签复制进目标标签，
+ * Go 侧把活动标签切到目标并返回新的 Snapshot。
+ */
+export async function transferLayer(layerID: string, destTabID: string): Promise<boolean> {
+  const raw = await TransferLayerRPC(layerID, destTabID);
+  if (!raw) return false;
+  applySnapshot(JSON.parse(raw) as Snapshot);
+  await loadDocument();
+  return true;
 }

@@ -48,6 +48,7 @@ import {
   type LayerContext,
 } from "../state/layerOps";
 import { activeTool } from "../state/tools";
+import { copySelection, cutSelection, layerViaCopy, paste } from "../state/clipboard";
 import { changeBrushHardness, changeBrushSize } from "../state/tools";
 import { resetPaletteColors, swapPaletteColors } from "../state/palette";
 import { currentSelection, selectionPayload, setSelectionFromMaskData } from "../state/selection";
@@ -282,6 +283,49 @@ async function duplicateActiveLayer(): Promise<void> {
   await layerOps.duplicateLayer(layer.id);
 }
 
+/**
+ * ⌘J 的完整语义（Swift layerViaCopy）：有选区时选区像素就地变成新层
+ * （通过拷贝的图层），没有选区时才是整层复制。两条都由 Go 执行。
+ */
+async function duplicateOrLayerViaCopy(): Promise<void> {
+  if (get(currentSelection)) {
+    await layerViaCopy();
+    return;
+  }
+  await duplicateActiveLayer();
+}
+
+/**
+ * 文字会话开着时剪贴板归文本框（原版按 first responder 分流：NSText 在台上
+ * 时 ⌘C/⌘X/⌘V 走文字域，不动画布像素）。快捷键在输入框里本来就被 dispatch
+ * 让位给浏览器，这里再挡一次是为了菜单路径——点菜单不会把焦点留在文本框。
+ */
+function textEditingOwnsClipboard(): boolean {
+  return get(textSession) !== null;
+}
+
+/** ⌘C：选区像素（无选区时整幅画布）进剪贴板；失败只 warn。 */
+async function copyActiveSelection(): Promise<void> {
+  if (!currentTab() || textEditingOwnsClipboard()) return;
+  try {
+    await copySelection();
+  } catch (err) {
+    console.warn("拷贝失败", err);
+  }
+}
+
+/** ⌘X：拷贝后抹掉选区内的像素（一步可撤销）。 */
+async function cutActiveSelection(): Promise<void> {
+  if (!currentTab() || textEditingOwnsClipboard() || !get(currentSelection)) return;
+  await cutSelection();
+}
+
+/** ⌘V：整层 / 本应用拷的像素 / 外部图像。 */
+async function pasteClipboard(): Promise<void> {
+  if (!currentTab() || textEditingOwnsClipboard()) return;
+  await paste();
+}
+
 /** ⌘G：把活动图层收进新文件夹（前端只有单选镜像；多选随画布合流）。 */
 async function groupActiveLayer(): Promise<void> {
   const layer = activeLayerEntry();
@@ -443,7 +487,11 @@ export const shortcutActions: ShortcutActions = {
   "Menus:Move Layer Up": () => void moveActiveLayer(1),
   "Menus:Move Layer Down": () => void moveActiveLayer(-1),
   "Menus:New Blank Layer": () => void newBlankLayer(),
-  "Menus:Duplicate / Layer via Copy": () => void duplicateActiveLayer(),
+  "Menus:Duplicate / Layer via Copy": () => void duplicateOrLayerViaCopy(),
+  // --- 剪贴板（票 48）：选区在 Go 侧解析，前端只把当前选区序列化过去 ---
+  "Menus:Cut": () => void cutActiveSelection(),
+  "Menus:Copy": () => void copyActiveSelection(),
+  "Menus:Paste": () => void pasteClipboard(),
   "Menus:Group Layers": () => void groupActiveLayer(),
   "Menus:Ungroup Layers": () => void ungroupActiveLayer(),
   "Menus:Toggle Clipping Mask": () => void toggleClippingMask(),

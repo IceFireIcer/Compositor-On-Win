@@ -49,6 +49,14 @@ type session struct {
 	renderPNG       []byte
 	renderRev       int
 	renderFilterRev int
+
+	// Clipboard (ticket 48): what Copy took — pixels with the document point
+	// they came from, or the layer ids it took whole. Both carry the system
+	// clipboard's sequence number at copy time; anything copied since (here or
+	// in another app) invalidates them, exactly like the original compares
+	// NSPasteboard.changeCount (SelectionClipboard.swift:4-18).
+	clipPixels *clipPixels
+	clipLayer  *clipLayer
 }
 
 // newSession wraps a parsed/created document into a fresh session with an

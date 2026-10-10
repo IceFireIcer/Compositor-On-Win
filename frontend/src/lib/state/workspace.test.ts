@@ -5,8 +5,11 @@ import {
   activeTab,
   closeTab,
   hasDocument,
+  importDroppedBlobs,
+  importDroppedPaths,
   importImages,
   newDocument,
+  transferLayer,
   openProject,
   saveProject,
   workspace,
@@ -22,13 +25,16 @@ vi.mock("../../../wailsjs/go/bridge/Workspace", () => ({
   Snapshot: vi.fn(),
 }));
 vi.mock("../../../wailsjs/go/bridge/Service", () => ({
+  BeginBlobImport: vi.fn(),
   BeginImageImport: vi.fn(),
   DocumentSnapshot: vi.fn(),
   FinishImageImport: vi.fn(),
+  ImportDroppedPaths: vi.fn(),
   LayerOp: vi.fn(),
   OpenProjectDialog: vi.fn(),
   PickImageImport: vi.fn(),
   SaveProjectDialog: vi.fn(),
+  TransferLayer: vi.fn(),
 }));
 vi.mock("./svg", () => ({ rasterizeSVG: vi.fn(), uploadRaster: vi.fn() }));
 import {
@@ -37,12 +43,15 @@ import {
   Snapshot as GetSnapshot,
 } from "../../../wailsjs/go/bridge/Workspace";
 import {
+  BeginBlobImport,
   BeginImageImport,
   DocumentSnapshot,
   FinishImageImport,
+  ImportDroppedPaths,
   OpenProjectDialog,
   PickImageImport,
   SaveProjectDialog,
+  TransferLayer,
 } from "../../../wailsjs/go/bridge/Service";
 import { rasterizeSVG, uploadRaster } from "./svg";
 
@@ -76,6 +85,9 @@ const mockedDocSnapshot = vi.mocked(DocumentSnapshot);
 const mockedPickImages = vi.mocked(PickImageImport);
 const mockedBeginImport = vi.mocked(BeginImageImport);
 const mockedFinishImport = vi.mocked(FinishImageImport);
+const mockedDroppedPaths = vi.mocked(ImportDroppedPaths);
+const mockedBlobImport = vi.mocked(BeginBlobImport);
+const mockedTransfer = vi.mocked(TransferLayer);
 const mockedRasterizeSVG = vi.mocked(rasterizeSVG);
 const mockedUploadRaster = vi.mocked(uploadRaster);
 
@@ -275,5 +287,96 @@ describe("openProject pending Photoshop report (ticket 39)", () => {
       pending: true,
       conversions: [{ layerName: "文字", message: "字体“X”未安装，文字以系统字体绘制。" }],
     });
+  });
+});
+// 票 48：拖放导入与跨标签图层搬运的前端接线。
+describe("拖放导入与跨标签搬运（票 48）", () => {
+  beforeEach(() => {
+    clearDocument();
+    applySnapshot(snapshot([{ id: "t1" }], "t1"));
+    mockedDroppedPaths.mockReset();
+    mockedBlobImport.mockReset();
+    mockedTransfer.mockReset();
+    mockedGetSnapshot.mockReset();
+    mockedDocSnapshot.mockReset();
+    mockedFinishImport.mockReset();
+  });
+
+  it("拖入的磁盘文件全为栅格时 Go 已直接提交：只刷新快照与文档", async () => {
+    mockedDroppedPaths.mockResolvedValue(JSON.stringify({ committed: true, doc: { rev: 3 } }));
+    mockedGetSnapshot.mockResolvedValue(snapshot([{ id: "t1", name: "拖入" }], "t1"));
+    mockedDocSnapshot.mockResolvedValue('{"rev":3,"filterRev":0,"doc":null}');
+
+    const result = await importDroppedPaths(["/tmp/a.png"]);
+    expect(mockedDroppedPaths).toHaveBeenCalledWith(["/tmp/a.png"]);
+    expect(mockedFinishImport).not.toHaveBeenCalled();
+    expect(result).toEqual({ failures: [], raws: [] });
+    expect(get(workspace).tabs[0]!.name).toBe("拖入");
+  });
+
+  it("拖入混有 SVG 时回落到表单流程：SVG 上传后统一 Finish", async () => {
+    mockedDroppedPaths.mockResolvedValue(
+      JSON.stringify({
+        committed: false,
+        begin: {
+          items: [
+            { path: "/tmp/a.png", status: "ok", name: "a" },
+            { path: "/tmp/b.svg", status: "svg", name: "b", svg: "blob:x", svgW: 10, svgH: 10, uploadUrl: "/pixel/upload/tok" },
+          ],
+          hasDocument: true,
+          canvasW: 100,
+          canvasH: 100,
+        },
+      }),
+    );
+    vi.mocked(rasterizeSVG).mockResolvedValue({ width: 10, height: 10, blob: new Blob(["png"]) });
+    vi.mocked(uploadRaster).mockResolvedValue(undefined);
+    mockedGetSnapshot.mockResolvedValue(snapshot([{ id: "t1" }], "t1"));
+    mockedDocSnapshot.mockResolvedValue('{"rev":4,"filterRev":0,"doc":null}');
+
+    const result = await importDroppedPaths(["/tmp/a.png", "/tmp/b.svg"]);
+    expect(uploadRaster).toHaveBeenCalledWith("/pixel/upload/tok", expect.any(Blob));
+    expect(mockedFinishImport).toHaveBeenCalledTimes(1);
+    expect(result).toEqual({ failures: [], raws: [] });
+  });
+
+  it("空路径清单什么都不做", async () => {
+    await expect(importDroppedPaths([])).resolves.toEqual({ failures: [], raws: [] });
+    expect(mockedDroppedPaths).not.toHaveBeenCalled();
+  });
+
+  it("内存图像（截图/网页图）按位次把字节 PUT 到 Go 发的 token 上", async () => {
+    mockedBlobImport.mockResolvedValue(
+      JSON.stringify({
+        items: [{ path: "", status: "blob", name: "shot.png", uploadUrl: "/pixel/upload/tok1" }],
+        hasDocument: true,
+        canvasW: 64,
+        canvasH: 48,
+      }),
+    );
+    vi.mocked(uploadRaster).mockResolvedValue(undefined);
+    mockedGetSnapshot.mockResolvedValue(snapshot([{ id: "t1" }], "t1"));
+    mockedDocSnapshot.mockResolvedValue('{"rev":5,"filterRev":0,"doc":null}');
+
+    await importDroppedBlobs([{ name: "shot.png", blob: new Blob(["png"]) }]);
+    expect(mockedBlobImport).toHaveBeenCalledWith(["shot.png"]);
+    expect(uploadRaster).toHaveBeenCalledWith("/pixel/upload/tok1", expect.any(Blob));
+    expect(mockedFinishImport).toHaveBeenCalledTimes(1);
+  });
+
+  it("批次数量与图像数量不一致时整体失败（不错配图像）", async () => {
+    mockedBlobImport.mockResolvedValue(JSON.stringify({ items: [], hasDocument: true, canvasW: 1, canvasH: 1 }));
+    const result = await importDroppedBlobs([{ name: "a.png", blob: new Blob(["png"]) }]);
+    expect(result.failures[0]).toContain("数量不一致");
+    expect(mockedFinishImport).not.toHaveBeenCalled();
+  });
+
+  it("图层跨标签拖拽：应用 Go 返回的快照并加载目标文档", async () => {
+    mockedTransfer.mockResolvedValue(JSON.stringify(snapshot([{ id: "t1" }, { id: "t2", name: "目标" }], "t2")));
+    mockedDocSnapshot.mockResolvedValue('{"rev":6,"filterRev":0,"doc":null}');
+
+    await expect(transferLayer("l1", "t2")).resolves.toBe(true);
+    expect(mockedTransfer).toHaveBeenCalledWith("l1", "t2");
+    expect(get(workspace).activeId).toBe("t2");
   });
 });

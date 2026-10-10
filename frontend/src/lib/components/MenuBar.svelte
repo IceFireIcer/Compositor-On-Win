@@ -22,6 +22,7 @@
   import { chordFor } from "../shortcuts/settings";
   import { chordLabel } from "../shortcuts/chords";
   import { registerCanvasModalGuard } from "../shortcuts/dispatch";
+  import { textSession } from "../state/text";
 
   /**
    * The menu bar (CompositorApp.swift's menus): 选择 / 文件 / 编辑 / 图像 /
@@ -54,6 +55,8 @@
   // 图层菜单的标题/可用性来自被测试钉住的纯函数（state/layerOps.ts），
   // 所以菜单、快捷键、Go 三处对"⌘E 现在合并什么"的看法一致。
   const layerMenu = $derived(layerMenuState($document));
+  // 文字会话：剪贴板命令让位给行内文本框（菜单路径也要挡）。
+  const editingText = $derived($textSession !== null);
 
   /** Current chord label for a definition id — the menu's live hint. */
   function hintFor(id: string): string {
@@ -186,6 +189,31 @@
       items: [
         { label: "撤销", hint: hintFor("Menus:Undo"), run: () => runAndClose("Menus:Undo") },
         { label: "重做", hint: hintFor("Menus:Redo"), run: () => runAndClose("Menus:Redo") },
+        // 文字会话开着时剪贴板归文本框（原版按 first responder 分流）。
+        {
+          label: "剪切",
+          hint: hintFor("Menus:Cut"),
+          disabled: !hasLayer || dialogOpen || editingText,
+          run: () => runAndClose("Menus:Cut"),
+        },
+        {
+          label: "拷贝",
+          hint: hintFor("Menus:Copy"),
+          disabled: !hasLayer || dialogOpen || editingText,
+          run: () => runAndClose("Menus:Copy"),
+        },
+        {
+          label: "粘贴",
+          hint: hintFor("Menus:Paste"),
+          disabled: !hasLayer || dialogOpen || editingText,
+          run: () => runAndClose("Menus:Paste"),
+        },
+        {
+          label: "通过拷贝的图层",
+          hint: hintFor("Menus:Duplicate / Layer via Copy"),
+          disabled: !hasLayer || dialogOpen,
+          run: () => runAndClose("Menus:Duplicate / Layer via Copy"),
+        },
         {
           label: "键盘快捷键…",
           disabled: dialogOpen,

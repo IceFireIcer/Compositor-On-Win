@@ -7,6 +7,7 @@
     type DocLayer,
   } from "../state/document";
   import { beginFilter, filterSession } from "../state/filters";
+  import { LAYER_DRAG_MIME } from "../state/dropimport";
 
   /**
    * The layer panel (ticket 20 shell + bridge wiring). Rows render top→bottom
@@ -65,8 +66,17 @@
         role="option"
         aria-selected={layer.id === docState.activeLayerID}
         tabindex="0"
+        draggable="true"
         onclick={() => void layerOps.setActive(layer.id)}
         onkeydown={(e) => (e.key === "Enter" || e.key === " ") && void layerOps.setActive(layer.id)}
+        ondragstart={(e) => {
+          // 拖到别的标签上 = 把这一层（连同子树）复制进那个项目（票 48）。
+          // 注意：这里**不能** preventDefault —— 按 HTML 规范那会取消整个拖拽
+          // 操作，跨标签复制就永远起不来；面板内部的拖拽重排（票 20）落到
+          // 面板自己的 drop 处理器上，与这条自定义 MIME 互不干扰。
+          e.dataTransfer?.setData(LAYER_DRAG_MIME, layer.id);
+          if (e.dataTransfer) e.dataTransfer.effectAllowed = "copy";
+        }}
       >
         <button
           class="eye"

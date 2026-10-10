@@ -51,17 +51,40 @@ type importBegin struct {
 	CanvasH     int          `json:"canvasH"`
 }
 
-// pendingImportFile is one decoded file waiting for the commit. A nil
-// bitmap marks an SVG placeholder the frontend still has to rasterize,
-// identified by its upload token (the PUT target on the pixel plane).
+// dropImportReply is ImportDroppedPaths' reply. The two shapes are mutually
+// exclusive and told apart by "committed":
+//
+//	{"committed":true, "doc":{…}}   — every dropped item decoded (status ok)
+//	                                  and the batch already committed as one
+//	                                  导入图像 history entry; doc is the same
+//	                                  document envelope FinishImageImport
+//	                                  returns, so a single undo rolls the
+//	                                  whole drop back.
+//	{"committed":false,"begin":{…}} — at least one item is svg/raw/error: the
+//	                                  document is untouched and begin is the
+//	                                  listing BeginImageImport returns
+//	                                  (uploadUrl included), which drives the
+//	                                  regular frontend import form.
+type dropImportReply struct {
+	Committed bool            `json:"committed"`
+	Doc       json.RawMessage `json:"doc,omitempty"`
+	Begin     *importBegin    `json:"begin,omitempty"`
+}
+
+// pendingImportFile is one file waiting for the commit. A nil bitmap marks a
+// placeholder the frontend still has to fill in: an SVG it rasterizes with
+// the browser's own renderer, or a dropped blob (screenshot, image dragged
+// from a web page) the browser re-encodes to PNG. Either way the upload
+// token keys the PUT target on the HTTP pixel plane.
 type pendingImportFile struct {
 	name   string
 	bmp    *render.Bitmap
 	upload string
 }
 
-// storeUploadedRaster receives one rasterized SVG (PUT body = PNG bytes)
-// and slots it into the pending import batch by its upload token.
+// storeUploadedRaster receives one frontend-produced raster (PUT body = PNG
+// bytes, a rasterized SVG or a dropped blob) and slots it into the pending
+// import batch by its upload token.
 func (s *Service) storeUploadedRaster(token string, data []byte) error {
 	s.importMu.Lock()
 	defer s.importMu.Unlock()
@@ -69,13 +92,13 @@ func (s *Service) storeUploadedRaster(token string, data []byte) error {
 		if s.pendingImport[i].upload == token {
 			img, err := png.Decode(bytes.NewReader(data))
 			if err != nil {
-				return fmt.Errorf("SVG 的栅格无法解码: %w", err)
+				return fmt.Errorf("上传的栅格无法解码: %w", err)
 			}
 			s.pendingImport[i].bmp = render.BitmapFromImage(img)
 			return nil
 		}
 	}
-	return fmt.Errorf("没有等待该上传的 SVG")
+	return fmt.Errorf("没有等待该上传的图像")
 }
 
 // PickImageImport shows the multi-file import dialog; an empty result
@@ -99,8 +122,97 @@ func (s *Service) PickImageImport() ([]string, error) {
 // thread) and hands SVG bytes to the frontend, which rasterizes them with
 // the browser's own renderer. Nothing touches the document yet.
 func (s *Service) BeginImageImport(paths []string) (string, error) {
+	begin, err := s.beginImport(paths)
+	if err != nil {
+		return "", err
+	}
+	return marshalImportBegin(begin)
+}
+
+// BeginBlobImport opens an import batch for in-memory images that have no
+// path on disk: a screenshot tool's bitmap, an image dragged out of a web
+// page. Those providers hand over image data rather than a file
+// (ImageFileDrop.swift:21-24), so every name gets an upload token instead of
+// a decode. The frontend rasterizes the blob with the browser's own renderer
+// and PUTs the PNG to the item's uploadUrl — relative, exactly like the SVG
+// flow — then calls FinishImageImport; the pending bitmap stays nil until
+// that upload lands. An empty name falls back to "Dropped"
+// (ImageFileDrop.swift:50, the name a nameless temporary copy gets).
+//
+// No pixel-budget check runs here: a blob's size is only known once it
+// uploads (the SVG path can check its declared size instead).
+func (s *Service) BeginBlobImport(names []string) (string, error) {
 	if s.ws == nil {
 		return "", errNoDocument
+	}
+	if len(names) == 0 {
+		return "", fmt.Errorf("没有可导入的图像")
+	}
+	s.importMu.Lock()
+	defer s.importMu.Unlock()
+	s.pendingImport = nil
+	canvasW, canvasH, hasDoc := s.ws.activeCanvasInfo()
+	items := make([]importItem, 0, len(names))
+	for _, name := range names {
+		if name = strings.TrimSpace(name); name == "" {
+			name = "Dropped"
+		}
+		uploadURL := "/pixel/upload/" + newPixelToken()
+		s.pendingImport = append(s.pendingImport, pendingImportFile{
+			name:   name,
+			upload: strings.TrimPrefix(uploadURL, "/pixel/upload/"),
+		})
+		items = append(items, importItem{Status: "blob", Name: name, UploadURL: uploadURL})
+	}
+	return marshalImportBegin(importBegin{Items: items, HasDocument: hasDoc, CanvasW: canvasW, CanvasH: canvasH})
+}
+
+// ImportDroppedPaths imports files dropped or pasted in from outside the app
+// (Explorer, screenshot tools and most applications hand over CF_HDROP
+// paths; ImageFileDrop.swift:11-25 resolves the providers in pasteboard
+// order and only copies to a temporary file when a provider has no path).
+// It runs the same decode pass BeginImageImport runs — nothing is decoded
+// twice and the two entry points can never drift apart.
+//
+// The reply has exactly one of two shapes, told apart by "committed" (see
+// dropImportReply):
+//
+//	{"committed":true, "doc":{…}}    — every item is ok, so the batch is
+//	                                   committed here and now as a single
+//	                                   导入图像 history entry (one undo).
+//	{"committed":false,"begin":{…}}  — one svg/raw/error item is enough to
+//	                                   hand the batch to the regular import
+//	                                   form; the document is untouched.
+func (s *Service) ImportDroppedPaths(paths []string) (string, error) {
+	if len(paths) == 0 {
+		return "", fmt.Errorf("没有可导入的文件")
+	}
+	begin, err := s.beginImport(paths)
+	if err != nil {
+		return "", err
+	}
+	// A drop has no rasterization dialog in front of it, so an all-raster
+	// batch commits straight away; anything else (SVG to rasterize, RAW to
+	// develop, an unreadable file to report) goes back as the begin listing.
+	for _, item := range begin.Items {
+		if item.Status != "ok" {
+			return marshalDropReply(dropImportReply{Committed: false, Begin: &begin})
+		}
+	}
+	doc, err := s.FinishImageImport()
+	if err != nil {
+		return "", err
+	}
+	return marshalDropReply(dropImportReply{Committed: true, Doc: json.RawMessage(doc)})
+}
+
+// beginImport is the shared decode pass behind BeginImageImport and
+// ImportDroppedPaths: it starts a fresh pending batch, decodes every raster
+// file into a buffer and stages SVG bytes for the frontend, which rasterizes
+// them with the browser's own renderer. Nothing touches the document yet.
+func (s *Service) beginImport(paths []string) (importBegin, error) {
+	if s.ws == nil {
+		return importBegin{}, errNoDocument
 	}
 	s.importMu.Lock()
 	defer s.importMu.Unlock()
@@ -181,10 +293,23 @@ func (s *Service) BeginImageImport(paths []string) (string, error) {
 		s.pendingImport = append(s.pendingImport, pendingImportFile{name: res.Name, bmp: res.Bitmap})
 		items = append(items, item)
 	}
-	begin := importBegin{Items: items, HasDocument: hasDoc, CanvasW: canvasW, CanvasH: canvasH}
+	return importBegin{Items: items, HasDocument: hasDoc, CanvasW: canvasW, CanvasH: canvasH}, nil
+}
+
+// marshalImportBegin encodes the begin listing for the bridge.
+func marshalImportBegin(begin importBegin) (string, error) {
 	b, err := json.Marshal(begin)
 	if err != nil {
 		return "", fmt.Errorf("无法编码导入清单: %w", err)
+	}
+	return string(b), nil
+}
+
+// marshalDropReply encodes ImportDroppedPaths' two-shape reply.
+func marshalDropReply(reply dropImportReply) (string, error) {
+	b, err := json.Marshal(reply)
+	if err != nil {
+		return "", fmt.Errorf("无法编码拖放导入回包: %w", err)
 	}
 	return string(b), nil
 }
@@ -205,7 +330,7 @@ func (s *Service) FinishImageImport() (string, error) {
 	copy(files, s.pendingImport)
 	for _, f := range files {
 		if f.bmp == nil {
-			return "", fmt.Errorf("SVG %s 没有栅格化结果", f.name)
+			return "", fmt.Errorf("图像 %s 还没有栅格结果（SVG 待栅格化 / 内存图待上传）", f.name)
 		}
 	}
 	// The release happens inside the commit path so the SVGs stay fetchable

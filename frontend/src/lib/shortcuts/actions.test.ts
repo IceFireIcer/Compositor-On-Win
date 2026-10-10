@@ -64,6 +64,10 @@ describe("shortcutActions 与定义表对齐", () => {
       "Menus:Zoom In",
       "Menus:Zoom Out",
       "Menus:Copy Merged",
+      // 剪贴板（票 48）：剪切/拷贝/粘贴走 Go 的 clipboard.go
+      "Menus:Cut",
+      "Menus:Copy",
+      "Menus:Paste",
       "Menus:Select All",
       "Menus:Deselect",
       "Menus:Inverse Selection",
@@ -150,10 +154,6 @@ describe("shortcutActions 与定义表对齐", () => {
     // 悄悄接线或悄悄丢掉都会让测试失败，逼着人回来更新这张表。
     const unwired = new Set(SHORTCUTS.filter((d) => shortcutActions[d.id] === undefined).map((d) => d.id));
     const expected = new Set([
-      // 剪贴板像素/文字通道：票 48（Clipboard 未实现）
-      "Menus:Cut",
-      "Menus:Copy",
-      "Menus:Paste",
       // 填充/清除：票 23 的填充命令还没接到 Go（没有 fill RPC）
       "Menus:Fill with Foreground",
       "Menus:Fill with Background",

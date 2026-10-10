@@ -8,6 +8,7 @@ package bridge
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"image/jpeg"
 	"image/png"
 	"os"
@@ -15,6 +16,9 @@ import (
 	"testing"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
+
+	"compositor-win/internal/render"
+	"compositor-win/internal/winclip"
 )
 
 func stubExportSaveDialog(t *testing.T, path string) *bool {
@@ -29,16 +33,55 @@ func stubExportSaveDialog(t *testing.T, path string) *bool {
 	return &called
 }
 
-func stubClipboard(t *testing.T) *bool {
-	t.Helper()
-	called := false
-	saved := copyToClipboard
-	copyToClipboard = func(w, h int, pix []uint8) error {
-		called = true
-		return nil
+// fakeClipboard records what the app put on the clipboard without touching
+// the real one (ticket 48's seam; Copy Merged uses it too).
+type fakeClipboard struct {
+	puts   int
+	last   *render.Bitmap
+	seq    uint32
+	backed *render.Bitmap // what Get returns, nil = empty clipboard
+	err    error
+}
+
+func (f *fakeClipboard) Put(w, h int, pix []uint8) error {
+	if f.err != nil {
+		return f.err
 	}
-	t.Cleanup(func() { copyToClipboard = saved })
-	return &called
+	f.puts++
+	cp := make([]uint8, len(pix))
+	copy(cp, pix)
+	f.last = &render.Bitmap{W: w, H: h, Pix: cp}
+	f.seq++
+	return nil
+}
+
+func (f *fakeClipboard) Get() (*winclip.ClipBitmap, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	if f.backed == nil {
+		return nil, fmt.Errorf("剪贴板里没有位图")
+	}
+	return &winclip.ClipBitmap{W: f.backed.W, H: f.backed.H, Pix: f.backed.Pix}, nil
+}
+
+func (f *fakeClipboard) Sequence() uint32 { return f.seq }
+
+// useFakeClipboard swaps the system clipboard for a fake for one test.
+func useFakeClipboard(t *testing.T) *fakeClipboard {
+	t.Helper()
+	fake := &fakeClipboard{}
+	saved := clipboard
+	clipboard = fake
+	t.Cleanup(func() { clipboard = saved })
+	return fake
+}
+
+// stubClipboard is the older helper's name with the ticket-48 shape: it
+// returns the recording fake so callers can assert on what was written.
+func stubClipboard(t *testing.T) *fakeClipboard {
+	t.Helper()
+	return useFakeClipboard(t)
 }
 
 func TestFlattenActiveMatchesDocument(t *testing.T) {
@@ -233,8 +276,11 @@ func TestCopyMergedHandsPixelsToClipboard(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := parseJSON[copyMergedReply](t, reply)
-	if got.Width != 12 || got.Height != 8 || !got.Clipboard || !*clip {
-		t.Fatalf("拷贝合并回复 %+v (called=%v)", got, *clip)
+	if got.Width != 12 || got.Height != 8 || !got.Clipboard || clip.puts != 1 {
+		t.Fatalf("拷贝合并回复 %+v (puts=%d)", got, clip.puts)
+	}
+	if clip.last == nil || clip.last.W != 12 || clip.last.H != 8 {
+		t.Fatalf("剪贴板位图 = %+v，想要 12×8", clip.last)
 	}
 }
 

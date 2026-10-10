@@ -13,6 +13,8 @@ export function BeginFilterEdit(arg1:string,arg2:string,arg3:string,arg4:number,
 
 export function BeginHealStroke(arg1:number,arg2:number,arg3:number,arg4:number,arg5:number,arg6:number,arg7:number):Promise<string>;
 
+export function BeginBlobImport(arg1:Array<string>):Promise<string>;
+
 export function BeginImageImport(arg1:Array<string>):Promise<string>;
 
 export function BeginStroke(arg1:number,arg2:number):Promise<string>;
@@ -39,6 +41,10 @@ export function ConfirmPendingOpen():Promise<string>;
 
 export function CopyMerged():Promise<string>;
 
+export function CopySelection(arg1:string):Promise<string>;
+
+export function CutSelection(arg1:string):Promise<string>;
+
 export function DocumentSnapshot():Promise<string>;
 
 export function EndExportPreview():Promise<void>;
@@ -59,15 +65,21 @@ export function HealPoint(arg1:number,arg2:number):Promise<string>;
 
 export function ImageSize(arg1:string):Promise<string>;
 
+export function ImportDroppedPaths(arg1:Array<string>):Promise<string>;
+
 export function LayerHistogram():Promise<string>;
 
 export function LayerOp(arg1:string,arg2:string):Promise<string>;
+
+export function LayerViaCopy(arg1:string):Promise<string>;
 
 export function LevelsAuto(arg1:number):Promise<string>;
 
 export function ListFonts():Promise<string>;
 
 export function OpenProjectDialog():Promise<string>;
+
+export function Paste():Promise<string>;
 
 export function PickImageImport():Promise<Array<string>>;
 
@@ -94,6 +106,8 @@ export function SelectSubject():Promise<string>;
 export function Startup(arg1:context.Context):Promise<void>;
 
 export function StrokePoint(arg1:number,arg2:number):Promise<string>;
+
+export function TransferLayer(arg1:string,arg2:string):Promise<string>;
 
 export function TextCommit(arg1:string):Promise<string>;
 
