@@ -14,6 +14,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"compositor-win/internal/fsatomic"
 )
 
 // ErrNotConfigured 表示这个构建没有更新源（没有注入 FeedURL/公钥）。
@@ -212,11 +214,10 @@ func (c *Checker) Download(ctx context.Context, rel Release, dir string) (string
 	if !ed25519.Verify(c.PublicKey, body, sig) {
 		return "", fmt.Errorf("安装器 Ed25519 签名校验失败（下载可能被篡改）")
 	}
-	// 全部通过才把它变成正式文件（Windows 上 os.Rename 不覆盖已存在的文件）。
-	if err := os.Remove(dest); err != nil && !os.IsNotExist(err) {
-		return "", fmt.Errorf("无法替换旧安装包: %w", err)
-	}
-	if err := os.Rename(partialName, dest); err != nil {
+	// 全部通过才把它变成正式文件：一次 rename 覆盖（Windows 的 os.Rename 就是
+	// MoveFileEx + MOVEFILE_REPLACE_EXISTING，"先删再改名"反而会在改名失败时把上一份
+	// 已校验的安装包删掉）。重试与临时名策略都在 internal/fsatomic 里。
+	if err := fsatomic.Replace(partialName, dest); err != nil {
 		return "", fmt.Errorf("无法提交安装包: %w", err)
 	}
 	partialName = "" // 已改名，defer 不要再删

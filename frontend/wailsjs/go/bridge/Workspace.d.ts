@@ -14,6 +14,8 @@ export function BeginStroke(arg1:number,arg2:number):Promise<string>;
 
 export function CloseTab(arg1:string):Promise<bridge.Snapshot>;
 
+export function DocumentJSON(arg1:string):Promise<string>;
+
 export function EditActive(arg1:string,arg2:any):Promise<string>;
 
 export function EditActiveRaster(arg1:string,arg2:any):Promise<string>;
@@ -26,6 +28,8 @@ export function OpenDocument(arg1:string,arg2:domain.Document,arg3:Record<string
 
 export function RedoActive():Promise<string>;
 
+export function ReloadDocument(arg1:string,arg2:domain.Document,arg3:Record<string, render.Bitmap>):Promise<bridge.Snapshot>;
+
 export function RenderPNG(arg1:string):Promise<Array<number>>;
 
 export function SaveActive(arg1:string):Promise<number>;
@@ -35,5 +39,9 @@ export function SelectTab(arg1:string):Promise<bridge.Snapshot>;
 export function Snapshot():Promise<bridge.Snapshot>;
 
 export function StrokePoint(arg1:number,arg2:number):Promise<string>;
+
+export function TabIDForPath(arg1:string):Promise<string|boolean>;
+
+export function TabState(arg1:string):Promise<string>;
 
 export function UndoActive():Promise<string>;

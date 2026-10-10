@@ -22,6 +22,10 @@ export function CloseTab(arg1) {
   return window['go']['bridge']['Workspace']['CloseTab'](arg1);
 }
 
+export function DocumentJSON(arg1) {
+  return window['go']['bridge']['Workspace']['DocumentJSON'](arg1);
+}
+
 export function EditActive(arg1, arg2) {
   return window['go']['bridge']['Workspace']['EditActive'](arg1, arg2);
 }
@@ -46,6 +50,10 @@ export function RedoActive() {
   return window['go']['bridge']['Workspace']['RedoActive']();
 }
 
+export function ReloadDocument(arg1, arg2, arg3) {
+  return window['go']['bridge']['Workspace']['ReloadDocument'](arg1, arg2, arg3);
+}
+
 export function RenderPNG(arg1) {
   return window['go']['bridge']['Workspace']['RenderPNG'](arg1);
 }
@@ -64,6 +72,14 @@ export function Snapshot() {
 
 export function StrokePoint(arg1, arg2) {
   return window['go']['bridge']['Workspace']['StrokePoint'](arg1, arg2);
+}
+
+export function TabIDForPath(arg1) {
+  return window['go']['bridge']['Workspace']['TabIDForPath'](arg1);
+}
+
+export function TabState(arg1) {
+  return window['go']['bridge']['Workspace']['TabState'](arg1);
 }
 
 export function UndoActive() {

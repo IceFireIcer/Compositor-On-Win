@@ -214,6 +214,10 @@ export function RenderHandler() {
   return window['go']['bridge']['Service']['RenderHandler']();
 }
 
+export function ResolveExternalChange(arg1, arg2) {
+  return window['go']['bridge']['Service']['ResolveExternalChange'](arg1, arg2);
+}
+
 export function SampleLevelsPoint(arg1, arg2) {
   return window['go']['bridge']['Service']['SampleLevelsPoint'](arg1, arg2);
 }

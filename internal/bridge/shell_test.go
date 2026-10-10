@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"compositor-win/internal/project"
@@ -25,6 +26,37 @@ type fakeShell struct {
 	overlayErr  error
 	raised      int
 	emitted     []int
+	// 通用事件（名字 → 负载）。外部变更的事件由 coordinator 自己的 goroutine 推，
+	// 测试在另一个 goroutine 上读，所以这把锁是必须的（-race 会报）。
+	mu     sync.Mutex
+	events map[string][]string
+}
+
+func (f *fakeShell) Emit(_ context.Context, name string, payload string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.events == nil {
+		f.events = map[string][]string{}
+	}
+	f.events[name] = append(f.events[name], payload)
+}
+
+// eventPayloads 读某个事件收到的全部负载（按顺序）。
+func (f *fakeShell) eventPayloads(name string) []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.events[name]...)
+}
+
+// lastEvent 读某个事件最后一条负载（"" = 没收到）。
+func (f *fakeShell) lastEvent(name string) string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	all := f.events[name]
+	if len(all) == 0 {
+		return ""
+	}
+	return all[len(all)-1]
 }
 
 func (f *fakeShell) SetTitle(_ context.Context, title string) { f.titles = append(f.titles, title) }

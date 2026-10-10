@@ -7,8 +7,12 @@
 **Status:** done（2026-10-06，监视基础设施；第 2/3 项的应用层接线随 M2 桥接落地）
 
 - [x] 外部写入 PNG + 原子改名 manifest 后 ~300ms 触发（watcher 合并 + coordinator digest 稳定回调，实测测试通过）
-- [ ] 重载保留视口与选区、清空撤销栈——**基础设施就绪**（coordinator 提供 OnStable(digest) 回调，接线方调用 domain 重载 + history.Reset 即可）；应用层接线随 M2 画布/桥接落地（ExternalChangeTests 语义届时移植）
-- [ ] 脏文档"放弃/保留"询问——同上，属桥接/UI 层
+- [x] 重载保留视口与选区、清空撤销栈——**票 51 完成接线**：`internal/bridge/watch.go` 的
+  `Workspace.ReloadDocument` 原地换会话（清撤销、标签不变、rev 前进），视口/选区在前端且重载不碰；
+  `frontend/src/lib/state/external.ts` 有 store 层断言
+- [x] 脏文档"放弃/保留"询问——**票 51 完成接线**：`external:changed`（`pending:true`）+
+  `ResolveExternalChange(tabId, accept)` + `ExternalChangePrompt.svelte`；另外有编辑在飞
+  （笔刷/滤镜）时也走询问而不是静默换会话
 - [x] 原子重命名替换后监视继续有效（Windows fsnotify rename 语义下的重挂有实测测试）
 - [x] 忙等退避不无限循环（250ms×2^n 有上限与终态，测试覆盖写入进行中场景）
 

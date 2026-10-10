@@ -37,6 +37,8 @@ type shellPlane interface {
 	RaiseWindow(ctx context.Context)
 	// EmitOpenPaths 推 "shell:openPaths" 事件，让前端去 OpenShellPaths。
 	EmitOpenPaths(ctx context.Context, queued int)
+	// Emit 推一条带 JSON 负载的事件（外部变更等）。
+	Emit(ctx context.Context, name string, payload string)
 }
 
 // windowsShell 是真实实现。
@@ -54,6 +56,10 @@ func (windowsShell) RaiseWindow(ctx context.Context) {
 
 func (windowsShell) EmitOpenPaths(ctx context.Context, queued int) {
 	runtime.EventsEmit(ctx, "shell:openPaths", queued)
+}
+
+func (windowsShell) Emit(ctx context.Context, name string, payload string) {
+	runtime.EventsEmit(ctx, name, payload)
 }
 
 // shell 是当前外壳接缝（测试替换）。
@@ -81,6 +87,9 @@ func (h *ShellHooks) Queue(paths []string) { h.svc.queueShellPaths(paths) }
 
 // Notify 告诉前端外壳又递了文件进来，并把窗口提到前台。
 func (h *ShellHooks) Notify() { h.svc.notifyShellPaths() }
+
+// Shutdown 收尾：停掉所有外部变更监视器（Wails 的 OnShutdown 调它）。
+func (h *ShellHooks) Shutdown() { h.svc.stopWatchingProjects() }
 
 // shellPathsReply 是"一串外壳路径"的回复（最近项目列表、清空后的列表）。
 type shellPathsReply struct {

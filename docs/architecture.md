@@ -64,7 +64,11 @@
 
 ### 3.2 事件面（Go → 前端推送）
 
-- `external:changed`（外部变更已重载，附新树 + 保留视口指令）
+- `external:changed`（外部变更：`{tabId, path, pending, dirty, snapshot, document?}`。
+  干净的文档直接换上新文档信封；`pending:true` 表示有未保存修改或编辑在飞，前端先问用户
+  （答案走 `ResolveExternalChange`）。**没有"保留视口指令"这种字段**：视口与选区是前端状态，
+  重载根本不碰它们，所以不需要回写。文档信封只在被重载的标签就是活动标签时才带 ——
+  前端只有一份文档镜像）
 - `layer:revised`（层修订号递增 → 前端失效对应 ImageBitmap）
 - `task:progress`（导出/滤镜后台进度）
 - `session:gate`（canEditLayers / canUseHistory 门控变化）

@@ -78,16 +78,30 @@ type Service struct {
 	pendingUpdate *update.Release
 	updateFile    string
 	downloading   bool
+
+	// External changes (tickets 07 + 51): one watcher per open package, keyed by
+	// tab id. The coordinator reports a settled digest; the reload path reads the
+	// package, decides whether the tab is dirty, and either swaps the document in
+	// place or asks the user first.
+	watchMu sync.Mutex
+	watched map[string]*watchedProject
 }
 
 // NewService wires the service onto a workspace (shared with the
 // workspace binding in main.go).
 func NewService(ws *Workspace) *Service {
-	return &Service{
+	service := &Service{
 		ws:         ws,
 		openDialog: defaultOpenDialog,
 		saveDialog: defaultSaveDialog,
+		watched:    map[string]*watchedProject{},
 	}
+	if ws != nil {
+		// Closing a tab retires its external-change watcher; the reload path also
+		// re-checks, so a missed hook can never reload into a dead tab.
+		ws.onTabClosed = service.unwatchProject
+	}
+	return service
 }
 
 // Startup is the Wails lifecycle hook: captures the runtime context the

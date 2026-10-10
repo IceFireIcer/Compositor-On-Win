@@ -8,6 +8,7 @@ import (
 	"regexp"
 
 	"compositor-win/internal/domain"
+	"compositor-win/internal/fsatomic"
 )
 
 // Package-level size limits (project-format.md "Limits"). Vars rather than
@@ -120,20 +121,13 @@ func (s *Store) Save(dir string, doc *domain.Document, assets map[string][]byte)
 		}
 	}
 
-	tmp := filepath.Join(dir, "manifest.json.tmp")
-	if err := os.WriteFile(tmp, manifest, 0o644); err != nil {
-		return encodef("写入 manifest 暂存文件失败: %v", err)
-	}
+	// The commit: manifest.json.tmp, then one rename over manifest.json. On
+	// Windows a rename replaces an existing target (MOVEFILE_REPLACE_EXISTING),
+	// so no remove-first step is needed — and remove-first would lose the
+	// manifest outright if the rename then failed against a locked file. See
+	// internal/fsatomic for the measurements and the small retry.
 	final := filepath.Join(dir, "manifest.json")
-	// os.Rename refuses to replace an existing file on Windows, so the
-	// commit is remove-then-rename; the watcher (internal/watch) re-arms
-	// across exactly this rename.
-	if err := os.Remove(final); err != nil && !errors.Is(err, fs.ErrNotExist) {
-		_ = os.Remove(tmp)
-		return encodef("移除旧 manifest 失败: %v", err)
-	}
-	if err := os.Rename(tmp, final); err != nil {
-		_ = os.Remove(tmp)
+	if err := fsatomic.WriteFile(final, manifest, 0o644); err != nil {
 		return encodef("提交 manifest 失败: %v", err)
 	}
 
@@ -259,20 +253,11 @@ func (s *Store) removeStaleAssets(imagesDir string, referenced map[string]bool) 
 	}
 }
 
+// writeFileAtomic writes one asset through internal/fsatomic: temp file in the
+// same directory, then a single rename (with a short retry for the transient
+// locks Windows writers run into).
 func writeFileAtomic(path string, data []byte) error {
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
-		return err
-	}
-	if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
-		_ = os.Remove(tmp)
-		return err
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		_ = os.Remove(tmp)
-		return err
-	}
-	return nil
+	return fsatomic.WriteFile(path, data, 0o644)
 }
 
 func deref(s *string) string {

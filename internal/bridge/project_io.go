@@ -111,6 +111,10 @@ func (s *Service) openPath(path string) (bool, error) {
 	if _, err := s.ws.OpenDocument(path, doc, bitmaps); err != nil {
 		return false, err
 	}
+	// 盯着这个包：代理/其它应用改了它，就在原位重载（票 51）。
+	if tabID, ok := s.ws.TabIDForPath(path); ok {
+		s.watchProject(tabID, path)
+	}
 	s.noteRecent(path)
 	return false, nil
 }
@@ -167,6 +171,9 @@ func (s *Service) ConfirmPendingOpen() (string, error) {
 	}
 	if _, err := s.ws.OpenDocument(pending.path, pending.doc, pending.bitmaps); err != nil {
 		return "", err
+	}
+	if tabID, ok := s.ws.TabIDForPath(pending.path); ok {
+		s.watchProject(tabID, pending.path)
 	}
 	s.noteRecent(pending.path)
 	return s.ws.ActiveDocumentJSON()
@@ -258,6 +265,11 @@ func (s *Service) SaveProjectDialog() (string, error) {
 	rev, err := s.ws.SaveActive(path)
 	if err != nil {
 		return "", err
+	}
+	// 保存（含另存为）之后重新记基线：我们自己写的这版内容不该被当成"外部变更"，
+	// 而另存为换了路径，旧路径的监视器要退休。
+	if tabID, ok := s.ws.TabIDForPath(path); ok {
+		s.watchProject(tabID, path)
 	}
 	s.noteRecent(path) // 保存过的项目也进最近列表（原版 Save As 同样记一笔）
 	return marshalSaveResult(saveResult{Path: path, Rev: rev})

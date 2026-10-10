@@ -109,6 +109,8 @@ export function Redo():Promise<string>;
 
 export function RenderHandler():Promise<http.Handler>;
 
+export function ResolveExternalChange(arg1:string,arg2:boolean):Promise<string>;
+
 export function SampleLevelsPoint(arg1:number,arg2:number):Promise<string>;
 
 export function SaveProjectDialog():Promise<string>;

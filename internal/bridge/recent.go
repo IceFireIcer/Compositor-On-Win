@@ -16,6 +16,8 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+
+	"compositor-win/internal/fsatomic"
 )
 
 // defaultRecentLimit 是最近项目列表的上限（macOS 的最近文档菜单也是 10 条）。
@@ -148,18 +150,9 @@ func (s *RecentStore) write(paths []string) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("无法创建配置目录: %w", err)
 	}
-	tmp := s.path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
-		return fmt.Errorf("写入最近项目失败: %w", err)
-	}
-	// Windows 上 os.Rename 拒绝覆盖已存在的文件：先删再改名（与 project/store.go
-	// 的 manifest 提交同一处理）。
-	if err := os.Remove(s.path); err != nil && !os.IsNotExist(err) {
-		_ = os.Remove(tmp)
-		return fmt.Errorf("移除旧最近项目失败: %w", err)
-	}
-	if err := os.Rename(tmp, s.path); err != nil {
-		_ = os.Remove(tmp)
+	// 一次 rename 覆盖（Windows 上也允许，见 internal/fsatomic）：先删再改名会在
+	// "删成功、改名失败"时把列表整个丢掉。
+	if err := fsatomic.WriteFile(s.path, data, 0o644); err != nil {
 		return fmt.Errorf("提交最近项目失败: %w", err)
 	}
 	return nil

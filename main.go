@@ -82,6 +82,10 @@ func main() {
 				}
 			}
 		},
+		// 退出时停掉外部变更监视器（票 51）：每个打开过的包都有一个 fsnotify 句柄。
+		OnShutdown: func(context.Context) {
+			shellHooks.Shutdown()
+		},
 		// 单实例（票 49）：第二次启动不再开一个进程，而是把参数交给既有实例，
 		// 由它打开那些文件并把窗口提到前台 —— 与 macOS 版"同一窗口多标签"一致。
 		SingleInstanceLock: &options.SingleInstanceLock{

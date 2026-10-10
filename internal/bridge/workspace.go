@@ -44,6 +44,11 @@ type Workspace struct {
 	active   string
 	counter  int
 	sessions map[string]*session
+
+	// onTabClosed lets the service retire per-tab resources (the external-change
+	// watcher). Set once by NewService; called with the workspace lock held, so it
+	// must not call back into the workspace.
+	onTabClosed func(id string)
 }
 
 // NewWorkspace starts with no documents.
@@ -144,7 +149,6 @@ func (w *Workspace) SelectTab(id string) (Snapshot, error) {
 // leaves the workspace empty and returns to the welcome screen.
 func (w *Workspace) CloseTab(id string) (Snapshot, error) {
 	w.mu.Lock()
-	defer w.mu.Unlock()
 	index := -1
 	for i, d := range w.tabs {
 		if d.ID == id {
@@ -153,6 +157,7 @@ func (w *Workspace) CloseTab(id string) (Snapshot, error) {
 		}
 	}
 	if index < 0 {
+		w.mu.Unlock()
 		return Snapshot{}, fmt.Errorf("标签不存在: %s", id)
 	}
 	w.tabs = append(w.tabs[:index], w.tabs[index+1:]...)
@@ -167,7 +172,101 @@ func (w *Workspace) CloseTab(id string) (Snapshot, error) {
 	default:
 		w.active = w.tabs[len(w.tabs)-1].ID
 	}
-	return w.snapshotLocked(), nil
+	snapshot := w.snapshotLocked()
+	hook := w.onTabClosed
+	w.mu.Unlock()
+
+	// Called outside the lock: it stops a watcher/coordinator (the external-change
+	// resource), and holding the workspace lock across that would block every
+	// other document operation for no reason.
+	if hook != nil {
+		hook(id)
+	}
+	return snapshot, nil
+}
+
+// ReloadDocument replaces the content of the tab that holds path with a freshly
+// read package: same tab id, name and stack position, empty history (a reload
+// clears undo the way reopening a file does) and a clean dirty flag. The active
+// tab is left alone — an external edit to one file must not yank the user off
+// the tab they are working on.
+//
+// Reports ok=false when no tab holds that path any more (the tab was closed, or
+// the document was saved somewhere else), which tells the caller to stop
+// watching it.
+func (w *Workspace) ReloadDocument(path string, doc *domain.Document, bitmaps map[string]*render.Bitmap) (Snapshot, string, bool, error) {
+	if doc == nil {
+		return Snapshot{}, "", false, fmt.Errorf("文档为空，无法重载")
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	for i := range w.tabs {
+		tab := &w.tabs[i]
+		sess := w.sessions[tab.ID]
+		if sess == nil || sess.path != path {
+			continue
+		}
+		// The new session's rev continues from the old one: the frontend keys the
+		// canvas image on (docId, rev) — and docId is deliberately preserved by the
+		// agent contract — so a reload that restarted at rev 0 would leave a tab
+		// that had never been edited showing the old pixels.
+		rev := sess.rev + 1
+		reloaded := newSession(path, doc, bitmaps)
+		reloaded.rev = rev
+		w.sessions[tab.ID] = reloaded
+		tab.Name = displayName(path)
+		tab.Width, tab.Height = doc.Width, doc.Height
+		if doc.Resolution != nil {
+			tab.Resolution = *doc.Resolution
+		}
+		tab.Dirty = false
+		return w.snapshotLocked(), tab.ID, true, nil
+	}
+	return w.snapshotLocked(), "", false, nil
+}
+
+// TabState reports one tab's package path and dirty flag. ok is false when the
+// tab is gone, which the external-change path uses to retire a watcher.
+func (w *Workspace) TabState(id string) (path string, dirty bool, ok bool) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	for i := range w.tabs {
+		if w.tabs[i].ID != id {
+			continue
+		}
+		sess := w.sessions[id]
+		if sess == nil {
+			return "", false, false
+		}
+		return sess.path, w.tabs[i].Dirty, true
+	}
+	return "", false, false
+}
+
+// TabBusy reports whether one tab has an edit in flight — a brush stroke being
+// dragged or an open filter session. The external-change path must not swap the
+// session out from under those: the stroke would then land on a document nobody
+// is showing (and its commit would fail on a session that no longer exists).
+func (w *Workspace) TabBusy(id string) bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	sess := w.sessions[id]
+	if sess == nil {
+		return false
+	}
+	return sess.stroke != nil || sess.filter != nil
+}
+
+// TabIDForPath finds the tab holding a package path, if any (one tab per file).
+func (w *Workspace) TabIDForPath(path string) (string, bool) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	for i := range w.tabs {
+		if sess := w.sessions[w.tabs[i].ID]; sess != nil && sess.path == path {
+			return w.tabs[i].ID, true
+		}
+	}
+	return "", false
 }
 
 // Snapshot returns the current state (safe copy).
@@ -180,13 +279,26 @@ func (w *Workspace) Snapshot() Snapshot {
 // ActiveDocumentJSON marshals the active tab's document envelope:
 // {"rev":N,"doc":{...}} — doc is null (rev 0) when nothing is open.
 func (w *Workspace) ActiveDocumentJSON() (string, error) {
+	return w.DocumentJSON(w.activeID())
+}
+
+// DocumentJSON marshals one tab's document envelope. The external-change path
+// needs it for a background tab, not only for the active one.
+func (w *Workspace) DocumentJSON(id string) (string, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	sess := w.activeSessionLocked()
+	sess := w.sessions[id]
 	if sess == nil {
 		return marshalEnvelope(0, nil)
 	}
 	return marshalEnvelope(sess.rev, sess.doc)
+}
+
+// activeID reports the active tab's id ("" when the workspace is empty).
+func (w *Workspace) activeID() string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.active
 }
 
 // ActiveRev is the active tab's revision, 0 when nothing is open.

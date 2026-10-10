@@ -46,6 +46,8 @@
     watchShellPaths,
   } from "./lib/state/shell";
   import UpdateSheet from "./lib/components/UpdateSheet.svelte";
+  import ExternalChangePrompt from "./lib/components/ExternalChangePrompt.svelte";
+  import { watchExternalChanges } from "./lib/state/external";
   import {
     checkForUpdates,
     loadUpdateInfo,
@@ -234,6 +236,9 @@
     // 启动参数里带的文件（双击关联打开）。
     void handleShellPaths();
     void refreshRecentProjects();
+    // 外部变更（票 51）：代理/别的应用改了磁盘上的包，Go 侧重载完推事件过来。
+    // 干净的文档直接刷新画布（视口与选区不动）；脏的先弹"放弃/保留"。
+    const stopExternalChanges = watchExternalChanges();
     // 更新检查（票 50）：静默跑一次，只有真有新版才弹表单；进度事件订阅在这里，
     // 表单自己只管展示。
     const stopUpdateProgress = watchUpdateProgress();
@@ -265,6 +270,7 @@
       teardownShortcuts();
       stopShellPaths();
       stopUpdateProgress();
+      stopExternalChanges();
       clearTimeout(timer);
       window.removeEventListener("resize", onResize);
     };
@@ -424,6 +430,9 @@
 
 <!-- 检查更新（票 50）：菜单打开，或启动时的静默检查发现新版。 -->
 <UpdateSheet />
+
+<!-- 外部变更（票 51）：磁盘上的包被代理改了，而当前文档有未保存修改。 -->
+<ExternalChangePrompt />
 
 {#if $filterSession && $filterSession.kind !== "cameraRaw"}
   <FilterDialog />
