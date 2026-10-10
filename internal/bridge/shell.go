@@ -88,8 +88,17 @@ func (h *ShellHooks) Queue(paths []string) { h.svc.queueShellPaths(paths) }
 // Notify 告诉前端外壳又递了文件进来，并把窗口提到前台。
 func (h *ShellHooks) Notify() { h.svc.notifyShellPaths() }
 
-// Shutdown 收尾：停掉所有外部变更监视器（Wails 的 OnShutdown 调它）。
-func (h *ShellHooks) Shutdown() { h.svc.stopWatchingProjects() }
+// StartMemoryWatch 开始定期采样机器内存（main.go 的 OnStartup 调它）。
+//
+// 刻意不放在 Service.Startup 里：Startup 也被测试用来装运行时上下文，而内存采样会读
+// 真实机器内存并可能立刻收缩历史 —— 测试不该有这种副作用。
+func (h *ShellHooks) StartMemoryWatch() { h.svc.startMemoryWatch() }
+
+// Shutdown 收尾：停掉外部变更监视器与内存采样（Wails 的 OnShutdown 调它）。
+func (h *ShellHooks) Shutdown() {
+	h.svc.stopWatchingProjects()
+	h.svc.stopMemoryWatch()
+}
 
 // shellPathsReply 是"一串外壳路径"的回复（最近项目列表、清空后的列表）。
 type shellPathsReply struct {

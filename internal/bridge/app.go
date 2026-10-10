@@ -11,6 +11,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"compositor-win/internal/memory"
 	"compositor-win/internal/project"
 	"compositor-win/internal/render"
 	"compositor-win/internal/update"
@@ -85,6 +86,11 @@ type Service struct {
 	// place or asks the user first.
 	watchMu sync.Mutex
 	watched map[string]*watchedProject
+
+	// Memory pressure (ticket 52 / V10): samples physical memory and shrinks
+	// rebuildable caches (render cache, undo history) before Windows pages.
+	memoryMu    sync.Mutex
+	memoryWatch *memory.Watcher
 }
 
 // NewService wires the service onto a workspace (shared with the

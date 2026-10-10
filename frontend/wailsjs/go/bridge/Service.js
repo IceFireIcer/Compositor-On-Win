@@ -214,6 +214,10 @@ export function RenderHandler() {
   return window['go']['bridge']['Service']['RenderHandler']();
 }
 
+export function ReportReady() {
+  return window['go']['bridge']['Service']['ReportReady']();
+}
+
 export function ResolveExternalChange(arg1, arg2) {
   return window['go']['bridge']['Service']['ResolveExternalChange'](arg1, arg2);
 }

@@ -14,6 +14,10 @@ export function ActiveSaveInfo() {
   return window['go']['bridge']['Workspace']['ActiveSaveInfo']();
 }
 
+export function ApplyMemoryPressure(arg1, arg2, arg3) {
+  return window['go']['bridge']['Workspace']['ApplyMemoryPressure'](arg1, arg2, arg3);
+}
+
 export function BeginStroke(arg1, arg2) {
   return window['go']['bridge']['Workspace']['BeginStroke'](arg1, arg2);
 }
@@ -72,6 +76,10 @@ export function Snapshot() {
 
 export function StrokePoint(arg1, arg2) {
   return window['go']['bridge']['Workspace']['StrokePoint'](arg1, arg2);
+}
+
+export function TabBusy(arg1) {
+  return window['go']['bridge']['Workspace']['TabBusy'](arg1);
 }
 
 export function TabIDForPath(arg1) {

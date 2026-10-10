@@ -167,7 +167,7 @@
 | L05 | 剪贴蒙版 + 组蒙版 | `maskSourceID` | 15 | M2 | ☐ |
 | L06 | 非破坏变换（任意缩小保留原分辨率）+ 采样质量三档 | `LayerTransform.sampling` | 33 | M3 | ☐ |
 | L07 | 快照撤销：嵌套事务/100 条/256MB/revision 脏标记 | `DocumentHistory` | 57 | M1 | ☐ |
-| L08 | 文档限额：30,000px 边长/200M 像素/内存预算 RAM/16 | `DocumentLimits` | 51 | M1 | ☐ |
+| L08 | 文档限额：30,000px 边长/200M 像素/内存预算 RAM/16 | `DocumentLimits` | 51 | M1 | ☑ 票52：`ValidateNewDocument`（边长/像素/分辨率）+ `DocumentPixelBudgetFor`（纯函数，RAM/16 语义：下限 200M、上限 800M；8GiB=537MP 与原版注释一致）+ 拐点表与上限关系测试 |
 
 ## G. 选区系统
 
@@ -215,8 +215,8 @@
 | V06 | 数值拖拽调节（拖标签 scrub）/方向键步进/点击跳转 | `NumericScrub`/`SliderSnap` | 54 | M3 控件 | ☐ |
 | V07 | 合成徽标光标（加选/减选/吸管/旋转等 ~10 种） | NSCursor 家族 | — | M3 | ☐ |
 | V08 | 右键拖拽笔刷 HUD | `EditorCanvas` | 18 | M4 | ☐ |
-| V09 | 4K 笔刷回显 <16ms 基准 | `brush-performance.md` | 19 | M4 | ☐ |
-| V10 | 内存压力响应的纹理/缓存逐出 | `GPUCanvas` | — | M2 | ☐ |
+| V09 | 4K 笔刷回显 <16ms 基准 | `brush-performance.md` | 19 | M4 | ◐ 票52：`TestBrushStroke4KLatency` 在 4000×4000 上逐段计时，实测 median 1.5–2.0ms / p95 2.1–2.5ms（门禁：默认 48ms，`COMPOSITOR_BENCH_STRICT=1` 时为票面目标 16ms），基线入 `docs/benchmarks/performance.md`。**只有后端、不含显示**，且桥接层只暴露直径 30（原版测 40/800）—— 故 ◐ |
+| V10 | 内存压力响应的纹理/缓存逐出 | `GPUCanvas` | — | M2 | ◐ 票52：`internal/memory` 采样档位（<25% moderate / <12% critical），桥接侧真的逐出渲染缓存并把历史压到 10–50 步（注入测试证明撤销/重做/重渲染仍可用），档位变化推 `memory:pressure`；前端注册口就位且有测试。**GPU 纹理缓存尚未接进画布**（票 11 的库层今天没有生产端注册）—— 故 ◐ |
 
 ## K. 平台集成与代理契约
 
@@ -231,7 +231,7 @@
 | P07 | 拖放导入（文件/截图/网页图） | WebView 拖放 | 55 | M9 | ◐ 票48：三来源都接了（Wails OnFileDrop 路径 → `ImportDroppedPaths`；截图/网页图 → 浏览器栅格化 + `BeginBlobImport` 上传面）；dragover 对 Files 与 text/uri-list/text/html 都取消默认（否则网页图那条永远收不到 drop），两路用 250ms 等待 + 750ms 去重窗口避免重复导入。Go 侧 8 个测试、前端判定与接线 13 个测试；**真机拖放交互未手工验收**（P07 仍 ◐ 的原因） |
 | P08 | 窗口脏标记/标题（任务栏覆盖图标） | Win32 等价 | 10 | M9 | ☑ 票49：窗口标题 `名字* - Compositor`（脏标记加星）+ 任务栏覆盖图标（`ITaskbarList3::SetOverlayIcon` 红点，失败只记日志）。真机发现该 API 会跨进程卡住（最长 >60s），因此 winchrome 每次调用最多等 2s 且有界失败、与最近文档各用独立闸门；未截到任务栏红点图 |
 | P09 | 首次启动窗口尺寸记忆 | 窗口状态持久化 | 9 | M9 | ☑ 票02+49：`WindowStore`（用户配置目录 window.json）+ 启动恢复 + resize 防抖保存；票49 核对后勾 |
-| P10 | 启动到就绪基准（原版 LAUNCH_TO_READY_MEDIAN） | 性能测试 | — | M10 | ☐ |
+| P10 | 启动到就绪基准（原版 LAUNCH_TO_READY_MEDIAN） | 性能测试 | — | M10 | ☑ 票52（CI 无硬门禁）：`main()` 起表 + 前端就绪上报 → stdout 打 `LAUNCH_TO_READY_SECONDS`；`scripts/launchbench.ps1` 跑 N 次算中位数并按原版指标名打印，可 `-Record` 进 `docs/benchmarks/launch.json`。**已实测**：本机三次 median 0.547/0.534/0.513 s，趋势入 `docs/benchmarks/launch.json`、口径与跑法入 `docs/benchmarks/launch.md`；CI 里那一步是 log-only + artifact 且 `continue-on-error`（runner 无交互桌面），**没有硬门禁**；跨平台不可直接比（少了进程创建与 XCTest/辅助功能开销） |
 
 ## 明确不做（与原版对齐的省略，非遗漏）
 

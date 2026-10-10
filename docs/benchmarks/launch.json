@@ -1,0 +1,32 @@
+[
+  {
+    "timestamp": "2026-10-10T15:25:40Z",
+    "runs": 5,
+    "samples": [
+      0.542,
+      0.56,
+      0.613,
+      0.545,
+      0.547
+    ],
+    "medianSeconds": 0.547,
+    "os": "Microsoft Windows 11 专业版",
+    "cpu": "AMD Ryzen 9 7945HX with Radeon Graphics        ",
+    "memoryBytes": 16299335680
+  },
+  {
+    "timestamp": "2026-10-10T15:26:25Z",
+    "runs": 5,
+    "samples": [
+      0.484,
+      0.588,
+      0.513,
+      0.559,
+      0.505
+    ],
+    "medianSeconds": 0.513,
+    "os": "Microsoft Windows 11 专业版",
+    "cpu": "AMD Ryzen 9 7945HX with Radeon Graphics        ",
+    "memoryBytes": 16299335680
+  }
+]

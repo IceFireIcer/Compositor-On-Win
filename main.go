@@ -40,6 +40,8 @@ func init() {
 }
 
 func main() {
+	// 启动基准（票 52 / P10）：从 main 的第一条语句开始量到"界面可用"。
+	bridge.MarkLaunchStart()
 	workspace := bridge.NewWorkspace()
 	service := bridge.NewService(workspace)
 	windowStore, err := bridge.DefaultWindowStore()
@@ -76,6 +78,8 @@ func main() {
 		AssetServer:      &assetserver.Options{Assets: assets, Handler: service.RenderHandler()},
 		BackgroundColour: &options.RGBA{R: 30, G: 30, B: 32, A: 255},
 		OnStartup: func(ctx context.Context) {
+			// 内存压力采样（票 52）：压力上来时收缩历史与渲染缓存，并通知前端逐出纹理。
+			shellHooks.StartMemoryWatch()
 			if windowStore != nil {
 				if state, err := windowStore.Load(); err == nil && state.Width > 0 && state.Height > 0 {
 					runtime.WindowSetSize(ctx, state.Width, state.Height)

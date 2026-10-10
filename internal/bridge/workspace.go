@@ -243,6 +243,40 @@ func (w *Workspace) TabState(id string) (path string, dirty bool, ok bool) {
 	return "", false, false
 }
 
+// ApplyMemoryPressure shrinks everything rebuildable in every open session and
+// reports how many render caches it dropped (diagnostics only).
+//
+// It only touches caches and the undo history: documents and their bitmap
+// library are the user's work and are never evicted here. The history keeps the
+// newest steps — the oldest undo is what goes, exactly like the macOS byte
+// budget does.
+//
+// dropRenderCache is the caller's call because the levels differ: at moderate
+// pressure the last composed frame stays (recomposing is exactly the expensive
+// thing we are trying to avoid while memory is tight — the macOS GPU canvas
+// keeps its last frame the same way), and only a critical machine gives it up.
+//
+// Note for whoever installs a RetainedBytes estimator: trim would then measure
+// snapshot bytes inside this write lock. Keep that estimator cheap or move the
+// measurement outside the lock first.
+func (w *Workspace) ApplyMemoryPressure(entryLimit int, retainedBytes int64, dropRenderCache bool) int {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	dropped := 0
+	for _, sess := range w.sessions {
+		if dropRenderCache && sess.renderPNG != nil {
+			sess.renderPNG = nil
+			sess.renderRev = 0
+			sess.renderFilterRev = 0
+			dropped++
+		}
+		if sess.doc != nil {
+			sess.hist.SetLimits(entryLimit, retainedBytes, *sess.doc)
+		}
+	}
+	return dropped
+}
+
 // TabBusy reports whether one tab has an edit in flight — a brush stroke being
 // dragged or an open filter session. The external-change path must not swap the
 // session out from under those: the stroke would then land on a document nobody

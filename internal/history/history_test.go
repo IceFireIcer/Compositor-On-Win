@@ -658,3 +658,72 @@ func TestDefaultLimitsAndClamping(t *testing.T) {
 		t.Fatalf("zero entry limit must evict immediately, got %d", tight.UndoCount())
 	}
 }
+
+// 内存压力（票 52 / V10）：SetLimits 立刻把历史收缩到新上限，且**从最旧的一端**丢，
+// 剩下的撤销/重做仍然可重放（与既有的字节预算逐出测试同一条规则）。
+func TestSetLimitsShrinksHistoryOldestFirstAndStaysReplayable(t *testing.T) {
+	doc := domain.Document{Width: 10, Height: 10}
+	h := NewWithLimits(100, 0)
+	for i := 0; i < 20; i++ {
+		next := doc
+		next.Width = 11 + i // 每次都真的变了：内容相同的 Begin/End 不产生历史步
+		h.Begin("编辑", doc, nil)
+		h.End(next, nil)
+		doc = next
+	}
+	if len(h.past) != 20 {
+		t.Fatalf("20 次编辑后应有 20 步历史，得到 %d", len(h.past))
+	}
+
+	// 压力来了：压到 5 步。
+	h.SetLimits(5, 0, doc)
+	entryLimit, _ := h.Limits()
+	if entryLimit != 5 {
+		t.Fatalf("上限 = %d，想要 5", entryLimit)
+	}
+	if len(h.past) != 5 {
+		t.Fatalf("应按新上限收缩到 5 步，得到 %d", len(h.past))
+	}
+	// 保留下来的必须是最新的那几步：还能连撤 5 次，第 6 次才没有。
+	for i := 0; i < 5; i++ {
+		if _, ok := h.Undo(); !ok {
+			t.Fatalf("第 %d 次撤销应仍然可用（丢的是最旧的）", i+1)
+		}
+	}
+	if _, ok := h.Undo(); ok {
+		t.Fatal("撤到上限之后就不该再有了")
+	}
+	for i := 0; i < 5; i++ {
+		if _, ok := h.Redo(); !ok {
+			t.Fatalf("第 %d 次重做应仍然可用（重做链保持可重放）", i+1)
+		}
+	}
+
+	// 压力过去：恢复默认上限，历史不会被"变多"，但新编辑按新上限走。
+	h.SetLimits(DefaultEntryLimit, DefaultRetainedByteLimit, doc)
+	if entryLimit2, byteLimit := h.Limits(); entryLimit2 != DefaultEntryLimit || byteLimit != DefaultRetainedByteLimit {
+		t.Fatalf("恢复后的上限 = (%d, %d)，想要 (%d, %d)", entryLimit2, byteLimit, DefaultEntryLimit, DefaultRetainedByteLimit)
+	}
+	if len(h.past) != 5 {
+		t.Fatalf("恢复上限不该凭空造出历史，得到 %d", len(h.past))
+	}
+}
+
+// 负值按 0 处理（与 NewWithLimits 一致）：上限为 0 意味着历史被清空。
+func TestSetLimitsClampsNegative(t *testing.T) {
+	doc := domain.Document{}
+	h := NewWithLimits(10, 0)
+	h.Begin("编辑", doc, nil)
+	next := doc
+	next.Height = 5
+	h.End(next, nil)
+
+	h.SetLimits(-1, -1, next)
+	entryLimit, byteLimit := h.Limits()
+	if entryLimit != 0 || byteLimit != 0 {
+		t.Fatalf("负值应按 0 处理，得到 (%d, %d)", entryLimit, byteLimit)
+	}
+	if h.CanUndo() {
+		t.Fatal("上限为 0 时历史应被清空")
+	}
+}

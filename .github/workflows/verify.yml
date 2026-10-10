@@ -72,6 +72,25 @@ jobs:
           go vet ./...
           go test ./...
 
+      # 票 52：把基准数字留在 CI 日志里，作为"性能趋势"的落点。
+      # -run '^$' 跳过普通测试（上一行已经跑过），只跑基准。
+      # -benchtime=1x：每个基准只跑一轮，足以把 ns/op 与内存分配记进日志，又不会把
+      # windows-latest 的流水线拖长。本仓库的基准（internal/render、internal/bridge）
+      # 已经自己判 testing.Short()，重负载项（100MP）还要 COMPOSITOR_BENCH_HEAVY=1，
+      # 所以这里不传 -short：默认参数下跑的正是可以常驻 CI 的那部分。
+      # 本地实测：这条命令约 5s，4 个基准都有输出。
+      - name: Benchmarks (1 iteration, log-only trend)
+        run: |
+          go test ./internal/... -run '^$' -bench . -benchtime=1x
+
+      # 票 52：启动到就绪基准。这一步是"尽力而为"——GitHub 的 windows-latest runner
+      # 没有交互式桌面会话，WebView2 起不来，脚本会明确报错并且不产出样本（脚本不会编造）。
+      # 因此这里允许失败；真值请看 docs/benchmarks/launch.md 与 docs/benchmarks/launch.json。
+      - name: Launch-to-ready benchmark (best effort; skipped/failed on headless runners — see docs/benchmarks/launch.md)
+        continue-on-error: true
+        run: |
+          pwsh -NoProfile -File scripts/launchbench.ps1 -SkipBuild -Runs 3
+
   package:
     name: Build app + NSIS installer
     needs: verify

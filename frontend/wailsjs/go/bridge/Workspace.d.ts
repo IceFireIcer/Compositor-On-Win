@@ -10,6 +10,8 @@ export function ActiveRev():Promise<number>;
 
 export function ActiveSaveInfo():Promise<string>;
 
+export function ApplyMemoryPressure(arg1:number,arg2:number,arg3:boolean):Promise<number>;
+
 export function BeginStroke(arg1:number,arg2:number):Promise<string>;
 
 export function CloseTab(arg1:string):Promise<bridge.Snapshot>;
@@ -39,6 +41,8 @@ export function SelectTab(arg1:string):Promise<bridge.Snapshot>;
 export function Snapshot():Promise<bridge.Snapshot>;
 
 export function StrokePoint(arg1:number,arg2:number):Promise<string>;
+
+export function TabBusy(arg1:string):Promise<boolean>;
 
 export function TabIDForPath(arg1:string):Promise<string|boolean>;
 

@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { onMount } from "svelte";
-  import { Version } from "../wailsjs/go/bridge/Service";
+  import { onMount, tick } from "svelte";
+  import { ReportReady, Version } from "../wailsjs/go/bridge/Service";
   import { Snapshot as GetSnapshot } from "../wailsjs/go/bridge/Workspace";
   import { Save as SaveWindowState } from "../wailsjs/go/bridge/WindowStore";
   import { TOOLS, activeTool, selectTool } from "./lib/state/tools";
@@ -48,6 +48,7 @@
   import UpdateSheet from "./lib/components/UpdateSheet.svelte";
   import ExternalChangePrompt from "./lib/components/ExternalChangePrompt.svelte";
   import { watchExternalChanges } from "./lib/state/external";
+  import { watchMemoryPressure } from "./lib/state/memory";
   import {
     checkForUpdates,
     loadUpdateInfo,
@@ -239,6 +240,8 @@
     // 外部变更（票 51）：代理/别的应用改了磁盘上的包，Go 侧重载完推事件过来。
     // 干净的文档直接刷新画布（视口与选区不动）；脏的先弹"放弃/保留"。
     const stopExternalChanges = watchExternalChanges();
+    // 内存压力（票 52）：Go 侧采样机器内存，档位变化时推过来；能逐出纹理的缓存自己注册。
+    const stopMemoryPressure = watchMemoryPressure();
     // 更新检查（票 50）：静默跑一次，只有真有新版才弹表单；进度事件订阅在这里，
     // 表单自己只管展示。
     const stopUpdateProgress = watchUpdateProgress();
@@ -252,7 +255,12 @@
         version = "离线";
       }
       applySnapshot(await GetSnapshot());
-    })();
+    })().finally(() => {
+      // 界面可用（票 52 / P10）：**在 finally 里报**，这样连首次快照失败也能给出数字
+      // （否则 launchbench 每次白等到超时）。等一个 DOM flush 再报：Svelte 还没把这一帧
+      // 渲染出来之前不叫"界面可用"。
+      void tick().then(() => ReportReady()).catch(() => undefined);
+    });
 
     // Window size persistence: debounced save on resize; restore happens
     // Go-side at startup (main.go OnStartup). outerWidth/outerHeight match
@@ -271,6 +279,7 @@
       stopShellPaths();
       stopUpdateProgress();
       stopExternalChanges();
+      stopMemoryPressure();
       clearTimeout(timer);
       window.removeEventListener("resize", onResize);
     };

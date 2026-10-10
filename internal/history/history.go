@@ -301,6 +301,33 @@ func retainedOver(e entry, estimate RetainedEstimator, live int64) int64 {
 	return total
 }
 
+// SetLimits replaces both bounds and immediately trims to them. Memory pressure
+// uses it to make history give way before the machine starts paging; passing the
+// defaults restores the normal bounds once pressure is over.
+//
+// The byte bound only bites when RetainedBytes is installed (see
+// RetainedEstimator): the Go model keeps pixels in disk PNGs, so with the
+// default estimator the entry bound is what actually shrinks the history — which
+// is still the same user-visible behaviour as the macOS byte budget, just
+// measured in steps rather than pixels.
+func (h *History) SetLimits(entryLimit int, retainedByteLimit int64, current domain.Document) {
+	if entryLimit < 0 {
+		entryLimit = 0
+	}
+	if retainedByteLimit < 0 {
+		retainedByteLimit = 0
+	}
+	h.entryLimit = entryLimit
+	h.retainedByteLimit = retainedByteLimit
+	h.trim(current)
+}
+
+// Limits reports the current bounds (entry, then bytes) — used by tests and by
+// the pressure path to assert that it shrank history.
+func (h *History) Limits() (entryLimit int, retainedByteLimit int64) {
+	return h.entryLimit, h.retainedByteLimit
+}
+
 // trim evicts oldest-first while over the entry or byte budget, mirroring
 // DocumentHistory.trim: past drains before future, and evicting from the
 // front of future keeps the remaining redo chain replayable in order.

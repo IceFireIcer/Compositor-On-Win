@@ -5,7 +5,6 @@ package domain
 
 import (
 	"fmt"
-	"math"
 	"sync"
 	"unsafe"
 
@@ -58,6 +57,19 @@ func ValidateNewDocument(width, height, resolution int) *LimitsError {
 	return nil
 }
 
+// MaxDocumentPixels is the ceiling on the whole document's raster: 800 MP is
+// 3.2 GB of RGBA8 layers, which a 16 GB machine already reaches.
+//
+// Two different ceilings are in play and must not be confused:
+//
+//	MaxSurfacePixels  = 200 MP — one surface (canvas, export, filter target, mask render)
+//	MaxDocumentPixels = 800 MP — every layer and mask of one document together
+//
+// Both are below MaxSide*MaxSide = 900 MP, which is what makes "a square at
+// MaxSide is still oversized" true (several tests express "too large" that way;
+// it is the largest area the side limit can describe).
+const MaxDocumentPixels = 800_000_000
+
 // DocumentPixelBudget is the total raster one document may hold across every
 // layer and mask (DocumentLimits.documentPixelBudget): a quarter of physical
 // memory at 4 bytes a pixel, never below one surface (200 MP) and never above
@@ -65,16 +77,59 @@ func ValidateNewDocument(width, height, resolution int) *LimitsError {
 // MaxSurfacePixels.
 func DocumentPixelBudget() int {
 	budgetOnce.Do(func() {
-		total := physicalMemoryBytes()
-		budget = int(math.Min(800_000_000, math.Max(float64(MaxSurfacePixels), float64(total/16))))
+		budget = DocumentPixelBudgetFor(ReadMemoryStatus().Total)
 	})
 	return budget
+}
+
+// DocumentPixelBudgetFor is the budget as a pure function of installed physical
+// memory, so the RAM/16 semantics can be tested without the machine's actual
+// RAM. totalBytes == 0 (the OS call failed) lands on the floor, like the Swift
+// max(...) does.
+//
+// The units are pixels, assuming 4 bytes per pixel and giving the document a
+// quarter of memory. 8 GiB therefore yields 537 MP — the number the macOS
+// source quotes — and 12 GiB already hits the 800 MP ceiling.
+func DocumentPixelBudgetFor(totalBytes uint64) int {
+	quarter := totalBytes / 16
+	switch {
+	case quarter < uint64(MaxSurfacePixels):
+		return MaxSurfacePixels
+	case quarter > MaxDocumentPixels:
+		return MaxDocumentPixels
+	default:
+		return int(quarter)
+	}
 }
 
 var (
 	budgetOnce sync.Once
 	budget     int
 )
+
+// MemoryStatus is the machine's physical memory picture, read from
+// GlobalMemoryStatusEx. Available is what Windows says is free right now; both
+// are 0 when the call fails.
+type MemoryStatus struct {
+	Total     uint64
+	Available uint64
+}
+
+// ReadMemoryStatus samples physical memory. Cheap enough to poll (one
+// syscall), which is how the memory-pressure watcher works.
+func ReadMemoryStatus() MemoryStatus {
+	var status memoryStatusEx
+	status.Length = uint32(unsafe.Sizeof(status))
+	result, _, _ := globalMemoryStatusEx.Call(uintptr(unsafe.Pointer(&status)))
+	if result == 0 {
+		return MemoryStatus{}
+	}
+	return MemoryStatus{Total: status.TotalPhys, Available: status.AvailPhys}
+}
+
+// globalMemoryStatusEx 只解析一次：内存采样会被 5 秒一次的轮询反复调用，没必要每次
+// 都重新走一遍 LazyDLL 查找。
+var globalMemoryStatusEx = windows.NewLazySystemDLL("kernel32.dll").NewProc("GlobalMemoryStatusEx")
 
 // memoryStatusEx mirrors MEMORYSTATUSEX (kernel32).
 type memoryStatusEx struct {
@@ -87,17 +142,4 @@ type memoryStatusEx struct {
 	TotalVirtual         uint64
 	AvailVirtual         uint64
 	AvailExtendedVirtual uint64
-}
-
-// physicalMemoryBytes reads installed physical memory; 0 falls back to the
-// 200 MP floor through DocumentPixelBudget's max.
-func physicalMemoryBytes() uint64 {
-	proc := windows.NewLazySystemDLL("kernel32.dll").NewProc("GlobalMemoryStatusEx")
-	var status memoryStatusEx
-	status.Length = uint32(unsafe.Sizeof(status))
-	result, _, _ := proc.Call(uintptr(unsafe.Pointer(&status)))
-	if result == 0 {
-		return 0
-	}
-	return status.TotalPhys
 }
