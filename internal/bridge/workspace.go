@@ -367,6 +367,29 @@ func (w *Workspace) ActiveSaveInfo() (path, name string, err error) {
 // recorded. When the command changed the document (history committed an
 // entry) the revision bumps and the tab turns dirty. Returns the document
 // envelope JSON.
+// syncTabSizeLocked mirrors the session document's canvas geometry onto the tab
+// descriptor. The workspace snapshot is what the frontend uses for the canvas
+// box (CanvasSurface 的 .doc 尺寸)、状态栏尺寸、以及裁剪覆盖层的起始框，所以任何
+// 会改变文档尺寸的命令（裁剪 / 画布大小 / 图像大小 / 修剪，以及它们的撤销重做）
+// 都必须同步它 —— 否则界面继续按旧尺寸画框，而 /render 已经按新尺寸出图，
+// 表现为"提交裁剪后画布和状态栏纹丝不动"。
+func (w *Workspace) syncTabSizeLocked(id string, doc *domain.Document) {
+	if doc == nil {
+		return
+	}
+	for i := range w.tabs {
+		if w.tabs[i].ID != id {
+			continue
+		}
+		w.tabs[i].Width = doc.Width
+		w.tabs[i].Height = doc.Height
+		if doc.Resolution != nil {
+			w.tabs[i].Resolution = *doc.Resolution
+		}
+		return
+	}
+}
+
 func (w *Workspace) EditActive(name string, fn func(*session) error) (string, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -389,6 +412,7 @@ func (w *Workspace) EditActive(name string, fn func(*session) error) (string, er
 		sess.rev++
 		w.setTabDirtyLocked(w.active, true)
 	}
+	w.syncTabSizeLocked(w.active, sess.doc)
 	return marshalEnvelope(sess.rev, sess.doc)
 }
 
@@ -414,6 +438,7 @@ func (w *Workspace) UndoActive() (string, error) {
 	sess.applyRasterJournal(leaving, false)
 	sess.rev++
 	w.setTabDirtyLocked(w.active, sess.path == "" || sess.hist.IsModified())
+	w.syncTabSizeLocked(w.active, sess.doc)
 	return marshalEnvelope(sess.rev, sess.doc)
 }
 
@@ -435,6 +460,7 @@ func (w *Workspace) RedoActive() (string, error) {
 	sess.applyRasterJournal(snap.Revision, true)
 	sess.rev++
 	w.setTabDirtyLocked(w.active, sess.path == "" || sess.hist.IsModified())
+	w.syncTabSizeLocked(w.active, sess.doc)
 	return marshalEnvelope(sess.rev, sess.doc)
 }
 
