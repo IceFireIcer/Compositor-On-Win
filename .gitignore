@@ -41,3 +41,6 @@ vcpkg_installed/
 
 # 发布产物与更新 feed（票 50）：本地产物，绝不提交
 releases/
+
+# 运行时诊断日志（本地排查用，不入库）
+app-*.log
