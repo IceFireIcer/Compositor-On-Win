@@ -149,6 +149,88 @@ func TestReportFrontendErrorNeedsNoDocument(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// 信息级通道（source 以 "info:" 开头）：GPU 设备探测这类正常诊断信息不该顶着
+// "FRONTEND_ERROR:" 的前缀，但正式版里 console 又看不见，所以共用同一条 stdout
+// 通道、只换前缀。签名与其余行为完全不变。
+
+func TestReportFrontendErrorInfoChannelStripsThePrefix(t *testing.T) {
+	svc := NewService(NewWorkspace())
+
+	for _, source := range []string{"info:gpu", "info: gpu", "  info:gpu  "} {
+		buf := captureFrontendError(t)
+		if _, err := svc.ReportFrontendError(source, "WebGPU 可用", "adapter=Intel"); err != nil {
+			t.Fatal(err)
+		}
+		want := "FRONTEND_INFO: gpu | WebGPU 可用 | adapter=Intel\n"
+		if got := buf.String(); got != want {
+			t.Fatalf("source %q 的输出 = %q，想要 %q", source, got, want)
+		}
+	}
+}
+
+func TestReportFrontendErrorInfoChannelIsNotConfusedByLongerSources(t *testing.T) {
+	svc := NewService(NewWorkspace())
+
+	// 只有字面 "info:" 前缀才算信息级；"information"、"info"、"infoX:y"
+	// 都必须留在错误级，且 source 原样保留。
+	for _, source := range []string{"information", "info", "infoX:y", "INFO:gpu"} {
+		buf := captureFrontendError(t)
+		if _, err := svc.ReportFrontendError(source, "boom", "trace"); err != nil {
+			t.Fatal(err)
+		}
+		want := "FRONTEND_ERROR: " + source + " | boom | trace\n"
+		if got := buf.String(); got != want {
+			t.Fatalf("source %q 的输出 = %q，想要 %q", source, got, want)
+		}
+	}
+}
+
+func TestReportFrontendErrorInfoChannelKeepsEscapingAndLimits(t *testing.T) {
+	svc := NewService(NewWorkspace())
+	buf := captureFrontendError(t)
+
+	stack := strings.Repeat("x", frontendErrorStackLimit*3)
+	if _, err := svc.ReportFrontendError("info:gpu", "行1\n行2", stack); err != nil {
+		t.Fatal(err)
+	}
+	line := buf.String()
+	if !strings.HasPrefix(line, "FRONTEND_INFO: gpu | ") {
+		t.Fatalf("信息级前缀不对: %q", line)
+	}
+	if strings.Count(line, "\n") != 1 {
+		t.Fatalf("信息级也必须一行一条，得到 %q", line)
+	}
+	if !strings.Contains(line, `行1\n行2`) {
+		t.Fatalf("信息级的换行没有转义: %q", line)
+	}
+	if len(line) > 4096 || !strings.Contains(line, "...") {
+		t.Fatalf("信息级没有沿用限长: %d 字节", len(line))
+	}
+}
+
+func TestReportFrontendErrorInfoChannelFallsBackToUnknown(t *testing.T) {
+	svc := NewService(NewWorkspace())
+	buf := captureFrontendError(t)
+
+	if _, err := svc.ReportFrontendError("info:", "GPU 探测开始", ""); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := buf.String(), "FRONTEND_INFO: unknown | GPU 探测开始 | \n"; got != want {
+		t.Fatalf("输出 = %q，想要 %q", got, want)
+	}
+}
+
+func TestReportFrontendErrorInfoChannelRealisticSample(t *testing.T) {
+	svc := NewService(NewWorkspace())
+	buf := captureFrontendError(t)
+
+	if _, err := svc.ReportFrontendError("info:gpu", "WebGPU 设备探测：adapter=Intel(R) Iris(R) Xe Graphics, backend=webgpu", "probeDevice (assets/index-7f3a.js:1:5120)"); err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("真实输出: %s", strings.TrimSuffix(buf.String(), "\n"))
+}
+
 func TestReportFrontendErrorSurvivesPathologicalInput(t *testing.T) {
 	svc := NewService(NewWorkspace())
 	buf := captureFrontendError(t)

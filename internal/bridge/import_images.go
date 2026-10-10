@@ -587,7 +587,8 @@ func (w *Workspace) importNewDocument(files []pendingImportFile) (string, error)
 		name = fmt.Sprintf("未命名 %d", w.counter)
 	}
 	tab := Document{
-		ID:         newDocID(),
+		// 见 workspace.NewDocument：标签 ID 与文档 ID 必须一致。
+		ID:         doc.DocumentID,
 		Name:       name,
 		Width:      doc.Width,
 		Height:     doc.Height,

@@ -24,6 +24,53 @@
 
 ## 2. 审计发现的核心问题（按严重度）
 
+### 2.0 【最严重｜已修】画布从来没有显示过文档内容
+
+**这一条是"应用能不能用"的分界线，其余所有问题都在它之下。**
+
+标签 ID 与文档 ID 是**两个独立生成的标识**：
+
+| | 生成处 | 形态 |
+| --- | --- | --- |
+| 标签 ID | `internal/bridge/workspace.go` 的 `newDocID()` | `doc-<16 位十六进制>` |
+| 文档 ID | `internal/bridge/session.go` 的 `newUUID()` | RFC 4122 UUID（大写带连字符） |
+
+前端有两处按"文档 ID"配对，两处都因此永远不成立：
+
+1. `App.svelte:190` 的标签同步 effect 调 `loadDocument(current.id)`，
+   而 `current.id` 是**标签 ID**；`applyDocumentSnapshot` 的
+   `expectedDocId` 守卫（`document.ts:357`）拿它与快照里的**文档 ID** 比较 →
+   不相等 → **快照被静默丢弃**。
+2. `CanvasSurface.svelte:352` 的 `docState.docId === doc.id` → 永远为假 →
+   `renderSrc` 恒为 `null` → **画布从不显示 Go 合成出来的图像**。
+
+**用户可见后果**：画布永远是一块棋盘格。画笔、填充、滤镜、调整、图层操作
+全都在 Go 侧真实执行、rev 也真实推进，但**一个像素都不会显示出来**。
+票 02 的验收项"新建后画布显示棋盘格"恰好被这个 bug 满足，于是它一路蒙混过关。
+
+**定位方式**（值得记下来）：先用运行时诊断确认画笔链路本身是好的
+（`brush-begin-ok` → 201 次 pointermove → `brush-end`，全部成功），
+再用"抓手拖拽能平移"证明指针事件确实送达，最后用一条临时诊断打印 id 比较结果：
+
+```
+FRONTEND_INFO: docload | expected=undefined            actual=35C59DD1-…  match=true
+FRONTEND_INFO: docload | expected=doc-a9afc945989ceaad actual=35C59DD1-…  match=false
+```
+
+**修法**：让标签 ID **就是**文档 ID（`internal/bridge` 三处创建点统一用
+`doc.DocumentID`）。`sessionByIDLocked` 本来就有"按标签 ID 或文档 ID 都能找到
+会话"的兜底循环，说明两种 ID 混用是既有的模糊地带；统一之后：
+- App 的标签同步 effect 能正确接受快照；
+- `renderSrc` 守卫成立，画布显示真实合成；
+- 删掉了已无用的 `newDocID()`。
+
+回归测试 `internal/bridge/tabid_test.go` 钉住这个不变量
+（含"重复打开同一 .comp 时 ID 不变"）。
+
+**真机验证**：修复后新建 1920×1080 文档 → 画布显示**白色**（白色背景层，
+不再是棋盘格）→ 画笔拖拽出现**黑色笔迹** → 从标尺拖出**青色参考线**。
+修复前这三样全都不可能出现。
+
 ### 2.1 三套完整纯类零生产消费者
 
 `TransformSession`（票 17）、`GuidesState`（票 14）、`CropState`（票 18）都是

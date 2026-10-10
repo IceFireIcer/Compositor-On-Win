@@ -24,6 +24,13 @@ import (
 const (
 	// frontendErrorPrefix is the grep anchor of the report line.
 	frontendErrorPrefix = "FRONTEND_ERROR: "
+	// frontendInfoPrefix is the informational channel's anchor, and
+	// frontendInfoSourcePrefix the source prefix that selects it: a normal
+	// startup diagnostic (a GPU probe, say) should not be logged as an error,
+	// but it travels the same stdout channel because the WebView2 console is
+	// invisible in release builds.
+	frontendInfoPrefix       = "FRONTEND_INFO: "
+	frontendInfoSourcePrefix = "info:"
 	// frontendErrorStackLimit / frontendErrorMessageLimit cap one report so a
 	// runaway stack trace cannot flood the log.
 	frontendErrorStackLimit   = 4000
@@ -54,11 +61,16 @@ var frontendErrorWriter io.Writer = os.Stdout
 // frontend exception, so every input is accepted. The reply is a small JSON
 // acknowledgement the caller can ignore.
 func (s *Service) ReportFrontendError(source, message, stack string) (string, error) {
+	prefix := frontendErrorPrefix
+	if trimmed := strings.TrimSpace(source); strings.HasPrefix(trimmed, frontendInfoSourcePrefix) {
+		prefix = frontendInfoPrefix
+		source = strings.TrimSpace(strings.TrimPrefix(trimmed, frontendInfoSourcePrefix))
+	}
 	if strings.TrimSpace(source) == "" {
 		source = frontendErrorUnknownSource
 	}
 	fmt.Fprintf(frontendErrorWriter, "%s%s | %s | %s\n",
-		frontendErrorPrefix,
+		prefix,
 		escapeLogField(source, frontendErrorSourceLimit),
 		escapeLogField(message, frontendErrorMessageLimit),
 		escapeLogField(stack, frontendErrorStackLimit))

@@ -96,6 +96,7 @@ import {
   showGuides,
   showRulers,
   snapEnabled,
+  guidesState,
 } from "../state/view";
 import {
   beginTransformSession,
@@ -524,6 +525,8 @@ export function viewToggleState(): {
   snap: boolean;
   lockGuides: boolean;
   transformControls: boolean;
+  /** 当前文档有没有参考线（"清除参考线"据此禁用，与"显示参考线"开关无关）。 */
+  hasGuides: boolean;
 } {
   return {
     grid: get(showGrid),
@@ -532,6 +535,7 @@ export function viewToggleState(): {
     snap: get(snapEnabled),
     lockGuides: get(lockGuides),
     transformControls: get(showsTransformControls),
+    hasGuides: guidesState.guides.length > 0,
   };
 }
 

@@ -1,8 +1,6 @@
 package bridge
 
 import (
-	"crypto/rand"
-	"encoding/hex"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -17,6 +15,11 @@ import (
 // tabs, the checkerboard and the dirty marker. Since the M2 wiring each
 // tab is backed by a real domain.Document + history session (see session);
 // ID/Name/Dirty semantics carry over unchanged.
+//
+// ID invariant: a tab's ID **is** its session document's domain.DocumentID.
+// The frontend matches the render URL and the document snapshot on this value
+// (App.svelte's loadDocument(expectedDocId), CanvasSurface's renderSrc guard),
+// so the two must never be generated independently.
 type Document struct {
 	ID         string `json:"id"`
 	Name       string `json:"name"`
@@ -56,14 +59,6 @@ func NewWorkspace() *Workspace {
 	return &Workspace{sessions: map[string]*session{}}
 }
 
-func newDocID() string {
-	var b [8]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		panic(err) // crypto/rand failure is unrecoverable
-	}
-	return "doc-" + hex.EncodeToString(b[:])
-}
-
 // NewDocument validates against the document limits, appends a tab backed
 // by a real document (one white 背景 layer) and activates it. Name is
 // 未命名, then 未命名 2, 未命名 3, …
@@ -80,7 +75,11 @@ func (w *Workspace) NewDocument(width, height, resolution int) (Snapshot, error)
 	}
 	doc, bitmaps := newDocumentModel(width, height, resolution)
 	tab := Document{
-		ID:         newDocID(),
+		// 标签 ID **就是**文档 ID。前端靠它把 /render/{id}.png 与当前文档对上
+		// （App.svelte 的 loadDocument(expectedDocId) 与 CanvasSurface 的
+		// renderSrc 守卫都按文档 ID 比较）。曾经两者各生成一个 ID，导致守卫
+		// 永远不成立、画布永远不显示合成结果。
+		ID:         doc.DocumentID,
 		Name:       name,
 		Width:      width,
 		Height:     height,
@@ -120,7 +119,9 @@ func (w *Workspace) OpenDocument(path string, doc *domain.Document, bitmaps map[
 		res = *doc.Resolution
 	}
 	tab := Document{
-		ID:         newDocID(),
+		// 见 NewDocument：标签 ID 与文档 ID 必须一致（.comp 的 documentID 在
+		// 同一文件上稳定，所以重复打开同一路径仍然对得上）。
+		ID:         doc.DocumentID,
 		Name:       name,
 		Width:      doc.Width,
 		Height:     doc.Height,

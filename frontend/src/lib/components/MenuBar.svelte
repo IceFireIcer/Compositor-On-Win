@@ -504,7 +504,7 @@
         },
         {
           label: "清除参考线",
-          disabled: !viewState.guides,
+          disabled: !viewState.hasGuides,
           run: () => {
             clearAllGuides();
             close();

@@ -520,19 +520,47 @@
   /** 变换拖动状态：记录按下点与模式。 */
   let moveDrag: { startX: number; startY: number } | null = null;
 
-  /** 左键按下：把手 → resize，框内 → move。没有会话时先按需开一个。 */
+  /**
+   * 左键按下：把手 → resize，框内 → move。
+   *
+   * 关键顺序：**先判断这次按下属不属于变换，再开会话**。之前是反过来的
+   * （先 `beginTransformSession()` 再判断），于是任何落在图层之外的按下
+   * ——从标尺拖参考线、点空白画布——都会顺手开一个变换会话，画布上莫名
+   * 多出变换框。
+   */
   function beginMoveDrag(e: PointerEvent): boolean {
-    // 还没有会话就先开一个（V 工具直接拖图层 = 移动它，与原版一致）。
-    if (!get(transformSession) && !beginTransformSession()) return false;
-    const handle = handleAt(e);
-    // 没抓到把手、又不在框内：这次按下不属于变换（交给别的工具/平移逻辑）。
-    // 但"刚开的会话"要留着，让框显示出来，用户可以按 Esc 取消。
-    if (handle === null && !insideDraft(e)) return false;
+    const active = get(transformSession);
+    const handle = active ? handleAt(e) : null;
+    const inside = active ? insideDraft(e) : pressInsideActiveLayer(e);
+    // 没抓到把手、又不在图层框内：这次按下不属于变换，交给别的工具/平移逻辑。
+    if (handle === null && !inside) return false;
+    // 到这里才确定要变换：还没有会话就开一个（V 工具直接拖图层 = 移动它）。
+    if (!active && !beginTransformSession()) return false;
     const mode: DragMode = handle !== null ? { kind: "resize", handle } : { kind: "move" };
     const p = docPointOf(e);
     if (!beginTransformDrag(mode, p)) return false;
     moveDrag = { startX: p.x, startY: p.y };
     return true;
+  }
+
+  /**
+   * 没有会话时，指针是否落在**活动图层**的框内。用图层自己的 transform
+   * 判断，不先开会话 —— 这样"点图层内 = 开始移动"、"点图层外 = 什么都不做"。
+   */
+  function pressInsideActiveLayer(e: PointerEvent): boolean {
+    const doc0 = get(documentState);
+    const layer = doc0.layers.find((l) => l.id === doc0.activeLayerID);
+    if (!layer || layer.isGroup) return false;
+    const t = layer.transform;
+    const box = {
+      origin: [t.origin[0], t.origin[1]] as [number, number],
+      size: [t.size[0], t.size[1]] as [number, number],
+      rotation: t.rotation ?? 0,
+      flipX: false,
+      flipY: false,
+      sampling: "High quality" as const,
+    };
+    return transformContains(box, docPointOf(e));
   }
 
   /** 拖动中：把文档空间位移交给会话。 */

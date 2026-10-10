@@ -20,14 +20,39 @@ import (
 //go:embed all:frontend/dist
 var assets embed.FS
 
-// init runs before the WebView2 environment is created. System proxies
-// (Clash/v2ray etc.) answer 502 for wails.localhost: their bypass lists
-// cover localhost/127.* but not the wails.localhost virtual host. Force
-// WebView2 to bypass any proxy for loopback traffic (user-reported
-// HTTP ERROR 502). Existing additional arguments are preserved.
+// proxyBypassArgs is the WebView2 switch that excludes loopback from any
+// system proxy. See init for why setting it is currently inert.
+const proxyBypassArgs = "--proxy-bypass-list=<-loopback>"
+
+// proxyBypassArgs asks WebView2 to skip any system proxy for loopback
+// traffic. System proxies (Clash/v2ray etc.) answer 502 for wails.localhost:
+// their bypass lists cover localhost/127.* but not that virtual host, which
+// was a user-reported HTTP ERROR 502.
+//
+// IMPORTANT — this currently has NO EFFECT, and that is not a bug we can fix
+// here. go-webview2 deliberately overwrites WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS
+// with the value carried on its Chromium options, to stop the registry and the
+// ambient environment from injecting arguments behind the app's back:
+//
+//	webviewloader/native_module.go:160  os.Setenv(..., additionalBrowserArgs)
+//	webviewloader/env_create.go:169     os.Setenv(..., "")
+//
+// Wails calls edge.NewChromium() with no arguments (frontend.go:164) and
+// pkg/options/windows does not expose go-webview2's AdditionalBrowserArgs
+// field, so there is no supported way to contribute an argument from here.
+// Verified on a real machine: with this variable set, the msedgewebview2.exe
+// command line carries Wails' own --disable-features=… but no
+// --proxy-bypass-list. Setting it through the WebView2 registry policy is
+// likewise neutralized. See docs/audit/C-runtime-findings.md §2.
+//
+// We keep the assignment because it is the correct place to state the intent,
+// and it starts working the moment go-webview2 merges instead of overwriting
+// (a local replace directive, or an upstream Wails option). Until then a 502
+// from a system proxy has to be solved outside the browser: add wails.localhost
+// (or <-loopback>) to the proxy's own bypass list.
 func init() {
 	const env = "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"
-	const bypass = "--proxy-bypass-list=<-loopback>"
+	bypass := proxyBypassArgs
 	existing := os.Getenv(env)
 	if strings.Contains(existing, bypass) {
 		return

@@ -22,6 +22,7 @@
   import FilterDialog from "./lib/components/FilterDialog.svelte";
   import CameraRawPanel from "./lib/components/CameraRawPanel.svelte";
   import { watchFilterPreviews, filterSession } from "./lib/state/filters";
+  import { probeDevice, type RenderTrack } from "./lib/gpu/device";
   import { healSettings, updateHealSettings } from "./lib/state/tools";
   import { exportDialog, exportNotice } from "./lib/state/export";
   import ExportDialog from "./lib/components/ExportDialog.svelte";
@@ -67,6 +68,11 @@
   } from "./lib/state/dropimport";
 
   let version = $state("…");
+  // 渲染轨（票 11 验收项："WebGPU 不可用时显式回退 CPU 轨且功能不缺失"）。
+  // 探测结果必须**可见**：没有它，用户只能看到"画布有点慢"而不知道走的是哪条轨，
+  // 也没法判断 WebGPU 到底有没有起来。reason 放在 title 里供排查。
+  let renderTrack = $state<RenderTrack | null>(null);
+  let renderTrackReason = $state("");
 
   // --- 拖放导入（票 48）-------------------------------------------------------
   // Wails 的窗口级回调拿到的是**磁盘路径**（资源管理器、截图工具、其它应用
@@ -248,6 +254,24 @@
     void loadUpdateInfo();
     void checkForUpdates({ silent: true });
 
+    // GPU 探测（票 11）：不阻塞启动，结果只影响状态栏显示与诊断日志。
+    // 探测本身永不抛（device.ts 的契约），所以这里不需要 catch 兜底。
+    void (async () => {
+      const nav = navigator as Navigator & { gpu?: { requestAdapter?: unknown } };
+      const source =
+        nav.gpu && typeof nav.gpu.requestAdapter === "function"
+          ? (nav.gpu as { requestAdapter(o?: { powerPreference?: string }): Promise<unknown | null> })
+          : undefined;
+      const probe = await probeDevice(source);
+      renderTrack = probe.track;
+      renderTrackReason = probe.reason ?? "";
+      if (probe.track === "cpu-fallback") {
+        console.info(`渲染轨：CPU 回退（${probe.reason ?? "未说明"}）`);
+      } else {
+        console.info("渲染轨：WebGPU");
+      }
+    })();
+
     void (async () => {
       try {
         version = await Version();
@@ -422,6 +446,17 @@
       {/if}
     {/if}
     <span class="spacer"></span>
+    {#if renderTrack}
+      <span
+        class="render-track"
+        title={renderTrack === "webgpu"
+          ? "WebGPU 合成轨"
+          : `CPU 回退轨：${renderTrackReason}`}
+      >
+        {renderTrack === "webgpu" ? "GPU" : "CPU"}
+      </span>
+      <span class="sep">·</span>
+    {/if}
     <span title="internal/bridge.Service.Version 往返">v{version}</span>
   </footer>
 </div>
@@ -651,6 +686,12 @@
   .right-panel > :global(*) {
     flex: 1;
     min-width: 0;
+  }
+
+  .render-track {
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0.04em;
+    opacity: 0.85;
   }
 
   .status-bar {
