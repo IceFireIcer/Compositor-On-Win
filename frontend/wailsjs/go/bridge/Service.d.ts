@@ -7,13 +7,13 @@ export function ApplyFilter(arg1:string,arg2:string,arg3:string,arg4:number,arg5
 
 export function ApplyLevelsSample(arg1:string,arg2:number,arg3:number,arg4:number):Promise<string>;
 
+export function BeginBlobImport(arg1:Array<string>):Promise<string>;
+
 export function BeginExportPreview():Promise<string>;
 
 export function BeginFilterEdit(arg1:string,arg2:string,arg3:string,arg4:number,arg5:string):Promise<string>;
 
 export function BeginHealStroke(arg1:number,arg2:number,arg3:number,arg4:number,arg5:number,arg6:number,arg7:number):Promise<string>;
-
-export function BeginBlobImport(arg1:Array<string>):Promise<string>;
 
 export function BeginImageImport(arg1:Array<string>):Promise<string>;
 
@@ -34,6 +34,8 @@ export function CancelImageImport():Promise<void>;
 export function CancelPendingOpen():Promise<void>;
 
 export function CanvasSize(arg1:string):Promise<string>;
+
+export function ClearRecentProjects():Promise<string>;
 
 export function CommitFilter(arg1:string):Promise<string>;
 
@@ -77,7 +79,11 @@ export function LevelsAuto(arg1:number):Promise<string>;
 
 export function ListFonts():Promise<string>;
 
+export function OpenPath(arg1:string):Promise<string>;
+
 export function OpenProjectDialog():Promise<string>;
+
+export function OpenShellPaths():Promise<string>;
 
 export function Paste():Promise<string>;
 
@@ -90,6 +96,8 @@ export function RawCancelDevelop():Promise<void>;
 export function RawDevelopPreview(arg1:string):Promise<string>;
 
 export function RawFinishDevelop(arg1:string,arg2:string):Promise<string>;
+
+export function RecentProjects():Promise<string>;
 
 export function Redo():Promise<string>;
 
@@ -107,9 +115,11 @@ export function Startup(arg1:context.Context):Promise<void>;
 
 export function StrokePoint(arg1:number,arg2:number):Promise<string>;
 
-export function TransferLayer(arg1:string,arg2:string):Promise<string>;
+export function SyncWindowChrome(arg1:string,arg2:boolean):Promise<string>;
 
 export function TextCommit(arg1:string):Promise<string>;
+
+export function TransferLayer(arg1:string,arg2:string):Promise<string>;
 
 export function Trim(arg1:string):Promise<string>;
 

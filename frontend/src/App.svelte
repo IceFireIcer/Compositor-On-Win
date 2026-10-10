@@ -39,6 +39,12 @@
     saveProjectSafe,
   } from "./lib/shortcuts/actions";
   import { shortcutsSheet } from "./lib/shortcuts/settings";
+  import {
+    openShellPaths,
+    refreshRecentProjects,
+    syncWindowChrome,
+    watchShellPaths,
+  } from "./lib/state/shell";
   import { OnFileDrop } from "../wailsjs/runtime/runtime";
   import { importDroppedBlobs, importDroppedPaths } from "./lib/state/workspace";
   import {
@@ -64,6 +70,31 @@
     if (failures.length === 0) return;
     window.alert(`\u5bfc\u5165\u672a\u80fd\u5b8c\u6210\n\n${failures.join("\n\n")}`);
   }
+
+  // --- Shell 集成（票 49）----------------------------------------------------
+  // 外壳递来的文件（双击 .comp、命令行、第二次启动的单实例转发）由 Go 排队，
+  // 前端就绪后调 OpenShellPaths 统一打开：.comp 进标签，.psd 顶起转换报告。
+  async function handleShellPaths(): Promise<void> {
+    const result = await openShellPaths();
+    if (result.pending) pendingConversions.set(result.conversions);
+    if (result.failed.length > 0) {
+      window.alert(
+        `打开失败\n\n${result.failed.map((f) => `${f.path}: ${f.error}`).join("\n\n")}`,
+      );
+    }
+    if (result.opened.length > 0) await refreshRecentProjects();
+  }
+
+  // 窗口标题与任务栏脏标记跟着活动标签走（原版：标题跟文档名，isDocumentEdited
+  // 画未保存标记）。只在名字/脏标记真的变了时才过桥。
+  let lastChromeKey = "";
+  $effect(() => {
+    const tab = current;
+    const key = `${tab?.name ?? ""}|${tab?.dirty ? 1 : 0}`;
+    if (key === lastChromeKey) return;
+    lastChromeKey = key;
+    syncWindowChrome(tab?.name ?? "", tab?.dirty ?? false);
+  });
 
   async function onDroppedPaths(paths: string[]): Promise<void> {
     if (paths.length === 0) return;
@@ -190,6 +221,13 @@
     OnFileDrop((_x, _y, paths) => {
       void onDroppedPaths(paths);
     }, false);
+    // 第二次启动把参数交给既有实例后，Go 会推这个事件（票 49 的单实例协议）。
+    const stopShellPaths = watchShellPaths(() => {
+      void handleShellPaths();
+    });
+    // 启动参数里带的文件（双击关联打开）。
+    void handleShellPaths();
+    void refreshRecentProjects();
 
     void (async () => {
       try {
@@ -214,6 +252,7 @@
     window.addEventListener("resize", onResize);
     return () => {
       teardownShortcuts();
+      stopShellPaths();
       clearTimeout(timer);
       window.removeEventListener("resize", onResize);
     };

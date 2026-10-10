@@ -32,7 +32,7 @@
 | --- | --- | --- | --- | --- | --- |
 | C01 | New Canvas…（欢迎屏） | ⌘N→Ctrl+N | 9 | M0 | ☐ |
 | C02 | Open Project… / 拖放打开 | ⌘O | 1 | M1/M9 | ☐ |
-| C03 | Open Recent（含清除） | — | 53 | M9 | ☐ |
+| C03 | Open Recent（含清除） | — | 53 | M9 | ☑ 票49：文件菜单逐条列出最近项目（完整路径在 tooltip）+ 清除最近记录；列表上限 10、读取时过滤已移动/删除的文件（RecentProjects.refresh 语义），与 Windows 跳转列表共用一份 |
 | C04 | Import Images… | — | 46 | M7 | ☑ 票40（多选批次，RAW/HEIC 随票41） |
 | C05 | Save / Save As | ⌘S / ⇧⌘S | 49 | M1 | ☐ |
 | C06 | Export PNG… | ⇧⌘E | 48 | M7 | ☑ 票42 |
@@ -224,13 +224,13 @@
 | --- | --- | --- | --- | --- | --- |
 | P01 | ~114 条快捷键 + 重映射 + 冲突校验 | 前端快捷键表（Cmd→Ctrl） | 52 | M9 | ☑ 票47：原版实测 113 条逐条移植（表驱动测试）+ 重映射/冲突校验/持久化 + 三域分流；票48 接上 Cut/Copy/Paste 后未接线 22 条，已逐条登记归属 |
 | P02 | 剪贴板（像素/整层/合并） | Windows 剪贴板 | 55 | M9 | ☑ 票42+48：CF_DIB 写（拷贝合并/选区像素）+ 读（PNG 注册格式回落 CF_DIB，纯 Go 解码含 1/4/8/16/24/32bpp，PNG 解码有测试）+ 剪贴板序号做变更判定。**与 C11 同一 caveat：winclip 的 Win32 读写本体（C shim）无自动化测试，只在真机上跑**；`GetImage`/`Sequence`/`PutBitmap` 的实际行为需要手工验收（拷进画图、从浏览器拷图回来） |
-| P03 | 文件关联/最近文件/跳转列表 | NSIS + shell | 53 | M9 | ☐ |
+| P03 | 文件关联/最近文件/跳转列表 | NSIS + shell | 53 | M9 | ☑ 票49：`wails.json` 的 `info.fileAssociations` 经 NSIS 注册 `.comp` 关联（生成的宏写 `"$INSTDIR\Compositor.exe" "%1"`，双击/打开方式进标签）+ 最近文件（用户配置目录 JSON，打开与保存都记）+ 跳转列表（`SHAddToRecentDocs`）。真机跑通过、**无自动化断言**；覆盖图标实测会卡（见 P08） |
 | P04 | 安装包 + 签名 + 自动更新 | NSIS + GitHub Releases + EdDSA | 53 | M9 | ☐ |
 | P05 | 代理热更新（写 PNG→原子改名→~300ms 重载，保留视口选区） | fsnotify + digest | 56 | M1/M9 | ☐ |
 | P06 | 常暗深色 UI / 单窗口多标签 | Svelte 外壳 | 2/53 | M0 | ☐ |
 | P07 | 拖放导入（文件/截图/网页图） | WebView 拖放 | 55 | M9 | ◐ 票48：三来源都接了（Wails OnFileDrop 路径 → `ImportDroppedPaths`；截图/网页图 → 浏览器栅格化 + `BeginBlobImport` 上传面）；dragover 对 Files 与 text/uri-list/text/html 都取消默认（否则网页图那条永远收不到 drop），两路用 250ms 等待 + 750ms 去重窗口避免重复导入。Go 侧 8 个测试、前端判定与接线 13 个测试；**真机拖放交互未手工验收**（P07 仍 ◐ 的原因） |
-| P08 | 窗口脏标记/标题（任务栏覆盖图标） | Win32 等价 | 10 | M9 | ☐ |
-| P09 | 首次启动窗口尺寸记忆 | 窗口状态持久化 | 9 | M9 | ☐ |
+| P08 | 窗口脏标记/标题（任务栏覆盖图标） | Win32 等价 | 10 | M9 | ☑ 票49：窗口标题 `名字* - Compositor`（脏标记加星）+ 任务栏覆盖图标（`ITaskbarList3::SetOverlayIcon` 红点，失败只记日志）。真机发现该 API 会跨进程卡住（最长 >60s），因此 winchrome 每次调用最多等 2s 且有界失败、与最近文档各用独立闸门；未截到任务栏红点图 |
+| P09 | 首次启动窗口尺寸记忆 | 窗口状态持久化 | 9 | M9 | ☑ 票02+49：`WindowStore`（用户配置目录 window.json）+ 启动恢复 + resize 防抖保存；票49 核对后勾 |
 | P10 | 启动到就绪基准（原版 LAUNCH_TO_READY_MEDIAN） | 性能测试 | — | M10 | ☐ |
 
 ## 明确不做（与原版对齐的省略，非遗漏）

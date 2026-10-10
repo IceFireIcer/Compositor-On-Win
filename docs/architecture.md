@@ -68,6 +68,9 @@
 - `layer:revised`（层修订号递增 → 前端失效对应 ImageBitmap）
 - `task:progress`（导出/滤镜后台进度）
 - `session:gate`（canEditLayers / canUseHistory 门控变化）
+- `filterPreview:{tabID}`（滤镜预览落地，附新的 filterRev；票 33/42 已用）
+- `shell:openPaths`（外壳又递了文件：第二次启动的单实例转发，票 49；前端收到后调
+  `OpenShellPaths` 打开。启动参数那条在挂载时直接拉，不需要事件）
 
 ### 3.3 像素面（HTTP）
 

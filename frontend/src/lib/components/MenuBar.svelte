@@ -14,11 +14,18 @@
     openGeometry,
     openProjectSafe,
     openShortcutsSheet,
+    pendingConversions,
     runInvert,
     runSelect,
     runShortcut,
     saveProjectSafe,
   } from "../shortcuts/actions";
+  import {
+    clearRecentProjects,
+    openPath,
+    recentProjects,
+    refreshRecentProjects,
+  } from "../state/shell";
   import { chordFor } from "../shortcuts/settings";
   import { chordLabel } from "../shortcuts/chords";
   import { registerCanvasModalGuard } from "../shortcuts/dispatch";
@@ -57,6 +64,30 @@
   const layerMenu = $derived(layerMenuState($document));
   // 文字会话：剪贴板命令让位给行内文本框（菜单路径也要挡）。
   const editingText = $derived($textSession !== null);
+
+  // 最近项目（票 49）：文件菜单里逐条列出，最后一条是"清除最近记录"。
+  // 列表由 Go 过滤（移动/删除过的项目不出现），开菜单时重取一次。
+  const recentFiles = $derived($recentProjects);
+  $effect(() => {
+    if (open === "文件") void refreshRecentProjects();
+  });
+
+  /** 文件名（菜单里只显示文件名，完整路径放 title/hint）。 */
+  function baseName(path: string): string {
+    const parts = path.split(/[\\/]/);
+    return parts[parts.length - 1] || path;
+  }
+
+  /** 打开最近项目：进了标签就够，要转换报告就把表单顶起来。 */
+  async function openRecentPath(path: string): Promise<void> {
+    const result = await openPath(path);
+    if (result.kind === "pending") {
+      pendingConversions.set(result.conversions);
+    } else if (result.kind === "failed") {
+      window.alert(`打开失败\n\n${result.error}`);
+    }
+    await refreshRecentProjects();
+  }
 
   /** Current chord label for a definition id — the menu's live hint. */
   function hintFor(id: string): string {
@@ -149,6 +180,27 @@
             void openProjectSafe();
           },
         },
+        ...recentFiles.map((path) => ({
+          label: `打开最近：${baseName(path)}`,
+          placeholder: path,
+          disabled: dialogOpen,
+          run: () => {
+            close();
+            void openRecentPath(path);
+          },
+        })),
+        ...(recentFiles.length > 0
+          ? [
+              {
+                label: "清除最近记录",
+                disabled: dialogOpen,
+                run: () => {
+                  close();
+                  void clearRecentProjects();
+                },
+              },
+            ]
+          : []),
         {
           label: "保存",
           hint: hintFor("Menus:Save"),

@@ -16,6 +16,8 @@ export function CloseTab(arg1:string):Promise<bridge.Snapshot>;
 
 export function EditActive(arg1:string,arg2:any):Promise<string>;
 
+export function EditActiveRaster(arg1:string,arg2:any):Promise<string>;
+
 export function EndStroke():Promise<string>;
 
 export function NewDocument(arg1:number,arg2:number,arg3:number):Promise<bridge.Snapshot>;

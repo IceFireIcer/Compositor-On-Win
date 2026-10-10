@@ -175,7 +175,7 @@ func (s *Service) exportFile(title, defaultName string, filter runtime.FileFilte
 	if s.ws == nil {
 		return "", errNoDocument
 	}
-	picked, err := defaultExportSaveDialog(s.ctx, title, defaultName, []runtime.FileFilter{filter})
+	picked, err := defaultExportSaveDialog(s.runtimeCtx(), title, defaultName, []runtime.FileFilter{filter})
 	if err != nil {
 		return "", fmt.Errorf("导出文件对话框失败: %w", err)
 	}

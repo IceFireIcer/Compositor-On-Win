@@ -9,6 +9,7 @@ package bridge
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 
 	"compositor-win/internal/project"
 	"compositor-win/internal/render"
@@ -29,7 +30,10 @@ type Service struct {
 	ws    *Workspace
 	store project.Store
 
-	ctx context.Context
+	// ctx 是 Wails 运行时上下文，Startup 写一次、之后到处读。它被放在 atomic
+	// 指针里：第二次启动的回调（OnSecondInstanceLaunch）在别的 goroutine 上读它，
+	// 而 Startup 的写在窗口创建时 —— 普通字段在 -race 下会报竞争。
+	ctx atomic.Pointer[context.Context]
 
 	openDialog func(ctx context.Context) (string, error)
 	saveDialog func(ctx context.Context) (string, error)
@@ -58,6 +62,14 @@ type Service struct {
 	// conversion notes waits here until the user confirms or cancels.
 	psdMu      sync.Mutex
 	pendingPSD *pendingPSDOpen
+
+	// Shell integration (ticket 49): the recent-projects list (nil until
+	// main.go installs it, so tests never touch the user's config dir) and the
+	// paths the shell handed over (argv, or a second instance's arguments),
+	// waiting for the frontend to open them.
+	recent     *RecentStore
+	shellMu    sync.Mutex
+	shellPaths []string
 }
 
 // NewService wires the service onto a workspace (shared with the
@@ -73,7 +85,15 @@ func NewService(ws *Workspace) *Service {
 // Startup is the Wails lifecycle hook: captures the runtime context the
 // dialogs need.
 func (s *Service) Startup(ctx context.Context) {
-	s.ctx = ctx
+	s.ctx.Store(&ctx)
+}
+
+// runtimeCtx 读回运行时上下文（Startup 之前是 nil）。
+func (s *Service) runtimeCtx() context.Context {
+	if p := s.ctx.Load(); p != nil {
+		return *p
+	}
+	return nil
 }
 
 // Version exposes the app version as a bound method for the frontend.

@@ -26,6 +26,10 @@ export function EditActive(arg1, arg2) {
   return window['go']['bridge']['Workspace']['EditActive'](arg1, arg2);
 }
 
+export function EditActiveRaster(arg1, arg2) {
+  return window['go']['bridge']['Workspace']['EditActiveRaster'](arg1, arg2);
+}
+
 export function EndStroke() {
   return window['go']['bridge']['Workspace']['EndStroke']();
 }

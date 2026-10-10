@@ -592,10 +592,10 @@ func (s *Service) LayerHistogram() (string, error) {
 // emitFilterPreview pushes the finished preview revision to the window so
 // the canvas refetches without polling.
 func (s *Service) emitFilterPreview(tabID string, filterRev int) {
-	if s.ctx == nil {
+	if s.runtimeCtx() == nil {
 		return
 	}
-	runtime.EventsEmit(s.ctx, "filterPreview:"+tabID, filterRev)
+	runtime.EventsEmit(s.runtimeCtx(), "filterPreview:"+tabID, filterRev)
 }
 
 // SampleLevelsPoint returns the active layer's straight sRGB at a document

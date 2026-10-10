@@ -10,6 +10,10 @@ export function ApplyLevelsSample(arg1, arg2, arg3, arg4) {
   return window['go']['bridge']['Service']['ApplyLevelsSample'](arg1, arg2, arg3, arg4);
 }
 
+export function BeginBlobImport(arg1) {
+  return window['go']['bridge']['Service']['BeginBlobImport'](arg1);
+}
+
 export function BeginExportPreview() {
   return window['go']['bridge']['Service']['BeginExportPreview']();
 }
@@ -20,10 +24,6 @@ export function BeginFilterEdit(arg1, arg2, arg3, arg4, arg5) {
 
 export function BeginHealStroke(arg1, arg2, arg3, arg4, arg5, arg6, arg7) {
   return window['go']['bridge']['Service']['BeginHealStroke'](arg1, arg2, arg3, arg4, arg5, arg6, arg7);
-}
-
-export function BeginBlobImport(arg1) {
-  return window['go']['bridge']['Service']['BeginBlobImport'](arg1);
 }
 
 export function BeginImageImport(arg1) {
@@ -64,6 +64,10 @@ export function CancelPendingOpen() {
 
 export function CanvasSize(arg1) {
   return window['go']['bridge']['Service']['CanvasSize'](arg1);
+}
+
+export function ClearRecentProjects() {
+  return window['go']['bridge']['Service']['ClearRecentProjects']();
 }
 
 export function CommitFilter(arg1) {
@@ -150,8 +154,16 @@ export function ListFonts() {
   return window['go']['bridge']['Service']['ListFonts']();
 }
 
+export function OpenPath(arg1) {
+  return window['go']['bridge']['Service']['OpenPath'](arg1);
+}
+
 export function OpenProjectDialog() {
   return window['go']['bridge']['Service']['OpenProjectDialog']();
+}
+
+export function OpenShellPaths() {
+  return window['go']['bridge']['Service']['OpenShellPaths']();
 }
 
 export function Paste() {
@@ -176,6 +188,10 @@ export function RawDevelopPreview(arg1) {
 
 export function RawFinishDevelop(arg1, arg2) {
   return window['go']['bridge']['Service']['RawFinishDevelop'](arg1, arg2);
+}
+
+export function RecentProjects() {
+  return window['go']['bridge']['Service']['RecentProjects']();
 }
 
 export function Redo() {
@@ -210,12 +226,16 @@ export function StrokePoint(arg1, arg2) {
   return window['go']['bridge']['Service']['StrokePoint'](arg1, arg2);
 }
 
-export function TransferLayer(arg1, arg2) {
-  return window['go']['bridge']['Service']['TransferLayer'](arg1, arg2);
+export function SyncWindowChrome(arg1, arg2) {
+  return window['go']['bridge']['Service']['SyncWindowChrome'](arg1, arg2);
 }
 
 export function TextCommit(arg1) {
   return window['go']['bridge']['Service']['TextCommit'](arg1);
+}
+
+export function TransferLayer(arg1, arg2) {
+  return window['go']['bridge']['Service']['TransferLayer'](arg1, arg2);
 }
 
 export function Trim(arg1) {

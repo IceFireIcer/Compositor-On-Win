@@ -239,10 +239,18 @@ RequestExecutionLevel "${REQUEST_EXECUTION_LEVEL}"
 !macro wails.associateFiles
     ; Create file associations
     
+      !insertmacro APP_ASSOCIATE "comp" "Compositor.Project" "Compositor 项目" "$INSTDIR\appicon.ico" "Open with ${INFO_PRODUCTNAME}" "$INSTDIR\${PRODUCT_EXECUTABLE} $\"%1$\""
+
+      File "..\appicon.ico"
+    
 !macroend
 
 !macro wails.unassociateFiles
     ; Delete app associations
+    
+      !insertmacro APP_UNASSOCIATE "comp" "Compositor.Project"
+
+      Delete "$INSTDIR\appicon.ico"
     
 !macroend
 

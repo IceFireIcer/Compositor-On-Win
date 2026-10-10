@@ -3,7 +3,16 @@
   "name": "Compositor",
   "outputfilename": "Compositor",
   "info": {
-    "productVersion": "0.1.0"
+    "productVersion": "0.1.0",
+    "fileAssociations": [
+      {
+        "ext": "comp",
+        "name": "Compositor.Project",
+        "description": "Compositor 项目",
+        "iconName": "appicon",
+        "role": "Editor"
+      }
+    ]
   },
   "frontend:install": "npm install",
   "frontend:build": "npm run build",

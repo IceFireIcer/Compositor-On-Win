@@ -104,10 +104,10 @@ func (s *Service) storeUploadedRaster(token string, data []byte) error {
 // PickImageImport shows the multi-file import dialog; an empty result
 // means the user cancelled.
 func (s *Service) PickImageImport() ([]string, error) {
-	if s.ctx == nil {
+	if s.runtimeCtx() == nil {
 		return nil, fmt.Errorf("运行时尚未就绪")
 	}
-	paths, err := runtime.OpenMultipleFilesDialog(s.ctx, runtime.OpenDialogOptions{
+	paths, err := runtime.OpenMultipleFilesDialog(s.runtimeCtx(), runtime.OpenDialogOptions{
 		Title:   "导入图像",
 		Filters: []runtime.FileFilter{imageFilter},
 	})

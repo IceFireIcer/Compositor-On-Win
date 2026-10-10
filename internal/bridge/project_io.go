@@ -75,30 +75,79 @@ func (s *Service) OpenProjectDialog() (string, error) {
 	if s.ws == nil {
 		return "", errNoDocument
 	}
-	path, err := s.openDialog(s.ctx)
+	path, err := s.openDialog(s.runtimeCtx())
 	if err != nil {
 		return "", fmt.Errorf("打开文件对话框失败: %w", err)
 	}
 	if path == "" {
 		return marshalEnvelope(s.ws.ActiveRev(), nil)
 	}
+	return s.openPathReply(path)
+}
+
+// isPhotoshopPath reports whether a path is a Photoshop document (ticket 38).
+func isPhotoshopPath(path string) bool {
+	ext := filepath.Ext(path)
+	return strings.EqualFold(ext, ".psd") || strings.EqualFold(ext, ".psb")
+}
+
+// openPath loads one path and applies it: a .comp becomes the active tab, a
+// Photoshop file with conversion notes parks in the pending slot. Returns
+// whether a conversion report is waiting for the user.
+//
+// Shared by the open dialog, the recent-projects menu and the shell paths
+// (ticket 49), so every entry point opens a file exactly the same way.
+func (s *Service) openPath(path string) (bool, error) {
 	conversions, doc, bitmaps, err := s.loadAny(path)
 	if err != nil {
-		return "", err
+		return false, err
 	}
 	if len(conversions) > 0 {
 		s.psdMu.Lock()
 		s.pendingPSD = &pendingPSDOpen{path: path, doc: doc, bitmaps: bitmaps, conversions: conversions}
 		s.psdMu.Unlock()
-		rev := s.ws.ActiveRev()
-		b, err := json.Marshal(openReply{Rev: rev, Pending: true, Conversions: conversions})
+		return true, nil
+	}
+	if _, err := s.ws.OpenDocument(path, doc, bitmaps); err != nil {
+		return false, err
+	}
+	s.noteRecent(path)
+	return false, nil
+}
+
+// hasPendingPSD reports whether a Photoshop conversion report is waiting for
+// the user (the import batch's single pending slot).
+func (s *Service) hasPendingPSD() bool {
+	s.psdMu.Lock()
+	defer s.psdMu.Unlock()
+	return s.pendingPSD != nil
+}
+
+// pendingConversions reads the conversion report waiting for confirmation.
+func (s *Service) pendingConversions() []psd.Conversion {
+	s.psdMu.Lock()
+	defer s.psdMu.Unlock()
+	if s.pendingPSD == nil {
+		return nil
+	}
+	return s.pendingPSD.conversions
+}
+
+// openPathReply is the open dialog's and OpenPath's shared reply: either the
+// opened document's envelope, or the pending Photoshop report.
+func (s *Service) openPathReply(path string) (string, error) {
+	pending, err := s.openPath(path)
+	if err != nil {
+		return "", err
+	}
+	if pending {
+		b, err := json.Marshal(openReply{
+			Rev: s.ws.ActiveRev(), Pending: true, Conversions: s.pendingConversions(),
+		})
 		if err != nil {
 			return "", fmt.Errorf("无法编码转换报告: %w", err)
 		}
 		return string(b), nil
-	}
-	if _, err := s.ws.OpenDocument(path, doc, bitmaps); err != nil {
-		return "", err
 	}
 	return s.ws.ActiveDocumentJSON()
 }
@@ -119,6 +168,7 @@ func (s *Service) ConfirmPendingOpen() (string, error) {
 	if _, err := s.ws.OpenDocument(pending.path, pending.doc, pending.bitmaps); err != nil {
 		return "", err
 	}
+	s.noteRecent(pending.path)
 	return s.ws.ActiveDocumentJSON()
 }
 
@@ -132,9 +182,7 @@ func (s *Service) CancelPendingOpen() {
 // loadAny opens .comp packages and .psd/.psb files, dispatching by
 // extension; the reply carries the conversion report for Photoshop files.
 func (s *Service) loadAny(path string) ([]psd.Conversion, *domain.Document, map[string]*render.Bitmap, error) {
-	isPhotoshop := strings.EqualFold(filepath.Ext(path), ".psd") ||
-		strings.EqualFold(filepath.Ext(path), ".psb")
-	if isPhotoshop {
+	if isPhotoshopPath(path) {
 		doc, bitmaps, conversions, err := s.loadPhotoshop(path)
 		return conversions, doc, bitmaps, err
 	}
@@ -197,7 +245,7 @@ func (s *Service) SaveProjectDialog() (string, error) {
 	}
 	path := curPath
 	if path == "" {
-		picked, err := s.saveDialog(s.ctx)
+		picked, err := s.saveDialog(s.runtimeCtx())
 		if err != nil {
 			return "", fmt.Errorf("保存文件对话框失败: %w", err)
 		}
@@ -211,6 +259,7 @@ func (s *Service) SaveProjectDialog() (string, error) {
 	if err != nil {
 		return "", err
 	}
+	s.noteRecent(path) // 保存过的项目也进最近列表（原版 Save As 同样记一笔）
 	return marshalSaveResult(saveResult{Path: path, Rev: rev})
 }
 
