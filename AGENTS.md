@@ -33,3 +33,17 @@
 
 - Go 代理已固化 `goproxy.cn`（proxy.golang.org 直连不可达）；CI 上用默认源。
 - `npm ci` 报 rollup 原生模块 EPERM 时，先 `taskkill` 残留的 esbuild/vite watcher node 进程（wails dev 强杀后会遗留孤儿进程锁文件）。
+
+## Agent skills
+
+### Issue tracker
+
+GitHub Issues via `gh` for external requests and triage; milestone work stays in the local `docs/tickets/` tracker. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Default five canonical roles, label string equal to role name. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: root `GLOSSARY.md` + `docs/adr/`. See `docs/agents/domain.md`.

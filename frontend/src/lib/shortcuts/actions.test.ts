@@ -152,36 +152,20 @@ describe("shortcutActions 与定义表对齐", () => {
     // 「全部命令挂接」在本票的范围是：底层命令已存在的都必须接线。剩下的
     // 每一条都因为命令本身还没落地而不接线 —— 清单钉在这里，任何一条被
     // 悄悄接线或悄悄丢掉都会让测试失败，逼着人回来更新这张表。
+    //
+    // 已经接线因而从这个集合移除的：视图开关（Grid/Guides/Rulers/Snap/Lock）、
+    // 变换会话（⌘T/⌘H/⏎）、填充/清除（FillSelection）、浮动选区搬运
+    // （MoveSelectedPixels）。这里只留真正没有底层能力的条目。
     const unwired = new Set(SHORTCUTS.filter((d) => shortcutActions[d.id] === undefined).map((d) => d.id));
     const expected = new Set([
-      // 填充/清除：票 23 的填充命令还没接到 Go（没有 fill RPC）
-      "Menus:Fill with Foreground",
-      "Menus:Fill with Background",
-      // 变换会话没有画布入口：票 17 只有纯函数（transformSession.ts）。
-      // ⌘H 原先接的是 showsTransformControls，但那个 store 没有任何消费者
-      // （画布不画变换控件），等于白吞一个键 —— 等票 17 落地再接。
-      "Menus:Show Transform Controls",
-      "Menus:Transform Layer / Selection",
-      "Canvas & Layers:Apply current canvas operation",
-      // 视图开关：票 14 只有纯函数，画布既不渲染参考线也没有开关 store
-      "Menus:Show Grid",
-      "Menus:Show Guides",
-      "Menus:Show Rulers",
-      "Menus:Snap",
-      "Menus:Lock Guides",
+      // 这一条与其余四条视图命令不同：它要的是"当前色阶对话框开着"这一层
+      // 会话状态（filters.ts 的 beginFilter 没暴露预览开关），不是单纯的
+      // 视图开关，所以留在清单里。
       "Canvas & Layers:Toggle Levels preview",
-      // 工具模式/形状种类：没有模式 store（票 15/25 只有纯函数）
+      // 工具模式/形状种类：循环的是**子模式**（选框 矩形/椭圆、形状
+      // 矩形/椭圆/多边形…），需要 activeTool 之外的一份模式状态，暂无。
       "Canvas & Layers:Cycle tool mode",
       "Canvas & Layers:Cycle shape kind",
-      // 浮动选区搬运：票 16 的 FloatingSelection 还没落地
-      "Canvas & Layers:Move selected pixels Left 1 px",
-      "Canvas & Layers:Move selected pixels Left 10 px",
-      "Canvas & Layers:Move selected pixels Right 1 px",
-      "Canvas & Layers:Move selected pixels Right 10 px",
-      "Canvas & Layers:Move selected pixels Up 1 px",
-      "Canvas & Layers:Move selected pixels Up 10 px",
-      "Canvas & Layers:Move selected pixels Down 1 px",
-      "Canvas & Layers:Move selected pixels Down 10 px",
       // macOS 专属：feature-parity「明确不做」第 4 条
       "Menus:Hide Compositor",
     ]);

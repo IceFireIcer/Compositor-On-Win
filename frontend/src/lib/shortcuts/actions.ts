@@ -14,20 +14,27 @@
  *    一样只发 op+payload 给 Go（internal/bridge/layer_commands.go），前端不
  *    复制文档语义。
  *
- * 仍未接线的条目（actions.test.ts 里逐条钉住，改动会提醒）都因为**底层命令
- * 本身还没落地**，而不是懒得接：剪贴板像素/文字通道（票 48 未做）、
- * 变换/裁剪/浮动选区的 Apply/Cancel（票 17/18 只有纯函数，画布还没接）、
- * 视图开关 Grid/Guides/Rulers/Snap/Lock（票 14 只有纯函数，画布不渲染参考线）、
- * 笔刷大小/硬度与工具模式循环（没有对应 store）、隐藏应用（macOS 专属，
- * feature-parity「明确不做」第 4 条）。这些条目仍出现在快捷键表单里可改键，
- * 且未注册动作不抢键（dispatch.ts 的 run() 只在动作已注册时消费）。
+ * 仍未接线的条目（actions.test.ts 里逐条钉住，改动会提醒）分三类：
+ *  - **引擎原语已在、缺 bridge RPC**：填充/清除（render/stampfill.go 有
+ *    FillColor，internal/bridge 之前零调用）——票 23 的 FillSelection 落地后接。
+ *  - **真缺底层能力**：工具模式循环、形状种类循环（需要模式 store）、
+ *    浮动选区搬运（票 16 的 FloatingSelection 只在 reference/Swift 里）。
+ *  - **不适用**：隐藏应用（macOS 专属，feature-parity「明确不做」第 4 条）。
+ *
+ * 视图开关（Grid/Guides/Rulers/Snap/Lock）与变换会话（⌘T/⏎/Esc）**已经接线**
+ * ——状态在 ../state/view.ts 与 ../state/transform.ts，画布在 CanvasSurface.svelte。
+ * 这些条目仍出现在快捷键表单里可改键；未注册动作不抢键
+ * （dispatch.ts 的 run() 只在动作已注册时消费）。
  */
 import { get, writable } from "svelte/store";
 import {
   ApplyFilter,
+  FillSelection,
+  MoveSelectedPixels,
   Redo,
   SelectObjectAt,
   SelectSubject,
+  SetGuides,
   Undo,
 } from "../../../wailsjs/go/bridge/Service";
 import {
@@ -50,8 +57,9 @@ import {
 import { activeTool } from "../state/tools";
 import { copySelection, cutSelection, layerViaCopy, paste } from "../state/clipboard";
 import { changeBrushHardness, changeBrushSize } from "../state/tools";
-import { resetPaletteColors, swapPaletteColors } from "../state/palette";
+import { palette, resetPaletteColors, swapPaletteColors } from "../state/palette";
 import { currentSelection, selectionPayload, setSelectionFromMaskData } from "../state/selection";
+import { currentSelectionJSON } from "../state/clipboard";
 import { deselect, invertSelection, selectAll } from "../state/selectionCommands";
 import { selectTool } from "../state/tools";
 import { fitViewport, keyboardZoom, zoomToValue } from "../state/viewport";
@@ -78,6 +86,23 @@ import {
   type ShortcutActions,
 } from "./dispatch";
 import { shortcutsSheet } from "./settings";
+import {
+  clearGuides,
+  deleteGuide,
+  guidesJSON,
+  lockGuides,
+  setLockGuides,
+  showGrid,
+  showGuides,
+  showRulers,
+  snapEnabled,
+} from "../state/view";
+import {
+  beginTransformSession,
+  cancelTransformSession,
+  commitTransformSession,
+} from "../state/transform";
+import { showsTransformControls } from "../state/transformSession";
 
 /** 新建画布表单的开关：从 App.svelte 的局部状态提上来，菜单项与 ⌘N 共用。 */
 export const newCanvasSheet = writable(false);
@@ -445,7 +470,174 @@ function changeLeading(delta: number): void {
 
 /** Esc：文字会话开着就取消文字（原版 InlineTextEditor 的 Esc），否则留给画布操作。 */
 function cancelCanvasOperation(): void {
-  if (get(textSession)) cancelTextSession();
+  // Esc 的取消顺序：先文字会话，再变换会话（两者不会同时开）。
+  if (get(textSession)) {
+    cancelTextSession();
+    return;
+  }
+  cancelTransform();
+}
+
+// ---------------------------------------------------------------------------
+// 参考线写回（票 14）——Go 的 domain.Document.guides 是真源
+// ---------------------------------------------------------------------------
+
+/**
+ * 把当前参考线写回 Go 并应用回来的快照。唯一直接谈 `SetGuides` 协议的地方：
+ * 画布组件只负责拖动交互，调这个函数提交。
+ */
+export async function commitGuides(json: string): Promise<void> {
+  try {
+    applyDocumentSnapshot(await SetGuides(json));
+  } catch (err) {
+    console.warn("参考线未能写回文档", err);
+  }
+}
+
+/** 提交当前参考线（从 store 取 JSON）。 */
+export function commitCurrentGuides(): void {
+  void commitGuides(guidesJSON());
+}
+
+/** 删除一条参考线并写回（画布右键菜单用）。 */
+export function removeGuide(id: string): void {
+  if (!deleteGuide(id)) return;
+  commitCurrentGuides();
+}
+
+/** View ▸ Clear Guides。 */
+export function clearAllGuides(): void {
+  if (!clearGuides()) return;
+  commitCurrentGuides();
+}
+
+/** View ▸ Lock Guides：同时把锁应用到每条现有参考线。 */
+export function toggleLockGuides(): void {
+  setLockGuides(!get(lockGuides));
+}
+
+/** 视图开关的当前值，供 View 菜单画勾（菜单只读，不自己存一份状态）。 */
+export function viewToggleState(): {
+  grid: boolean;
+  guides: boolean;
+  rulers: boolean;
+  snap: boolean;
+  lockGuides: boolean;
+  transformControls: boolean;
+} {
+  return {
+    grid: get(showGrid),
+    guides: get(showGuides),
+    rulers: get(showRulers),
+    snap: get(snapEnabled),
+    lockGuides: get(lockGuides),
+    transformControls: get(showsTransformControls),
+  };
+}
+
+/**
+ * ⌘H / View ▸ Show Transform Controls：只切换**控件可见性**。
+ * 注意这与"开始变换"（⌘T）是两件事——原版 ⌘H 管的是变换框画不画，
+ * 会话本身由 ⌘T 开。
+ */
+export function toggleTransformControls(): void {
+  showsTransformControls.update((v) => !v);
+}
+
+/**
+ * View 菜单的五个开关（票 14 / 47）。菜单与快捷键共用这一条路径，
+ * 所以菜单上的勾和实际状态不可能对不上。
+ */
+export function toggleView(name: "grid" | "guides" | "rulers" | "snap"): void {
+  switch (name) {
+    case "grid":
+      showGrid.update((v) => !v);
+      break;
+    case "guides":
+      showGuides.update((v) => !v);
+      break;
+    case "rulers":
+      showRulers.update((v) => !v);
+      break;
+    case "snap":
+      snapEnabled.update((v) => !v);
+      break;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 填充 / 清除（票 23）
+// ---------------------------------------------------------------------------
+
+/**
+ * 填充 / 清除：选区在 Go 侧解析，颜色直接给 sRGB 分量。
+ * 无选区时 Go 填整层；空选区什么都不做（都是 Go 的语义，前端不复制）。
+ */
+async function fill(mode: "foreground" | "background" | "clear"): Promise<void> {
+  const doc = get(document);
+  if (!doc.docId || !doc.activeLayerID) return;
+  try {
+    const colors = get(palette);
+    const color =
+      mode === "background" ? colors.background : mode === "foreground" ? colors.foreground : null;
+    const colorJSON = color ? JSON.stringify({ ...color, a: 1 }) : "";
+    applyDocumentSnapshot(
+      await FillSelection(currentSelectionJSON(), mode, colorJSON),
+    );
+  } catch (err) {
+    console.warn("填充失败", err);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 选区像素搬运（票 16 的 FloatingSelection）
+// ---------------------------------------------------------------------------
+
+/**
+ * 方向键搬动选区内的像素（Go 侧实现，选区同步移动）。
+ * Go 的回复带**权威选区**，所以先应用文档信封，再用它覆盖前端选区。
+ */
+async function moveSelectedPixels(dx: number, dy: number): Promise<void> {
+  const doc = get(document);
+  if (!doc.docId || !doc.activeLayerID) return;
+  if (!get(currentSelection)) return; // 没有选区就没什么可搬的
+  try {
+    const raw = await MoveSelectedPixels(currentSelectionJSON(), dx, dy);
+    applyDocumentSnapshot(raw);
+    const parsed = JSON.parse(raw) as {
+      selection?: { w: number; h: number; mask: string } | null;
+    };
+    const sel = parsed.selection;
+    if (sel) {
+      const binary = atob(sel.mask);
+      const mask = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) mask[i] = binary.charCodeAt(i);
+      setSelectionFromMaskData(mask, sel.w, sel.h);
+    } else {
+      currentSelection.set(null);
+    }
+  } catch (err) {
+    console.warn("移动选区像素失败", err);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 变换会话（票 17）
+// ---------------------------------------------------------------------------
+
+/** ⌘T：在当前活动图层上开一个变换会话。 */
+function startTransform(): void {
+  beginTransformSession();
+}
+
+/** ⏎：提交变换（写回 Go，非破坏）。 */
+function applyTransform(): void {
+  void commitTransformSession();
+}
+
+/** Esc：放弃变换，恢复原状。 */
+function cancelTransform(): void {
+  cancelTransformSession();
 }
 
 // ---------------------------------------------------------------------------
@@ -497,6 +689,18 @@ export const shortcutActions: ShortcutActions = {
   "Menus:Toggle Clipping Mask": () => void toggleClippingMask(),
   "Menus:Merge Layers": () => void mergeActiveLayers(),
   "Menus:Content-Aware Fill": () => void contentAwareFill(),
+  "Menus:Fill with Foreground": () => void fill("foreground"),
+  "Menus:Fill with Background": () => void fill("background"),
+  // --- 视图开关（票 14）：状态在 ../state/view.ts，画布在 CanvasSurface ---
+  "Menus:Show Grid": () => toggleView("grid"),
+  "Menus:Show Guides": () => toggleView("guides"),
+  "Menus:Show Rulers": () => toggleView("rulers"),
+  "Menus:Snap": () => toggleView("snap"),
+  "Menus:Lock Guides": () => toggleLockGuides(),
+  // --- 变换会话（票 17）：会话在 ../state/transform.ts ---
+  // ⌘T 开会话；⌘H 只切控件可见性（见 toggleTransformControls 的注释）。
+  "Menus:Transform Layer / Selection": () => startTransform(),
+  "Menus:Show Transform Controls": () => toggleTransformControls(),
 
   // --- Canvas & Layers：工具字母（原版 EditorCanvas / NativeLayerList 映射） ---
   "Canvas & Layers:Select tool": () => selectTool("idle"),
@@ -539,6 +743,7 @@ export const shortcutActions: ShortcutActions = {
     if (e.type === "keyup") releaseModifier(Modifier.Space);
     else pressModifier(Modifier.Space);
   },
+  "Canvas & Layers:Apply current canvas operation": () => applyTransform(),
   "Canvas & Layers:Cancel current canvas operation": () => cancelCanvasOperation(),
   // [ / ] 与 Shift-[ / Shift-]：原版 EditorCanvas.keyDown 只对笔刷类工具生效，
   // 步长语义在 tools.ts（changeBrushSize/changeBrushHardness）；当前设置落在
@@ -560,6 +765,17 @@ export const shortcutActions: ShortcutActions = {
   "Canvas & Layers:Nudge Right 10 px": () => void nudgeActiveLayer(10, 0),
   "Canvas & Layers:Nudge Up 10 px": () => void nudgeActiveLayer(0, -10),
   "Canvas & Layers:Nudge Down 10 px": () => void nudgeActiveLayer(0, 10),
+  // 浮动选区搬运（票 16）：有选区时方向键搬像素而不是搬图层 —— 与原版一致，
+  // 所以这八条要压在 nudgeActiveLayer 之上（dispatch 按 id 派发，两条定义
+  // 不同 id，由 Go 侧判断有没有选区；这里显式分流）。
+  "Canvas & Layers:Move selected pixels Left 1 px": () => void moveSelectedPixels(-1, 0),
+  "Canvas & Layers:Move selected pixels Right 1 px": () => void moveSelectedPixels(1, 0),
+  "Canvas & Layers:Move selected pixels Up 1 px": () => void moveSelectedPixels(0, -1),
+  "Canvas & Layers:Move selected pixels Down 1 px": () => void moveSelectedPixels(0, 1),
+  "Canvas & Layers:Move selected pixels Left 10 px": () => void moveSelectedPixels(-10, 0),
+  "Canvas & Layers:Move selected pixels Right 10 px": () => void moveSelectedPixels(10, 0),
+  "Canvas & Layers:Move selected pixels Up 10 px": () => void moveSelectedPixels(0, -10),
+  "Canvas & Layers:Move selected pixels Down 10 px": () => void moveSelectedPixels(0, 10),
 
   // --- Text Editing（原版 InlineTextEditor.keyDown；命令 dlg 的 Enter/Esc 不在此列） ---
   "Text Editing:Finish editing text": () =>

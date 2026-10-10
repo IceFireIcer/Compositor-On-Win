@@ -56,6 +56,39 @@
   } from "../../../wailsjs/go/bridge/Service";
   import { healSettings } from "../state/tools";
   import { cursorForTool } from "./cursors";
+  import {
+    beginGuideCreation,
+    beginGuideMove,
+    draggingGuide,
+    finishGuideDrag,
+    guidesJSON,
+    guidesState,
+    layoutGrid,
+    lockGuides,
+    moveGuideDrag,
+    showGuides,
+    showGrid as showLayoutGrid,
+    showRulers,
+    visibleGuides,
+  } from "../state/view";
+  import { gridLines, gridStep } from "../state/snap";
+  import { commitGuides as commitGuidesAction } from "../shortcuts/actions";
+  import CropOverlay from "./CropOverlay.svelte";
+  import {
+    beginTransformDrag,
+    beginTransformSession,
+    commitTransformSession,
+    dragTransform,
+    transformSession,
+  } from "../state/transform";
+  import {
+    HANDLES,
+    showsTransformControls,
+    transformContains,
+    transformCorners,
+    transformedPoint,
+    type DragMode,
+  } from "../state/transformSession";
 
   let { doc }: { doc: DocTab } = $props();
 
@@ -287,6 +320,25 @@
   // The pixel grid appears from 800% (EditorCanvas.swift:920); lines sit on
   // every document pixel, i.e. every `ppp` CSS px >= 8px apart.
   const showGrid = $derived(vp.zoom >= PIXEL_GRID_ZOOM);
+  // 布局网格（View > Show Grid，票 14）：与上面那个"每文档像素一条"的像素网格
+  // 不是一回事 —— 像素网格由缩放决定，布局网格由用户开关决定。
+  const grid = $derived($layoutGrid);
+  const gridStepPx = $derived(gridStep(grid) * ppp);
+  const gridMajorPx = $derived(grid.spacing * ppp);
+  // 线太密（<4px）时只画主线，否则整块画布会被网格糊成灰的。
+  const gridMinorVisible = $derived(gridStepPx >= 4);
+  // 标尺刻度：主刻度间距（屏幕点），随缩放自适应到一个可读的量级。
+  const rulerStep = $derived(
+    (() => {
+      const target = 80; // 期望的主刻度屏幕间距
+      const raw = target / Math.max(ppp, 0.0001);
+      const pow = Math.pow(10, Math.floor(Math.log10(Math.max(raw, 1))));
+      for (const mult of [1, 2, 5, 10]) {
+        if (pow * mult >= raw) return pow * mult;
+      }
+      return pow * 10;
+    })(),
+  );
   const cursor = $derived(
     cursorForTool({ tool: $activeTool, bits: $modifierBits, panning }),
   );
@@ -373,10 +425,10 @@
 
   // Brush strokes: the bridge paints into the active layer's image; the
   // frontend streams document-space points and reloads the render (rev bump)
-  // when the stroke ends. Left-drag paints for the brush and the default
-  // move tool (no canvas transform is wired yet); pan/zoom keep their own
-  // press behavior above.
-  const PAINT_TOOLS: ReadonlySet<string> = new Set(["move", "brush"]);
+  // when the stroke ends. 只有画笔类工具落笔——**move 不在这里**：它是移动/变换
+  // 工具，左键拖拽应当搬动图层，而不是画一道黑笔（票 17 的接线见下方
+  // beginMoveDrag / transform 覆盖层）。
+  const PAINT_TOOLS: ReadonlySet<string> = new Set(["brush"]);
 
   let painting = false;
   let healing = false;
@@ -417,11 +469,179 @@
     };
   });
 
+  // --- 变换会话（票 17）----------------------------------------------------
+  // 会话状态机在 ../state/transform.ts。这里负责：把把手/框画出来、把手命中
+  // 测试、把指针位移喂给会话、松手时提交（非破坏，只写 layer.transform）。
+
+  /** 变换框把手命中半径（屏幕点）。 */
+  const HANDLE_GRAB_PX = 8;
+
+  /** 会话草稿的四个角（文档坐标，已含旋转）。null = 没有会话。 */
+  const draftCorners = $derived.by(() => {
+    const s = $transformSession;
+    if (!s) return null;
+    return transformCorners(s.session.draft);
+  });
+
+  /** 会话草稿的一个单位点 → 文档坐标。 */
+  function draftPoint(unit: { x: number; y: number }): { x: number; y: number } {
+    const s = get(transformSession);
+    if (!s) return { x: 0, y: 0 };
+    return transformedPoint(s.session.draft, unit);
+  }
+
+  /** 指针命中哪个把手；没命中返回 null。 */
+  function handleAt(e: PointerEvent): number | null {
+    if (!get(transformSession)) return null;
+    const p = docPointOf(e);
+    const ppp = pointsPerPixel(get(viewport));
+    const tol = HANDLE_GRAB_PX / Math.max(ppp, 0.0001);
+    // 角优先于边（HANDLES 是 角,边,角,边… 交替），所以按距离找最近的一个。
+    let best: number | null = null;
+    let bestDist = Infinity;
+    for (let i = 0; i < HANDLES.length; i++) {
+      const hp = draftPoint(HANDLES[i]);
+      const d = Math.hypot(hp.x - p.x, hp.y - p.y);
+      if (d <= tol && d < bestDist) {
+        best = i;
+        bestDist = d;
+      }
+    }
+    return best;
+  }
+
+  /** 指针是否落在变换框内部（用于整体拖动）。 */
+  function insideDraft(e: PointerEvent): boolean {
+    const s = get(transformSession);
+    if (!s) return false;
+    return transformContains(s.session.draft, docPointOf(e));
+  }
+
+  /** 变换拖动状态：记录按下点与模式。 */
+  let moveDrag: { startX: number; startY: number } | null = null;
+
+  /** 左键按下：把手 → resize，框内 → move。没有会话时先按需开一个。 */
+  function beginMoveDrag(e: PointerEvent): boolean {
+    // 还没有会话就先开一个（V 工具直接拖图层 = 移动它，与原版一致）。
+    if (!get(transformSession) && !beginTransformSession()) return false;
+    const handle = handleAt(e);
+    // 没抓到把手、又不在框内：这次按下不属于变换（交给别的工具/平移逻辑）。
+    // 但"刚开的会话"要留着，让框显示出来，用户可以按 Esc 取消。
+    if (handle === null && !insideDraft(e)) return false;
+    const mode: DragMode = handle !== null ? { kind: "resize", handle } : { kind: "move" };
+    const p = docPointOf(e);
+    if (!beginTransformDrag(mode, p)) return false;
+    moveDrag = { startX: p.x, startY: p.y };
+    return true;
+  }
+
+  /** 拖动中：把文档空间位移交给会话。 */
+  function updateMoveDrag(e: PointerEvent): void {
+    if (!moveDrag) return;
+    const p = docPointOf(e);
+    dragTransform(
+      { x: p.x - moveDrag.startX, y: p.y - moveDrag.startY },
+      { shift: e.shiftKey, option: e.altKey, ctrl: e.ctrlKey },
+    );
+  }
+
+  /** 松手：提交到文档（一次历史项）。 */
+  function endMoveDrag(e: PointerEvent): void {
+    if (!moveDrag) return;
+    moveDrag = null;
+    stage?.releasePointerCapture(e.pointerId);
+    void commitTransformSession();
+  }
+
+  // --- 参考线（票 14）------------------------------------------------------
+  // 状态机与开关在 ../state/view.ts；这里只做两件事：把指针位置换成文档
+  // 坐标喂给状态机，以及把列表画出来。参考线的真源仍是 Go 的
+  // domain.Document.guides —— 每次提交由 shortcuts/actions.ts 调 SetGuides。
+
+  /** 抓住参考线时的抓取半径（屏幕点，原版 TransformSnap.distance 同量级）。 */
+  const GUIDE_GRAB_PX = 6;
+
+  /** 正在从标尺拖出一条新参考线。 */
+  let rulerDrag: { axis: "horizontal" | "vertical" } | null = null;
+
+  /** 指针 → 文档坐标（允许越界，参考线可以拖到画布外）。 */
+  function docPointOf(e: PointerEvent): { x: number; y: number } {
+    const r = stage!.getBoundingClientRect();
+    return documentPoint(
+      get(viewport),
+      e.clientX - r.left,
+      e.clientY - r.top,
+      doc.width,
+      doc.height,
+    );
+  }
+
+  /**
+   * 命中测试：指针是否落在某条参考线上（屏幕距离 ≤ GUIDE_GRAB_PX）。
+   * 锁定时返回 null —— 锁住的参考线不参与抓取。
+   */
+  function guideAt(e: PointerEvent): { id: string; axis: "horizontal" | "vertical" } | null {
+    if (get(lockGuides)) return null;
+    const p = docPointOf(e);
+    const ppp = pointsPerPixel(get(viewport));
+    const tolerance = GUIDE_GRAB_PX / Math.max(ppp, 0.0001);
+    for (const g of get(visibleGuides)) {
+      const d = g.axis === "vertical" ? Math.abs(p.x - g.position) : Math.abs(p.y - g.position);
+      if (d <= tolerance) return { id: g.id, axis: g.axis };
+    }
+    return null;
+  }
+
+  /**
+   * 把当前参考线写回 Go（真源在文档里）。真正的 bridge 调用收敛在
+   * shortcuts/actions.ts 的 commitGuides —— 组件只负责拖动交互，不直接谈协议。
+   */
+  function commitGuides(): void {
+    void commitGuidesAction(guidesJSON());
+  }
+
+  /** 标尺按下：开始拖出一条新参考线（票 14 的"从标尺拖出"）。 */
+  function startRulerDrag(e: PointerEvent, axis: "horizontal" | "vertical"): void {
+    if (e.button !== 0) return;
+    const p = docPointOf(e);
+    const position = axis === "vertical" ? p.x : p.y;
+    if (!beginGuideCreation(axis, position)) return;
+    rulerDrag = { axis };
+    stage?.setPointerCapture(e.pointerId);
+    e.preventDefault();
+  }
+
   function onPointerDown(e: PointerEvent): void {
     const spaceHeld = ($modifierBits & Modifier.Space) !== 0;
     // 行内文字编辑器优先接管左键按下（放置光标、拖选）：让 textarea 拿到
     // 焦点，不让 Type 工具重开会话；空格/手形工具的平移仍然优先。
     if (e.button === 0 && !spaceHeld && $activeTool !== "hand" && isTextEditorTarget(e.target)) return;
+    // 变换会话开着时，画布上的左键属于它（把手 = 缩放，框内 = 移动）。
+    if (e.button === 0 && !spaceHeld && $activeTool !== "hand" && get(transformSession)) {
+      if (beginMoveDrag(e)) {
+        stage?.setPointerCapture(e.pointerId);
+        e.preventDefault();
+        return;
+      }
+    }
+    // V（移动/变换）工具：左键拖拽搬动图层。原先这里被当成画笔，落笔就画黑笔。
+    if (e.button === 0 && !spaceHeld && $activeTool === "move") {
+      if (beginMoveDrag(e)) {
+        stage?.setPointerCapture(e.pointerId);
+        e.preventDefault();
+        return;
+      }
+    }
+    // 参考线优先于工具：抓住一条线就是移动它（票 14）。空格/手形平移仍然优先，
+    // 所以只在没有平移意图时判定。
+    if (e.button === 0 && !spaceHeld && $activeTool !== "hand" && get(showGuides)) {
+      const hit = guideAt(e);
+      if (hit && beginGuideMove(hit.id)) {
+        stage?.setPointerCapture(e.pointerId);
+        e.preventDefault();
+        return;
+      }
+    }
     // An armed Levels eyedropper swallows plain clicks before any tool.
     if (e.button === 0 && !panDrag && !painting) {
       const p = docPixelOf(e);
@@ -486,6 +706,20 @@
       panDrag = { x: e.clientX, y: e.clientY };
       return;
     }
+    // 变换拖动优先于其它工具。
+    if (moveDrag) {
+      updateMoveDrag(e);
+      return;
+    }
+    // 参考线拖动：位置用文档坐标（可以拖到画布外，松手丢回标尺就是删除）。
+    if ($draggingGuide) {
+      const p = docPointOf(e);
+      // 拖动中的那条线的方向决定读 x 还是 y；rulerDrag 只覆盖"刚从标尺拖出"，
+      // 移动已有参考线时从状态机里读方向。
+      const axis = rulerDrag?.axis ?? guidesState.drag?.axis;
+      moveGuideDrag(axis === "horizontal" ? p.y : p.x);
+      return;
+    }
     if (textDrag) {
       const p = docPixelOf(e);
       textDragRect = {
@@ -504,6 +738,21 @@
   }
 
   function onPointerEnd(e: PointerEvent): void {
+    if (moveDrag) {
+      endMoveDrag(e);
+      return;
+    }
+    if ($draggingGuide) {
+      const p = docPointOf(e);
+      // 只有"松手时指针已在画布外"才算丢回标尺 = 删除。从标尺拖出来但最终
+      // 落在画布上，是正常的"新建参考线"，不能删。
+      const outside = p.x < 0 || p.y < 0 || p.x > doc.width || p.y > doc.height;
+      rulerDrag = null;
+      stage?.releasePointerCapture(e.pointerId);
+      const edit = finishGuideDrag(outside);
+      if (edit) void commitGuides();
+      return;
+    }
     if (textDrag) {
       const start = textDrag;
       const rect = textDragRect;
@@ -608,6 +857,57 @@
         style:background-size="{ppp}px {ppp}px"
       ></div>
     {/if}
+    {#if $showLayoutGrid}
+      <!-- 布局网格（票 14）：细线 = 细分，粗线 = 主格。背景尺寸按 ppp 缩放，
+           所以缩放画布时网格跟着文档走。 -->
+      <div
+        class="layout-grid"
+        class:major-only={!gridMinorVisible}
+        style:background-size="{gridStepPx}px {gridStepPx}px, {gridStepPx}px {gridStepPx}px, {gridMajorPx}px {gridMajorPx}px, {gridMajorPx}px {gridMajorPx}px"
+      ></div>
+    {/if}
+    {#if $transformSession && $showsTransformControls}
+      <!-- 变换控件（票 17）：框 + 8 个把手。坐标是文档像素，和 .doc 同系，
+           所以 viewBox 直接用 doc.width/height，preserveAspectRatio=none
+           让旋转后的四边形也跟着非等比缩放走（.doc 尺寸 = 文档尺寸 × ppp）。 -->
+      <svg
+        class="transform-box"
+        viewBox="0 0 {doc.width} {doc.height}"
+        preserveAspectRatio="none"
+      >
+        {#if draftCorners}
+          <polygon
+            class="transform-frame"
+            points={draftCorners.map((c) => `${c.x},${c.y}`).join(" ")}
+          />
+          {#each HANDLES as handle, i (i)}
+            {@const hp = draftPoint(handle)}
+            <circle class="transform-handle" cx={hp.x} cy={hp.y} r={6} />
+          {/each}
+        {/if}
+      </svg>
+    {/if}
+    {#if $showGuides && $visibleGuides.length > 0}
+      <!-- 参考线（票 14）：位置是文档像素，乘 ppp 落到 .doc 的 CSS 像素。
+           拖动中的那条由 view.ts 的 displayedGuides 一并给出，所以跟手。 -->
+      <div class="guides" aria-hidden="true">
+        {#each $visibleGuides as guide (guide.id)}
+          {#if guide.axis === "vertical"}
+            <div
+              class="guide vertical"
+              class:locked={$lockGuides}
+              style:left="{guide.position * ppp}px"
+            ></div>
+          {:else}
+            <div
+              class="guide horizontal"
+              class:locked={$lockGuides}
+              style:top="{guide.position * ppp}px"
+            ></div>
+          {/if}
+        {/each}
+      </div>
+    {/if}
     {#if textDragRect}
       <!-- 拖拽框（文档像素）按 ppp 换算到 .doc 的 CSS 像素，缩放时跟手。 -->
       <div
@@ -672,6 +972,39 @@
       </div>
     {/if}
   </div>
+
+  <!-- 裁剪覆盖层（票 18）：自包含组件，自己监听 activeTool === "crop" 开会话，
+       所以挂上就够、不需要额外接线。必须挂在 .doc **外面**（它的 inset:0 要等于
+       舞台盒子，文档→屏幕映射走 documentRect(viewport)）。 -->
+  <CropOverlay doc={{ id: doc.id, width: doc.width, height: doc.height }} />
+
+  {#if $showRulers}
+    <!-- 标尺（票 14）：从标尺拖出参考线。刻度按文档坐标标号，主刻度随缩放
+         自适应（rulerStep），零点是文档左上角 —— 和 .doc 的 rect 对齐。 -->
+    <div
+      class="ruler horizontal"
+      role="presentation"
+      onpointerdown={(e) => startRulerDrag(e, "horizontal")}
+    >
+      {#each gridLines({ spacing: rulerStep, subdivisions: 1 }, Math.max(doc.width, 0)) as tick (tick)}
+        {#if tick * ppp + rect.x > -60 && tick * ppp + rect.x < viewWidth + 60}
+          <div class="tick" style:left="{tick * ppp}px"></div>
+          <div class="tick-label" style:left="{tick * ppp}px">{tick}</div>
+        {/if}
+      {/each}
+    </div>
+    <div
+      class="ruler vertical"
+      role="presentation"
+      onpointerdown={(e) => startRulerDrag(e, "vertical")}
+    >
+      {#each gridLines({ spacing: rulerStep, subdivisions: 1 }, Math.max(doc.height, 0)) as tick (tick)}
+        {#if tick * ppp + rect.y > -60 && tick * ppp + rect.y < viewHeight + 60}
+          <div class="tick" style:top="{tick * ppp}px"></div>
+        {/if}
+      {/each}
+    </div>
+  {/if}
 </div>
 
 <style>
@@ -731,6 +1064,125 @@
     touch-action: none;
     user-select: none;
     background: var(--bg-canvas, #232327);
+  }
+
+  /* 布局网格（View > Show Grid）：两组细线 + 两组主线，用渐变当线条。 */
+  .layout-grid {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background-image:
+      linear-gradient(to right, rgba(255, 255, 255, 0.07) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(255, 255, 255, 0.07) 1px, transparent 1px),
+      linear-gradient(to right, rgba(255, 255, 255, 0.16) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(255, 255, 255, 0.16) 1px, transparent 1px);
+    background-repeat: repeat;
+  }
+  /* 缩得太小时只留主线，否则整块画布被细线糊成灰的。 */
+  .layout-grid.major-only {
+    background-image:
+      linear-gradient(to right, rgba(255, 255, 255, 0.16) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(255, 255, 255, 0.16) 1px, transparent 1px);
+  }
+
+  /* 变换控件（票 17）：框是细实线，把手是小白方块（用非等比缩放的 svg 画，
+     所以 r 会被拉伸 —— 用 vector-effect 抵消掉）。 */
+  .transform-box {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+  }
+  .transform-frame {
+    fill: none;
+    stroke: #3b82f6;
+    stroke-width: 1;
+    vector-effect: non-scaling-stroke;
+  }
+  .transform-handle {
+    fill: #ffffff;
+    stroke: #3b82f6;
+    stroke-width: 1;
+    vector-effect: non-scaling-stroke;
+  }
+
+  /* 参考线：1px 实线，青色（原版参考线是青蓝）。锁定后改成虚线。 */
+  .guides {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+  }
+  .guide {
+    position: absolute;
+    background: #38bdf8;
+    box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.55);
+  }
+  .guide.vertical {
+    top: -100000px;
+    height: 200000px;
+    width: 1px;
+  }
+  .guide.horizontal {
+    left: -100000px;
+    width: 200000px;
+    height: 1px;
+  }
+  .guide.locked {
+    background: repeating-linear-gradient(
+      to bottom,
+      #38bdf8 0 3px,
+      transparent 3px 6px
+    );
+  }
+  .guide.horizontal.locked {
+    background: repeating-linear-gradient(
+      to right,
+      #38bdf8 0 3px,
+      transparent 3px 6px
+    );
+  }
+
+  /* 标尺（票 14）：贴画布上边与左边，从上面拖出参考线。 */
+  .ruler {
+    position: absolute;
+    background: var(--bg-panel, #2a2a2e);
+    border: 1px solid #141416;
+    z-index: 5;
+    cursor: crosshair;
+  }
+  .ruler.horizontal {
+    left: 0;
+    right: 0;
+    top: 0;
+    height: 18px;
+  }
+  .ruler.vertical {
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: 18px;
+  }
+  .ruler .tick {
+    position: absolute;
+    background: #6b6b74;
+  }
+  .ruler.horizontal .tick {
+    top: 12px;
+    width: 1px;
+    height: 6px;
+  }
+  .ruler.vertical .tick {
+    left: 12px;
+    height: 1px;
+    width: 6px;
+  }
+  .ruler .tick-label {
+    position: absolute;
+    top: 0;
+    font-size: 8px;
+    line-height: 10px;
+    color: #9a9aa4;
+    transform: translateX(1px);
+    pointer-events: none;
   }
 
   /* Checkerboard + document bounds (carried over from ticket 02). */

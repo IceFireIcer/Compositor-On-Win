@@ -32,6 +32,11 @@ const shellCallTimeout = 2 * time.Second
 var (
 	errShellBusy    = errors.New("上一次外壳调用仍未返回，已跳过本次调用")
 	errShellTimeout = errors.New("外壳没有响应，已放弃本次调用")
+	// errNoMainWindow 表示本进程里连一个候选主窗口都没有（控制台程序、还没建
+	// 窗口）。"窗口已建好但还没显示"不算这一类：chrome_windows.go 会退到它。
+	// 定义在这里（而不是带 windows 约束的文件里）是为了让测试在任何平台上都能
+	// 引用这个判据。
+	errNoMainWindow = errors.New("找不到主窗口，无法设置任务栏覆盖图标")
 )
 
 // shellGate 保证同一时刻只有一个外壳调用在飞。卡住的那次会一直占着名额，直到它
@@ -134,9 +139,14 @@ func ClearJumpList() error {
 }
 
 // SetDirtyOverlay 在进程主窗口上显示（on 为 true）或清除（on 为 false）任务栏
-// 覆盖图标：一个 16×16 的红色圆点，表示文档有未保存的更改。找不到主窗口或
-// ITaskbarList3（窗口还没建好、Windows 7 以下）时返回错误，但绝不 panic，也绝不
-// 让调用者等超过 shellCallTimeout。非 Windows 是 no-op。
+// 覆盖图标：一个 16×16 的红色圆点，表示文档有未保存的更改。本进程连候选主窗口
+// 都没有（控制台程序）或 ITaskbarList3 不可用（Windows 7 以下）时返回错误，但
+// 绝不 panic，也绝不让调用者等超过 shellCallTimeout。非 Windows 是 no-op。
+//
+// 主窗口已经建好但还没显示时返回 nil 而不是错误：Wails 在 WebView2 导航完成之后
+// 才 ShowWindow，而前端挂载时就会同步一次窗口外壳，所以每次启动都必然落在那个
+// 窗口期。那一刻没有任务栏按钮可画，等窗口显示后的下一次同步生效即可——把它报成
+// 错误会让每次启动都打一行没人能处理的告警（票 49 真机现象）。
 func SetDirtyOverlay(on bool) error {
 	if !Supported() {
 		return nil

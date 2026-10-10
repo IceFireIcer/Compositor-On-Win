@@ -5,6 +5,8 @@ import {context} from '../models';
 
 export function ApplyFilter(arg1:string,arg2:string,arg3:string,arg4:number,arg5:string):Promise<string>;
 
+export function ApplyLayerTransform(arg1:string,arg2:string):Promise<string>;
+
 export function ApplyLevelsSample(arg1:string,arg2:number,arg3:number,arg4:number):Promise<string>;
 
 export function ApplyUpdate():Promise<string>;
@@ -49,6 +51,8 @@ export function CopyMerged():Promise<string>;
 
 export function CopySelection(arg1:string):Promise<string>;
 
+export function Crop(arg1:string):Promise<string>;
+
 export function CutSelection(arg1:string):Promise<string>;
 
 export function DocumentSnapshot():Promise<string>;
@@ -67,6 +71,8 @@ export function ExportJPEGPreview(arg1:number,arg2:string):Promise<string>;
 
 export function ExportPNG(arg1:string):Promise<string>;
 
+export function FillSelection(arg1:string,arg2:string,arg3:string):Promise<string>;
+
 export function FinishImageImport():Promise<string>;
 
 export function HealPoint(arg1:number,arg2:number):Promise<string>;
@@ -84,6 +90,8 @@ export function LayerViaCopy(arg1:string):Promise<string>;
 export function LevelsAuto(arg1:number):Promise<string>;
 
 export function ListFonts():Promise<string>;
+
+export function MoveSelectedPixels(arg1:string,arg2:number,arg3:number):Promise<string>;
 
 export function OpenPath(arg1:string):Promise<string>;
 
@@ -109,6 +117,8 @@ export function Redo():Promise<string>;
 
 export function RenderHandler():Promise<http.Handler>;
 
+export function ReportFrontendError(arg1:string,arg2:string,arg3:string):Promise<string>;
+
 export function ReportReady():Promise<string>;
 
 export function ResolveExternalChange(arg1:string,arg2:boolean):Promise<string>;
@@ -120,6 +130,8 @@ export function SaveProjectDialog():Promise<string>;
 export function SelectObjectAt(arg1:number,arg2:number):Promise<string>;
 
 export function SelectSubject():Promise<string>;
+
+export function SetGuides(arg1:string):Promise<string>;
 
 export function Startup(arg1:context.Context):Promise<void>;
 

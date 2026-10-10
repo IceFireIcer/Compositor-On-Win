@@ -71,8 +71,14 @@ func setOverlay(on bool) error {
 	switch code {
 	case C.CHROME_OK:
 		return nil
+	case C.CHROME_ERR_NOT_SHOWN:
+		// 窗口已建好但还没显示：Wails 在 WebView2 导航完成之后才 ShowWindow，而
+		// 前端挂载时就会同步一次窗口外壳，所以每次启动都会走到这里。这一刻没有
+		// 任务栏按钮可画，不是失败；等窗口显示后的下一次同步（文档名/脏标记一变
+		// 前端就会调）自然生效。
+		return nil
 	case C.CHROME_ERR_WINDOW:
-		return errors.New("找不到主窗口，无法设置任务栏覆盖图标")
+		return errNoMainWindow
 	case C.CHROME_ERR_TASKBAR:
 		return errors.New("任务栏接口不可用（需要 Windows 7 及以上）")
 	case C.CHROME_ERR_ICON:

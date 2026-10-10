@@ -6,6 +6,10 @@ export function ApplyFilter(arg1, arg2, arg3, arg4, arg5) {
   return window['go']['bridge']['Service']['ApplyFilter'](arg1, arg2, arg3, arg4, arg5);
 }
 
+export function ApplyLayerTransform(arg1, arg2) {
+  return window['go']['bridge']['Service']['ApplyLayerTransform'](arg1, arg2);
+}
+
 export function ApplyLevelsSample(arg1, arg2, arg3, arg4) {
   return window['go']['bridge']['Service']['ApplyLevelsSample'](arg1, arg2, arg3, arg4);
 }
@@ -94,6 +98,10 @@ export function CopySelection(arg1) {
   return window['go']['bridge']['Service']['CopySelection'](arg1);
 }
 
+export function Crop(arg1) {
+  return window['go']['bridge']['Service']['Crop'](arg1);
+}
+
 export function CutSelection(arg1) {
   return window['go']['bridge']['Service']['CutSelection'](arg1);
 }
@@ -130,6 +138,10 @@ export function ExportPNG(arg1) {
   return window['go']['bridge']['Service']['ExportPNG'](arg1);
 }
 
+export function FillSelection(arg1, arg2, arg3) {
+  return window['go']['bridge']['Service']['FillSelection'](arg1, arg2, arg3);
+}
+
 export function FinishImageImport() {
   return window['go']['bridge']['Service']['FinishImageImport']();
 }
@@ -164,6 +176,10 @@ export function LevelsAuto(arg1) {
 
 export function ListFonts() {
   return window['go']['bridge']['Service']['ListFonts']();
+}
+
+export function MoveSelectedPixels(arg1, arg2, arg3) {
+  return window['go']['bridge']['Service']['MoveSelectedPixels'](arg1, arg2, arg3);
 }
 
 export function OpenPath(arg1) {
@@ -214,6 +230,10 @@ export function RenderHandler() {
   return window['go']['bridge']['Service']['RenderHandler']();
 }
 
+export function ReportFrontendError(arg1, arg2, arg3) {
+  return window['go']['bridge']['Service']['ReportFrontendError'](arg1, arg2, arg3);
+}
+
 export function ReportReady() {
   return window['go']['bridge']['Service']['ReportReady']();
 }
@@ -236,6 +256,10 @@ export function SelectObjectAt(arg1, arg2) {
 
 export function SelectSubject() {
   return window['go']['bridge']['Service']['SelectSubject']();
+}
+
+export function SetGuides(arg1) {
+  return window['go']['bridge']['Service']['SetGuides'](arg1);
 }
 
 export function Startup(arg1) {

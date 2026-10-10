@@ -559,3 +559,60 @@ export class CropState {
     return null;
   }
 }
+
+// ---------------------------------------------------------------------------
+// 接线层（票 18 尾项）：提交命令
+// ---------------------------------------------------------------------------
+// 上面全是纯函数与纯状态机（有测试钉住语义），这一段只做 I/O：把 CropState /
+// commitCrop 产出的纯历史数据交给 Go 的 Crop RPC，再把返回的文档快照应用回
+// store。尺寸与平移全在 Go 侧重算——前端不自己改文档数据（真源约定见
+// AGENTS.md「文档真源在 Go 后端」）。
+//
+// 为什么参考线不在这里用 offsetGuides + SetGuides 回写：Go 的 Crop 已经把参考线
+// 按同一偏移平移并丢弃越界的，返回的快照经 applyDocumentSnapshot →
+// view.syncGuidesFromDocument 就重建了前端镜像；再写一次是二次偏移，还会多出
+// 一个"参考线"历史项。offsetGuides 因此只用于**预览**（CropOverlay 画出哪些
+// 参考线能活过这次裁剪），提交路径完全信任 Go 的快照。
+//
+// import 放在文件末尾：这一段是**追加**到已发布模块上的接线层，上面的纯函数与
+// 测试钉住的语义一个字都不改（ESM 的 import 声明会提升，位置不影响求值）。
+
+import { Crop as CropRPC } from "../../../wailsjs/go/bridge/Service";
+import { Snapshot as GetSnapshot } from "../../../wailsjs/go/bridge/Workspace";
+import { applyDocumentSnapshot } from "./document";
+import { applySnapshot } from "./workspace";
+
+/** 一次裁剪提交的结果；失败时 error 是 Go 侧的中文原因，交给 UI 提示。 */
+export interface CropCommitResult {
+  ok: boolean;
+  error?: string;
+}
+
+/**
+ * 执行一次裁剪：commitCrop 的纯数据 → Go `Crop` RPC → 应用返回的文档快照，
+ * 并刷新标签栏（画布尺寸同时写在 Snapshot 里）。失败时文档原样不动（Go 的
+ * Workspace.EditActive 会回滚），调用方保留会话让用户重试。
+ */
+export async function commitCropToDocument(commit: CropCommit): Promise<CropCommitResult> {
+  try {
+    const reply = await CropRPC(
+      JSON.stringify({
+        x: commit.offsetX,
+        y: commit.offsetY,
+        width: commit.width,
+        height: commit.height,
+      }),
+    );
+    applyDocumentSnapshot(reply);
+    // 标签栏尺寸是尽力而为的刷新：它失败不该把一次已经落地的裁剪报成失败。
+    try {
+      applySnapshot(await GetSnapshot());
+    } catch (err) {
+      console.warn("crop: 刷新标签栏失败", err);
+    }
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+

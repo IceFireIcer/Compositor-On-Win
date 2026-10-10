@@ -1,6 +1,7 @@
 import { get, writable } from "svelte/store";
 import * as BridgeService from "../../../wailsjs/go/bridge/Service";
 import type { ColorRun, FontRun } from "./text";
+import { syncGuidesFromDocument } from "./view";
 
 /**
  * Frontend mirror of the Go document (internal/bridge.Service.DocumentSnapshot).
@@ -76,6 +77,13 @@ export interface DocumentState {
   activeLayerID: string | null;
   /** Bottom → top, exactly domain.Document.Layers. */
   layers: DocLayer[];
+  /**
+   * 文档的参考线（票 14），原样承载 Go `domain.Document.guides` 的线格式。
+   * 这里不解析成 `Guide[]`——解析与状态机在 `./view.ts` 的
+   * `syncGuidesFromDocument` 里做，保持本模块只负责"把 Go 的东西搬过来"。
+   * 无参考线时省略（与 `EMPTY_DOCUMENT` 逐字段相等，测试依赖这一点）。
+   */
+  guides?: unknown;
 }
 
 export const EMPTY_DOCUMENT: DocumentState = {
@@ -163,6 +171,8 @@ interface RawDocument {
   resolution?: unknown;
   activeLayerID?: unknown;
   layers?: unknown;
+  /** `domain.Document.guides`; omitempty, so absent means "no guides". */
+  guides?: unknown;
 }
 
 interface RawSnapshot {
@@ -311,7 +321,7 @@ export function parseDocumentSnapshot(raw: string): DocumentState {
   const doc = parsed.doc ?? null;
   if (!doc) return { ...EMPTY_DOCUMENT };
   const layersRaw = Array.isArray(doc.layers) ? doc.layers : [];
-  return {
+  const state: DocumentState = {
     docId: asString(doc.documentID),
     rev: asNumber(parsed.rev, 0),
     filterRev: asNumber(parsed.filterRev, 0),
@@ -321,6 +331,10 @@ export function parseDocumentSnapshot(raw: string): DocumentState {
     activeLayerID: asString(doc.activeLayerID),
     layers: layersRaw.map(parseLayer),
   };
+  // 参考线原样带过（票 14）：有才带上，没有就省略，这样 EMPTY_DOCUMENT 的
+  // 逐字段相等断言仍然成立。
+  if (doc.guides !== undefined) state.guides = doc.guides;
+  return state;
 }
 
 /**
@@ -344,6 +358,10 @@ export function applyDocumentSnapshot(raw: string, expectedDocId?: string): bool
   const current = get(document);
   if (current.docId === next.docId && current.rev === next.rev) return false;
   document.set(next);
+  // 参考线是文档的一部分（票 14），画布要立即看到新列表。损坏的 guides 由
+  // syncGuidesFromDocument 退化成空列表并返回原因，不能把整次加载带崩。
+  const guides = syncGuidesFromDocument(next.guides);
+  if (!guides.ok) console.warn("document: 参考线无法解析", guides.error);
   return true;
 }
 

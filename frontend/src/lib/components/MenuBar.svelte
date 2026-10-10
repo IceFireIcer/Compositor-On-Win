@@ -10,6 +10,7 @@
   import { copyMerged, exportPNG, openExportJPEG } from "../state/export";
   import { geometrySheet } from "../state/geometry";
   import {
+    clearAllGuides,
     layerMenuState,
     openGeometry,
     openProjectSafe,
@@ -19,6 +20,10 @@
     runSelect,
     runShortcut,
     saveProjectSafe,
+    toggleLockGuides,
+    toggleTransformControls,
+    toggleView,
+    viewToggleState,
   } from "../shortcuts/actions";
   import {
     clearRecentProjects,
@@ -50,6 +55,8 @@
     hint?: string;
     disabled?: boolean;
     placeholder?: string;
+    /** 开关型菜单项：为真时左侧画一个勾（View 菜单的五个开关用）。 */
+    checked?: boolean;
     run?: () => void;
   }
   interface Menu {
@@ -65,6 +72,9 @@
   const layerMenu = $derived(layerMenuState($document));
   // 文字会话：剪贴板命令让位给行内文本框（菜单路径也要挡）。
   const editingText = $derived($textSession !== null);
+  // View 菜单的五个开关状态（勾）。动作与快捷键共用 toggleView，所以这里的
+  // 勾永远反映真实状态，不会和画布/快捷键分叉。
+  const viewState = $derived(viewToggleState());
 
   // 最近项目（票 49）：文件菜单里逐条列出，最后一条是"清除最近记录"。
   // 列表由 Go 过滤（移动/删除过的项目不出现），开菜单时重取一次。
@@ -267,6 +277,19 @@
           disabled: !hasLayer || dialogOpen,
           run: () => runAndClose("Menus:Duplicate / Layer via Copy"),
         },
+        // 填充 / 清除（票 23）：内核在 render/stampfill.go，RPC 是 FillSelection。
+        {
+          label: "填充前景色",
+          hint: hintFor("Menus:Fill with Foreground"),
+          disabled: !hasLayer || dialogOpen,
+          run: () => runAndClose("Menus:Fill with Foreground"),
+        },
+        {
+          label: "填充背景色",
+          hint: hintFor("Menus:Fill with Background"),
+          disabled: !hasLayer || dialogOpen,
+          run: () => runAndClose("Menus:Fill with Background"),
+        },
         {
           label: "键盘快捷键…",
           disabled: dialogOpen,
@@ -431,11 +454,78 @@
           disabled: !hasLayer,
           run: () => runAndClose("Menus:Zoom Out"),
         },
+        // --- 视图开关（票 14 / 47）：原先这五条只有快捷键、没有菜单入口，
+        // 用户除了背键位没有别的办法打开参考线/网格/标尺。勾来自
+        // viewToggleState，与实际状态同源（菜单与快捷键共用 toggleView）。
         {
-          // 变换控件还没画（票 17）：菜单项先留着显示键位，按下不做事。
+          label: "显示网格",
+          hint: hintFor("Menus:Show Grid"),
+          checked: viewState.grid,
+          run: () => {
+            toggleView("grid");
+            close();
+          },
+        },
+        {
+          label: "显示参考线",
+          hint: hintFor("Menus:Show Guides"),
+          checked: viewState.guides,
+          run: () => {
+            toggleView("guides");
+            close();
+          },
+        },
+        {
+          label: "显示标尺",
+          hint: hintFor("Menus:Show Rulers"),
+          checked: viewState.rulers,
+          run: () => {
+            toggleView("rulers");
+            close();
+          },
+        },
+        {
+          label: "对齐",
+          hint: hintFor("Menus:Snap"),
+          checked: viewState.snap,
+          run: () => {
+            toggleView("snap");
+            close();
+          },
+        },
+        {
+          label: "锁定参考线",
+          hint: hintFor("Menus:Lock Guides"),
+          checked: viewState.lockGuides,
+          run: () => {
+            toggleLockGuides();
+            close();
+          },
+        },
+        {
+          label: "清除参考线",
+          disabled: !viewState.guides,
+          run: () => {
+            clearAllGuides();
+            close();
+          },
+        },
+        // ⌘H 是"控件可见性"开关（原版 ShowTransformControls），不是"开始变换"。
+        // 开始变换是 ⌘T，两条语义分开。
+        {
           label: "显示变换控件",
           hint: hintFor("Menus:Show Transform Controls"),
-          disabled: true,
+          checked: viewState.transformControls,
+          run: () => {
+            toggleTransformControls();
+            close();
+          },
+        },
+        {
+          label: "变换图层 / 选区",
+          hint: hintFor("Menus:Transform Layer / Selection"),
+          disabled: !hasLayer || dialogOpen,
+          run: () => runAndClose("Menus:Transform Layer / Selection"),
         },
       ],
     },
@@ -497,7 +587,12 @@
                 item.run?.();
               }}
             >
-              <span>{item.label}</span>
+              <span class="label">
+                {#if item.checked !== undefined}
+                  <span class="check" aria-hidden="true">{item.checked ? "✓" : ""}</span>
+                {/if}
+                {item.label}
+              </span>
               {#if item.hint || item.placeholder}
                 <span class="hint">{item.hint ?? item.placeholder}</span>
               {/if}
@@ -571,5 +666,18 @@
   .item .hint {
     color: var(--text-dim);
     font-size: 11px;
+  }
+
+  /* 开关型菜单项的勾：固定宽度，避免勾出现/消失时整列文字左右跳。 */
+  .item .label {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .item .check {
+    display: inline-block;
+    width: 10px;
+    color: var(--accent, #3b82f6);
   }
 </style>

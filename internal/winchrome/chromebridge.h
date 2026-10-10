@@ -13,6 +13,7 @@
  *   4 CHROME_ERR_TASKBAR  ITaskbarList3 不可用（Windows 7 以下、COM 失败）
  *   5 CHROME_ERR_ICON     覆盖图标创建失败（GDI）
  *   6 CHROME_ERR_OVERLAY  SetOverlayIcon 调用失败
+ *   7 CHROME_ERR_NOT_SHOWN 主窗口已经建好但还没显示（还没有任务栏按钮可画）
  */
 #ifndef CHROMEBRIDGE_H
 #define CHROMEBRIDGE_H
@@ -29,6 +30,7 @@ extern "C" {
 #define CHROME_ERR_TASKBAR 4
 #define CHROME_ERR_ICON 5
 #define CHROME_ERR_OVERLAY 6
+#define CHROME_ERR_NOT_SHOWN 7
 
 /* 把一个文件记进本应用的"最近文档"（SHAddToRecentDocs(SHARD_PATHW, path)）。
  * path 是 UTF-16、以 NUL 结尾，只在该次调用期间有效。SHAddToRecentDocs 返回
@@ -40,7 +42,12 @@ int chrome_note_recent(const wchar_t* path);
 int chrome_clear_recent(void);
 
 /* on != 0 时在进程主窗口上显示缓存的红点覆盖图标，on == 0 时传 NULL 清除。
- * 主窗口由本函数自己找：EnumWindows + 进程 pid 比对 + 可见 + 标题非空。 */
+ * 主窗口由本函数自己找：EnumWindows + 进程 pid 比对 + 标题非空，优先可见的那个，
+ * 找不到可见的就退到"已建好但还没显示、无属主、带 WS_EX_APPWINDOW"的那个
+ * （Wails 在导航完成前不显示主窗口，启动时的同步必然撞上这一瞬）。
+ *
+ * 只有隐藏候选时返回 CHROME_ERR_NOT_SHOWN 而**不**调用 SetOverlayIcon：没有任务栏
+ * 按钮可画，MSDN 也不保证这种提前调用会被保留。 */
 int chrome_set_overlay(int on);
 
 #ifdef __cplusplus
