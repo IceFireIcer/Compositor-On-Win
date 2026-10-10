@@ -1,5 +1,6 @@
 import { get, writable } from "svelte/store";
 import * as BridgeService from "../../../wailsjs/go/bridge/Service";
+import { Snapshot as GetSnapshot } from "../../../wailsjs/go/bridge/Workspace";
 import type { ColorRun, FontRun } from "./text";
 import { syncGuidesFromDocument } from "./view";
 
@@ -362,6 +363,8 @@ export function applyDocumentSnapshot(raw: string, expectedDocId?: string): bool
   // syncGuidesFromDocument 退化成空列表并返回原因，不能把整次加载带崩。
   const guides = syncGuidesFromDocument(next.guides);
   if (!guides.ok) console.warn("document: 参考线无法解析", guides.error);
+  // 文档变了，标签栏的脏标记/尺寸可能也变了 —— 见 scheduleWorkspaceRefresh。
+  scheduleWorkspaceRefresh();
   return true;
 }
 
@@ -387,6 +390,31 @@ export function reloadDocument(): Promise<boolean> {
 
 export function clearDocument(): void {
   document.set({ ...EMPTY_DOCUMENT });
+}
+
+/**
+ * 重新拉一次**工作区快照**（标签名/尺寸/脏标记）。
+ *
+ * 为什么必须有这个：文档 store 与工作区 store 是两份状态。文档变更只更新前者，
+ * 而标签栏的"未保存"标记、以及关标签/关窗口时的保存确认（confirm.ts 的
+ * requestClose 读 `doc.dirty`）都来自**后者**。不刷新它就会出现：打开一个已保存
+ * 的项目 → 画笔/图层/滤镜/撤销改了一堆 → 标签栏不显示未保存 → 关闭时不提示保存
+ * → **静默丢工作**。对新建文档看不出问题（创建时就是 dirty=true），所以这个洞
+ * 只在"打开已有项目"时暴露。
+ *
+ * 去抖 150ms：拖动滤镜滑杆、连续笔触都会频繁走到这里，不该每次都打一次 RPC。
+ * 用动态 import 是为了不引入 document ↔ workspace 的静态循环。
+ */
+let workspaceRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+
+export function scheduleWorkspaceRefresh(delayMs = 150): void {
+  if (workspaceRefreshTimer !== null) clearTimeout(workspaceRefreshTimer);
+  workspaceRefreshTimer = setTimeout(() => {
+    workspaceRefreshTimer = null;
+    void import("./workspace")
+      .then(async (m) => m.applySnapshot(await GetSnapshot()))
+      .catch((err) => console.warn("document: 刷新标签栏失败", err));
+  }, delayMs);
 }
 
 // ---------------------------------------------------------------------------

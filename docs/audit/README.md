@@ -71,6 +71,38 @@ FRONTEND_INFO: docload | expected=doc-a9afc945989ceaad actual=35C59DD1-…  matc
 不再是棋盘格）→ 画笔拖拽出现**黑色笔迹** → 从标尺拖出**青色参考线**。
 修复前这三样全都不可能出现。
 
+### 2.0b 【严重｜已修】几何命令不同步标签尺寸；文档变更不刷新标签脏标记
+
+这两条与 2.0 同源：**Go 侧的文档状态变了，但前端/标签描述符那份副本没跟着变**。
+
+**(a) 几何命令不同步标签描述符尺寸**（`internal/bridge/workspace.go`）
+
+`Workspace.EditActive` 只更新会话里的 `domain.Document`，从不碰标签描述符
+（`Snapshot.Tabs[].width/height`）。而工作区快照正是前端三处的依据：画布
+`.doc` 盒子尺寸、状态栏文档尺寸、裁剪覆盖层重开会话时的起始框。
+
+后果：裁剪 / 画布大小 / 图像大小 / 修剪提交后，文档真的变了、`/render` 也按新
+尺寸出图，但界面继续按旧尺寸画框 —— 表现为"提交裁剪后画布和状态栏纹丝不动"，
+裁剪框还会被重置回旧的整幅画布（看起来像提交没生效）。撤销/重做几何操作同理。
+
+修法：新增 `Workspace.syncTabSizeLocked`，在 `EditActive` 成功路径、
+`UndoActive`、`RedoActive` 三处调用。回归测试
+`internal/bridge/tabsize_test.go`。
+
+**(b) 文档变更后不刷新工作区快照 → 脏标记过期（数据丢失风险）**
+
+标签栏的"未保存"标记与关闭确认（`confirm.ts` 的 `requestClose` 读 `doc.dirty`）
+都来自**工作区快照**，而文档变更只更新 `document` store。画笔、图层操作、滤镜、
+撤销/重做这些路径都不刷新工作区快照，于是：**打开一个已保存的项目 → 编辑一堆
+→ 标签栏不显示未保存 → 关闭时不提示保存 → 静默丢工作**。
+
+新建文档因为创建时就是 `dirty=true`，所以这个洞只在"打开已有项目"时暴露。
+
+修法：在 `document.ts` 的 `applyDocumentSnapshot`（所有文档变更的唯一漏斗）
+里挂一个**去抖 150ms** 的工作区快照刷新；用动态 import 避免
+`document ↔ workspace` 的静态循环。回归测试
+`frontend/src/lib/state/document.refresh.test.ts`（4 例，含去抖合并与失败不抛）。
+
 ### 2.1 三套完整纯类零生产消费者
 
 `TransformSession`（票 17）、`GuidesState`（票 14）、`CropState`（票 18）都是
