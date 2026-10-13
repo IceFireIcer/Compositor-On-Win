@@ -169,6 +169,18 @@ func TestLiquifyCommitKeepsSizeAndIsPure(t *testing.T) {
 	}
 }
 
+func TestLiquifyCommitHandlesOnePixelDimensions(t *testing.T) {
+	for _, size := range [][2]int{{1, 7}, {7, 1}, {1, 1}} {
+		src := warpGradient(size[0], size[1])
+		s := NewWarpStroke(src, WarpModeLiquify, WarpSettings{Diameter: 4, Hardness: 0.5, Strength: 1})
+		s.PushDab(0, 0, 1, 1, 2, 1)
+		out := s.Commit()
+		if out.W != src.W || out.H != src.H {
+			t.Fatalf("commit for %dx%d returned %dx%d", src.W, src.H, out.W, out.H)
+		}
+	}
+}
+
 func TestSmudgeSamePointDabIsIdempotent(t *testing.T) {
 	// The brush carries what it just left, and nothing older (WarpStroke.smudge,
 	// SmudgeLiquify.swift:146-148): the second dab over the same spot finds

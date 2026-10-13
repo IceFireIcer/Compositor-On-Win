@@ -38,6 +38,21 @@ var AllAdjustmentKinds = []AdjustmentKind{
 	AdjustmentColorBalance,
 }
 
+// IdentityLevelRange is the normalized identity Levels range (0/1/255 →
+// 0/255), the macOS LevelRange struct's defaults. It is what an all-zero
+// range must be read as: normalize clamps a zero White up to Black+1 and a
+// zero Gamma down to 0.1, so leaving the struct zeroed is a blown-out image,
+// not "no change".
+func IdentityLevelRange() LevelRange {
+	return LevelRange{Black: 0, Gamma: 1, White: 255, OutputBlack: 0, OutputWhite: 255}
+}
+
+// IdentityCurvePoints is the two-anchor 0→0 / 255→255 curve: the identity a
+// channel with no stored table must be read as (see render.curveValue).
+func IdentityCurvePoints() []CurvePoint {
+	return []CurvePoint{{X: 0, Y: 0}, {X: 255, Y: 255}}
+}
+
 // Adjustment is the adjustment-layer payload. Scalar fields and the
 // levels/curves blocks are non-optional in the macOS record and always
 // serialize; the per-kind settings blocks are pointers. hsvSettings is kept

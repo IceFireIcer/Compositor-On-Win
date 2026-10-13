@@ -278,9 +278,11 @@ func FillColor(bmp *Bitmap, mask []uint8, w, h int, color Color, mode FillMode) 
 		// premultiplied bytes exactly as brush.go's recompose does
 		// (BrushRaster.fill at setAlpha 1 through the selection clip).
 		a := clamp01(color.A)
-		r := clamp01(color.R) * a
-		g := clamp01(color.G) * a
-		b := clamp01(color.B) * a
+		// Keep the input RGB straight until the source alpha is applied below.
+		// Premultiplying here and multiplying by srcA again would square alpha.
+		r := clamp01(color.R)
+		g := clamp01(color.G)
+		b := clamp01(color.B)
 		for y := 0; y < h; y++ {
 			row := y * w
 			for x := 0; x < w; x++ {

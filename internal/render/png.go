@@ -46,3 +46,18 @@ func EncodePNG(b *Bitmap) ([]byte, error) {
 	}
 	return buf.Bytes(), nil
 }
+
+// EncodeMaskPNG writes a mask bitmap as an 8-bit grayscale PNG. Mask pixels
+// use the red working channel for coverage and keep alpha opaque; the package
+// format intentionally does not allow RGBA mask assets.
+func EncodeMaskPNG(b *Bitmap) ([]byte, error) {
+	img := image.NewGray(image.Rect(0, 0, b.W, b.H))
+	for i, j := 0, 0; i < len(b.Pix); i, j = i+4, j+1 {
+		img.Pix[j] = b.Pix[i]
+	}
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}

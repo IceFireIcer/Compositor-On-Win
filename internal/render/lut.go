@@ -55,7 +55,7 @@ func applyLevels(s domain.LevelsSettings, value float64, channel int) float64 {
 
 // identityLevelRange is the normalized identity: the macOS LevelRange
 // struct's defaults.
-var identityLevelRange = domain.LevelRange{Black: 0, Gamma: 1, White: 255, OutputBlack: 0, OutputWhite: 255}
+var identityLevelRange = domain.IdentityLevelRange()
 
 // levelsIdentity ports LevelsSettings.isIdentity: every normalized range
 // equals the default.
@@ -84,6 +84,18 @@ func BuildLevelsLUT(s domain.LevelsSettings, size int) *LUT {
 // are flattened to zero, and the harmonic mean of the adjoining secants
 // keeps the curve through its handles.
 func curveValue(points []domain.CurvePoint, x float64) float64 {
+	// DIVERGENCE from the original, deliberate: the Swift Curves validator
+	// requires 2–32 anchors and throws ProjectError.invalid otherwise
+	// (reference/Swift/.../Curves.swift isValid/apply), so a table this short
+	// never reaches the kernel there. Here it is reachable — the Image menu's
+	// 曲线… session starts from {"kind":"Curves"} and the dialog sends one
+	// filled channel plus three empty ones — and without this guard the code
+	// below computes len(points)-1 == -1 and panics in make(). Reading it as
+	// the identity keeps those callers harmless instead of crashing the
+	// renderer.
+	if len(points) < 2 {
+		return math.Min(255, math.Max(0, x))
+	}
 	i := -1
 	for j := len(points) - 1; j >= 0; j-- {
 		if points[j].X <= x {

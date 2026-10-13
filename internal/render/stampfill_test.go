@@ -376,6 +376,16 @@ func TestFillColorWholeImage(t *testing.T) {
 	stampWantPx(t, bm3, 1, 1, 255, 0, 128, 255)
 }
 
+func TestFillColorPremultipliesTranslucentColorOnce(t *testing.T) {
+	bm := NewBitmap(1, 1)
+	if err := FillColor(bm, nil, bm.W, bm.H, Color{R: 1, G: 0.5, B: 0, A: 0.5}, FillForeground); err != nil {
+		t.Fatal(err)
+	}
+	// A straight color with alpha .5 becomes premultiplied RGBA (128, 64, 0, 128).
+	// The RGB channels must not be multiplied by alpha a second time.
+	stampWantPx(t, bm, 0, 0, 128, 64, 0, 128)
+}
+
 func TestFillColorRespectsSelectionMask(t *testing.T) {
 	// With a selection only mask > 0 pixels change, and the mask value scales
 	// the fill — an antialiased selection edge lands proportionally

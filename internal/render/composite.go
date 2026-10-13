@@ -31,11 +31,10 @@ func (s *scope) lookup(id string) ([]uint8, bool) {
 
 // Render composites the whole document bottom-to-top into a premultiplied
 // RGBA raster sized to the canvas. Group semantics follow project-format.md:
-// folders are pass-through (Normal), their opacity multiplies the composite
-// of their subtree, their mask covers the folder rectangle; layer masks and
-// clipping-mask chains multiply coverage. Adjustment layers recolor the
-// composite below them through their own LUT/cube kernels (ticket 10); the
-// spatial M5 kinds (blurs, Grain, Add Noise) pass through until ticket 26.
+// folders are pass-through: their opacity and masks apply to each descendant
+// before it blends with the composite below; layer masks and
+// clipping-mask chains multiply coverage. Adjustment layers transform the
+// composite below them through their own LUT, cube, and spatial kernels.
 func Render(doc *domain.Document, src PixelSource) (*Bitmap, error) {
 	children := make(map[string][]int)
 	var roots []int
@@ -54,11 +53,10 @@ func Render(doc *domain.Document, src PixelSource) (*Bitmap, error) {
 	return out, nil
 }
 
-// renderScope composites one sibling run (a group's children, or the roots)
-// into a scratch buffer, applies the group's mask and opacity, then blends
-// the result onto target.
-func renderScope(doc *domain.Document, idxs []int, target *Bitmap, src PixelSource, groupOpacity float64, group *domain.Layer) error {
-	scratch := NewBitmap(doc.Width, doc.Height)
+// renderScope draws a sibling run directly onto target. Swift folders never
+// isolate their subtree: child blend modes and adjustments see everything
+// below, while ancestor opacity and masks attenuate each child separately.
+func renderScope(doc *domain.Document, idxs []int, target *Bitmap, src PixelSource, groupOpacity float64, folderMasks [][]uint8) error {
 	sc := &scope{cov: map[string][]uint8{}}
 	for _, i := range idxs {
 		l := &doc.Layers[i]
@@ -73,32 +71,29 @@ func renderScope(doc *domain.Document, idxs []int, target *Bitmap, src PixelSour
 			if l.MaskSourceID != nil {
 				continue
 			}
-			if err := renderAdjustment(doc, l, scratch, src); err != nil {
+			if err := renderAdjustment(doc, l, target, src, groupOpacity, folderMasks); err != nil {
 				return err
 			}
 			continue
 		}
 		if l.IsGroupLayer() {
-			if err := renderScope(doc, children(doc, l.ID), scratch, src, opacityOf(l), l); err != nil {
+			masks := folderMasks
+			if l.MaskFile != nil && maskEnabled(l) {
+				cov, err := maskCoverage(doc, l, src)
+				if err != nil {
+					return err
+				}
+				masks = append(append([][]uint8(nil), folderMasks...), cov)
+			}
+			if err := renderScope(doc, children(doc, l.ID), target, src, groupOpacity*opacityOf(l), masks); err != nil {
 				return err
 			}
 			continue
 		}
-		if err := renderLayer(doc, l, scratch, sc, src); err != nil {
+		if err := renderLayer(doc, l, target, sc, src, groupOpacity, folderMasks); err != nil {
 			return err
 		}
 	}
-	if group != nil && group.MaskFile != nil && maskEnabled(group) {
-		cov, err := maskCoverage(doc, group, src)
-		if err != nil {
-			return err
-		}
-		multiplyCoverage(scratch, cov)
-	}
-	if groupOpacity < 1 {
-		scaleAlpha(scratch, groupOpacity)
-	}
-	BlendBitmap(domain.BlendNormal, target, scratch, 1)
 	return nil
 }
 
@@ -108,10 +103,10 @@ func renderScope(doc *domain.Document, idxs []int, target *Bitmap, src PixelSour
 // adjusted straight colors blend with the below ones at full coverage and
 // the original coverage is restored afterwards — as LiveMaskRenderer does,
 // so soft edges aren't thickened.
-func renderAdjustment(doc *domain.Document, l *domain.Layer, below *Bitmap, src PixelSource) error {
+func renderAdjustment(doc *domain.Document, l *domain.Layer, below *Bitmap, src PixelSource, groupOpacity float64, folderMasks [][]uint8) error {
 	changed := below.Clone()
 	if !applyAdjustment(l.Adjustment, changed) {
-		return nil // M5 kernel kinds pass through until their tickets land.
+		return nil // Unknown adjustment kinds remain forward-compatible no-ops.
 	}
 	mode := domain.BlendNormal
 	if l.BlendMode != nil {
@@ -133,7 +128,12 @@ func renderAdjustment(doc *domain.Document, l *domain.Layer, below *Bitmap, src 
 			cov[i] = uint8(uint32(cov[i]) * uint32(mcov[i]) / 255)
 		}
 	}
-	if op := opacityOf(l); op < 1 {
+	for _, mask := range folderMasks {
+		for i := range cov {
+			cov[i] = uint8(uint32(cov[i]) * uint32(mask[i]) / 255)
+		}
+	}
+	if op := opacityOf(l) * groupOpacity; op < 1 {
 		k := uint32(op*255 + 0.5)
 		for i := range cov {
 			cov[i] = uint8(uint32(cov[i]) * k / 255)
@@ -197,8 +197,8 @@ func children(doc *domain.Document, parentID string) []int {
 	return out
 }
 
-func renderLayer(doc *domain.Document, l *domain.Layer, target *Bitmap, sc *scope, src PixelSource) error {
-	var placed *Bitmap
+func renderLayer(doc *domain.Document, l *domain.Layer, target *Bitmap, sc *scope, src PixelSource, groupOpacity float64, folderMasks [][]uint8) error {
+	var pixels *Bitmap
 	if l.Shape != nil {
 		// A live shape layer redraws from its style at the current box size —
 		// the manifest keeps the style "so it redraws cleanly when scaled"
@@ -210,19 +210,44 @@ func renderLayer(doc *domain.Document, l *domain.Layer, target *Bitmap, sc *scop
 		// such layers back to the ordinary image path below.
 		boxW := int(math.Round(l.Transform.Size[0]))
 		boxH := int(math.Round(l.Transform.Size[1]))
-		placed = Place(RenderShape(*l.Shape, boxW, boxH), l.Transform, doc.Width, doc.Height)
+		pixels = RenderShape(*l.Shape, boxW, boxH)
 	} else if l.ImageFile != nil {
-		pixels, err := src(*l.ImageFile)
+		var err error
+		pixels, err = src(*l.ImageFile)
 		if err != nil {
 			return fmt.Errorf("图层 %s 加载 %s 失败: %w", l.ID, *l.ImageFile, err)
 		}
-		placed = Place(pixels, l.Transform, doc.Width, doc.Height)
+	}
+	overlay := colorOverlayOf(l.Effects)
+	stroke := strokeOf(l.Effects)
+	hasEffects := overlay != nil || stroke != nil
+	var placed *Bitmap
+	if pixels != nil {
+		transform := l.Transform
+		if hasEffects {
+			// Swift builds effects in the source grid, through the layer's
+			// own mask, before transforming or applying layer opacity.
+			pixels = pixels.Clone() // PixelSource assets are immutable.
+			if l.MaskFile != nil && maskEnabled(l) {
+				if err := maskEffectSource(pixels, l, src); err != nil {
+					return err
+				}
+			}
+			var inset int
+			var err error
+			pixels, inset, err = renderStrokeEffects(pixels, overlay, stroke)
+			if err != nil {
+				return fmt.Errorf("图层 %s 渲染特效失败: %w", l.ID, err)
+			}
+			transform = effectPlacedTransform(transform, pixels.W, pixels.H, inset)
+		}
+		placed = Place(pixels, transform, doc.Width, doc.Height)
 	} else {
 		placed = NewBitmap(doc.Width, doc.Height)
 	}
-	scaleAlpha(placed, opacityOf(l))
+	scaleAlpha(placed, opacityOf(l)*groupOpacity)
 
-	if l.MaskFile != nil && maskEnabled(l) {
+	if !hasEffects && l.MaskFile != nil && maskEnabled(l) {
 		cov, err := maskCoverage(doc, l, src)
 		if err != nil {
 			return err
@@ -239,6 +264,11 @@ func renderLayer(doc *domain.Document, l *domain.Layer, target *Bitmap, sc *scop
 		}
 	}
 	sc.cov[l.ID] = placed.coverage()
+	// FolderMaskClip wraps the draw, not LiveMaskRenderer's own coverage
+	// cache. Including it above would apply a folder mask twice to a clip.
+	for _, cov := range folderMasks {
+		multiplyCoverage(placed, cov)
+	}
 
 	mode := domain.BlendNormal
 	if l.BlendMode != nil {

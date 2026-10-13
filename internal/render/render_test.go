@@ -323,6 +323,32 @@ func TestEncodePNG(t *testing.T) {
 	}
 }
 
+func TestEncodeMaskPNGUses8BitGrayscale(t *testing.T) {
+	b := NewBitmap(2, 1)
+	b.Pix = []uint8{
+		17, 17, 17, 255,
+		203, 203, 203, 255,
+	}
+	out, err := EncodeMaskPNG(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out) < 26 || out[24] != 8 || out[25] != 0 {
+		t.Fatalf("mask PNG IHDR = bit depth %d, color type %d; want 8-bit grayscale", out[24], out[25])
+	}
+	img, err := png.Decode(bytes.NewReader(out))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for x, want := range []uint8{17, 203} {
+		r, g, b, a := img.At(x, 0).RGBA()
+		got := [4]uint8{uint8(r >> 8), uint8(g >> 8), uint8(b >> 8), uint8(a >> 8)}
+		if got != [4]uint8{want, want, want, 255} {
+			t.Fatalf("mask pixel %d = %v, want grayscale %d", x, got, want)
+		}
+	}
+}
+
 func ptr[T any](v T) *T { return &v }
 
 func abs8(a, b uint8) int {

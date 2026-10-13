@@ -148,6 +148,53 @@ func TestRenderAdjustmentHSV(t *testing.T) {
 	}
 }
 
+func TestRenderAdjustmentGaussianBlurChangesPixels(t *testing.T) {
+	base := NewBitmap(9, 9)
+	center := (4*base.W + 4) * 4
+	base.Pix[center], base.Pix[center+1], base.Pix[center+2], base.Pix[center+3] = 255, 255, 255, 255
+	radius := 1.5
+	doc := testDoc(9, 9,
+		testLayer("base", "base.png", func(l *domain.Layer) {
+			l.Transform.Size = [2]float64{9, 9}
+		}),
+		adjustmentLayer("adj", &domain.Adjustment{
+			Kind:       domain.AdjustmentGaussianBlur,
+			BlurRadius: &radius,
+		}, nil),
+	)
+	out := renderDoc(t, doc, map[string]*Bitmap{"base.png": base})
+	if px(out, 4, 4) == [4]uint8{255, 255, 255, 255} {
+		t.Fatal("gaussian blur adjustment passed the impulse through unchanged")
+	}
+	if px(out, 3, 4) == [4]uint8{0, 0, 0, 0} {
+		t.Fatal("gaussian blur adjustment did not spread pixels to a neighbor")
+	}
+}
+
+func TestRenderAdjustmentMotionBlurChangesPixels(t *testing.T) {
+	base := NewBitmap(9, 9)
+	center := (4*base.W + 4) * 4
+	base.Pix[center], base.Pix[center+1], base.Pix[center+2], base.Pix[center+3] = 255, 255, 255, 255
+	angle, distance := 0.0, 12.0
+	doc := testDoc(9, 9,
+		testLayer("base", "base.png", func(l *domain.Layer) {
+			l.Transform.Size = [2]float64{9, 9}
+		}),
+		adjustmentLayer("adj", &domain.Adjustment{
+			Kind:           domain.AdjustmentMotionBlur,
+			MotionAngle:    &angle,
+			MotionDistance: &distance,
+		}, nil),
+	)
+	out := renderDoc(t, doc, map[string]*Bitmap{"base.png": base})
+	if px(out, 4, 4) == [4]uint8{255, 255, 255, 255} {
+		t.Fatal("motion blur adjustment passed the impulse through unchanged")
+	}
+	if px(out, 3, 4) == [4]uint8{0, 0, 0, 0} && px(out, 5, 4) == [4]uint8{0, 0, 0, 0} {
+		t.Fatal("motion blur adjustment did not spread pixels along its angle")
+	}
+}
+
 func TestRenderAdjustmentInsideGroup(t *testing.T) {
 	// An adjustment layer inside a group recolors the group's own composite;
 	// the group's opacity still applies to the whole subtree afterwards.

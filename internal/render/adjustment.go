@@ -1,18 +1,20 @@
 package render
 
-import "compositor-win/internal/domain"
+import (
+	"math"
+
+	"compositor-win/internal/domain"
+)
 
 // Adjustment dispatch for the CPU truth path, mirroring how the macOS layer
 // pipeline applies LayerAdjustment (LayerAdjustment.apply, and the GPU
 // layer path in GPUAdjustment.apply). Each supported kind generates its
 // lookup once per settings and applies it to the whole raster in place.
 // The per-pixel kernels (Grain, Add Noise, Black & White, Color Balance,
-// Invert) live in kernels.go; the kinds without a kernel yet (the blurs)
-// still pass through untouched until their ticket lands. An adjustment
-// whose per-kind settings block was never stored renders untouched — the
-// document carries no values to apply (Swift's editor supplies defaults
-// only once the user edits, and the render path's pass-through contract
-// pins this).
+// Invert) live in kernels.go. Spatial adjustment kinds reuse the same blur
+// kernels as their destructive filter counterparts. An adjustment whose
+// per-kind settings block was never stored renders untouched — the document
+// carries no values to apply.
 
 // ApplyAdjustment adjusts `b` in place; it reports whether the kind has a
 // kernel yet, so callers can pass unsupported kinds through untouched.
@@ -42,6 +44,22 @@ func applyAdjustment(a *domain.Adjustment, b *Bitmap) bool {
 		return true
 	case domain.AdjustmentGradientMap:
 		ApplyGradientMap(b, BuildGradientMapTable(gradientMapOrDefault(a)))
+		return true
+	case domain.AdjustmentGaussianBlur:
+		if a.BlurRadius == nil || !finitePositive(*a.BlurRadius) {
+			return true
+		}
+		ApplyGaussianBlur(b, *a.BlurRadius)
+		return true
+	case domain.AdjustmentMotionBlur:
+		if a.MotionDistance == nil || !finitePositive(*a.MotionDistance) {
+			return true
+		}
+		angle := 0.0
+		if a.MotionAngle != nil && !math.IsNaN(*a.MotionAngle) && !math.IsInf(*a.MotionAngle, 0) {
+			angle = *a.MotionAngle
+		}
+		ApplyMotionBlur(b, angle, *a.MotionDistance*MotionRadiusPerPixel)
 		return true
 	case domain.AdjustmentGrain:
 		if a.GrainSettings == nil {
@@ -109,6 +127,10 @@ func applyAdjustment(a *domain.Adjustment, b *Bitmap) bool {
 	default:
 		return false
 	}
+}
+
+func finitePositive(v float64) bool {
+	return v > 0 && !math.IsNaN(v) && !math.IsInf(v, 0)
 }
 
 // exposureOrDefault ports LayerAdjustment.exposure: the stored settings or

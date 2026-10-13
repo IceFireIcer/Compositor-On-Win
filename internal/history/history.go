@@ -263,6 +263,23 @@ func (h *History) Redo() (Snapshot, bool) {
 	return cloneSnapshot(e.after), true
 }
 
+// DiscardLastUndo removes the newest undo entry and returns the snapshot that
+// preceded it. This is intentionally narrower than Undo: provisional UI
+// transactions (for example, an adjustment layer created only to populate an
+// editor) must disappear without leaving a redo entry behind. Callers must
+// ensure the entry is the transaction they own before using this method.
+func (h *History) DiscardLastUndo() (Snapshot, bool) {
+	if h.depth != 0 || len(h.past) == 0 {
+		return Snapshot{}, false
+	}
+	n := len(h.past) - 1
+	e := h.past[n]
+	h.past[n] = entry{}
+	h.past = h.past[:n]
+	h.revision = e.before.Revision
+	return cloneSnapshot(e.before), true
+}
+
 // retainedBytes estimates the bytes held only by history, excluding what the
 // live document accounts for — the Go adaptation of
 // DocumentHistory.retainedBytes(current:). Swift deduplicates images per

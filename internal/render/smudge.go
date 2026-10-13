@@ -461,27 +461,34 @@ func applyWarpField(src *Bitmap, offsets []float32, out *Bitmap) {
 				// The untouched layer where the offset points, held to its edges.
 				sx := math.Min(float64(w-1), math.Max(0, float64(x)+float64(offsets[(y*w+x)*2])))
 				sy := math.Min(float64(h-1), math.Max(0, float64(y)+float64(offsets[(y*w+x)*2+1])))
-				ix, iy := int(sx), int(sy)
-				if ix > w-2 {
-					ix = w - 2
-				}
-				if iy > h-2 {
-					iy = h - 2
-				}
+				// Use a duplicated edge neighbor when the raster has reached its
+				// last column/row. This also keeps 1xN and Nx1 rasters valid.
+				ix, iy := int(math.Floor(sx)), int(math.Floor(sy))
 				if ix < 0 {
 					ix = 0
+				} else if ix >= w {
+					ix = w - 1
 				}
 				if iy < 0 {
 					iy = 0
+				} else if iy >= h {
+					iy = h - 1
+				}
+				ix1, iy1 := ix+1, iy+1
+				if ix1 >= w {
+					ix1 = w - 1
+				}
+				if iy1 >= h {
+					iy1 = h - 1
 				}
 				fx, fy := sx-float64(ix), sy-float64(iy)
 				i00 := (iy*w + ix) * 4
 				o := (y*w + x) * 4
 				for k := 0; k < 4; k++ {
 					c00 := float64(src.Pix[i00+k])
-					c10 := float64(src.Pix[i00+4+k])
-					c01 := float64(src.Pix[i00+w*4+k])
-					c11 := float64(src.Pix[i00+w*4+4+k])
+					 c10 := float64(src.Pix[(iy*w+ix1)*4+k])
+					 c01 := float64(src.Pix[(iy1*w+ix)*4+k])
+					 c11 := float64(src.Pix[(iy1*w+ix1)*4+k])
 					top := c00 + (c10-c00)*fx
 					bottom := c01 + (c11-c01)*fx
 					v := top + (bottom-top)*fy
