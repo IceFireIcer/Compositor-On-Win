@@ -34,12 +34,11 @@
 体积差 35 倍而抠图质量在"精修链兜底"的验收口径下足够；Apache-2.0 许可允许
 再分发与二次转换。
 
-**分发**：模型**不进仓库**（保持克隆轻量、许可文件随模型走）。运行时按需
-下载：固定 URL（rembg release）→ SHA-256 校验（校验和由发布流程钉进
-`-ldflags -X ml.ModelSHA256=…`，见仓库发布清单）→ 缓存到
+**原分发方案**：模型**不进仓库**（保持克隆轻量、许可文件随模型走）。运行时按需
+下载：固定 URL（rembg release）→ SHA-256 校验 → 缓存到
 `%APPDATA%/Compositor/models/u2netp.onnx`。下载失败/离线时三个功能入口返回
 "分割模型未安装"的可读错误，不崩溃。onnxruntime 共享库（MIT）随安装包内置；
-开发检出在程序目录/PATH 放置 `onnxruntime.dll`。
+开发检出在程序目录放置 `onnxruntime.dll`。2026-10-13 分发修订见下文。
 
 **推理**：Go 绑定 `github.com/yalue/onnxruntime_go`（动态加载共享库，无
 cgo）。输入 1×3×320×320 NCHW 0–1；输出 d0 图按 min/max 拉伸回 0–1 后上采样，
@@ -50,3 +49,19 @@ cgo）。输入 1×3×320×320 NCHW 0–1；输出 d0 图按 min/max 拉伸回 0
 **对象选择降级**：u2netp 只出单张显著图（无实例区分）。点选对象 = 主体
 掩码上包含点击点的 8 连通域（render.LargestSubjectAt），即 ADR 预留的
 "主体选择 + 点选区域"组合实现，已在票中记录。
+
+## 分发修订（2026-10-13）
+
+按照原决策第 3 条的优先方案，Windows amd64 构建通过 `wails.json` 预构建钩子
+把 `u2netp.onnx` 和 `onnxruntime.dll` 校验缓存到 `build/ml-assets/`，编译后
+再由后构建钩子离线复制到 `build/bin/`，避免 Wails 清理输出目录时删除资源。
+NSIS 把模型放到安装目录 `models/`，把 DLL 放到 exe 同级。
+模型仍不进 Git 仓库。`scripts/prepare-ml-assets.ps1` 使用附录所列固定 URL 下载
+模型并验证 SHA-256 `309c8469258dda742793dce0ebea8e6dd393174f89934733ecc8b14c76f4ddd8`
+（4,574,861 字节）。运行时优先读取 exe 同级的 `models/u2netp.onnx`，并验证同一
+哈希；开发检出缺少随包模型时才回退到 `%APPDATA%/Compositor/models` 和按需下载。
+ONNX Runtime DLL 从固定的 `onnxruntime_go@v1.36.0/test_data` 取得，构建前验证
+SHA-256 `69d8e6d3879a3b4001cdc74c8ed9ccc7e7f799a5b847059738323404519ec471`
+（16,149,344 字节，文件版本 1.29.0）。构建失败时不产出缺少 ML 资源的安装包。
+模型、runtime 和 Go 绑定许可文本与第三方声明一起安装。具体命令和便携
+目录结构见 [模型分发说明](../ml-distribution.md)。此修订未完成真实推理或安装验收。

@@ -17,5 +17,11 @@
   "frontend:install": "npm install",
   "frontend:build": "npm run build",
   "frontend:dev:watcher": "npm run dev",
-  "frontend:dev:serverUrl": "auto"
+  "frontend:dev:serverUrl": "auto",
+  "preBuildHooks": {
+    "windows/*": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File ../../scripts/prepare-ml-assets.ps1 -CacheOnly -Platform ${platform}"
+  },
+  "postBuildHooks": {
+    "windows/*": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File ../../scripts/prepare-ml-assets.ps1 -Offline -Platform ${platform}"
+  }
 }

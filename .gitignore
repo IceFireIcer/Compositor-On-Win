@@ -14,6 +14,8 @@ frontend/dist/*
 
 # Wails（build/ 下的 appicon、manifest、NSIS 资产需要提交，只忽略产物）
 build/bin/
+# Verified ML download cache (preserved when Wails clears build/bin).
+/build/ml-assets/
 
 # 测试与覆盖率
 coverage/
@@ -42,8 +44,11 @@ vcpkg_installed/
 # 发布产物与更新 feed（票 50）：本地产物，绝不提交
 releases/
 
-# 运行时诊断日志（本地排查用，不入库）
+# 运行时诊断日志（本地排查用，不入库）：logs/ 是真机验收时的启动日志与截图
 app-*.log
+verify-out.log
+verify-err.log
+logs/
 
 # 临时提交信息文件（本地用）
 .commitmsg*.tmp

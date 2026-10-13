@@ -2,14 +2,10 @@
 // appendix): the u2netp salient-object model through ONNX Runtime, refined
 // by render.RefineSubjectMask (the GuidedMatte port).
 //
-// Distribution decision (ADR-0005 appendix): the u2netp ONNX model
-// (4.6 MB, Apache-2.0, Qin et al.) downloads on first use from the pinned
-// URL below and is verified against a committed SHA-256; it is cached under
-// the user's app-data directory and never committed to the repository. The
-// ONNX Runtime shared library (MIT) ships with the installer; a
-// development checkout falls back to onnxruntime.dll next to the executable
-// or on PATH. Without either file the entry points fail with a
-// user-facing message instead of crashing.
+// Windows builds put the pinned u2netp model beside the executable in models/.
+// A development checkout may download the same verified model into app data.
+// ONNX Runtime is distributed beside the executable. Neither binary is stored
+// in the repository.
 package ml
 
 import (
@@ -34,12 +30,11 @@ import (
 // the original u2net release, Apache-2.0).
 const ModelURL = "https://github.com/danielgatis/rembg/releases/download/v0.0.0/u2netp.onnx"
 
-// ModelSHA256 pins the exact artifact the download must match. It is
-// supplied at release builds via -ldflags (the release checklist pins it);
-// empty disables the hash check and falls back to a size sanity bound.
-var ModelSHA256 = ""
+// ModelSHA256 pins the artifact used by the build preparation script as well
+// as the packaged, cached and downloaded copies used at runtime.
+const ModelSHA256 = "309c8469258dda742793dce0ebea8e6dd393174f89934733ecc8b14c76f4ddd8"
 
-// modelMinBytes guards against truncated downloads when no hash is pinned.
+// modelMinBytes gives an early error for truncated model files.
 const modelMinBytes = 1 << 21 // 2 MiB (u2netp is ~4.6 MB)
 
 // ModelFileName / LibFileName are what EnsureModel looks for.
@@ -66,38 +61,94 @@ func ModelDir() string {
 	return filepath.Join(base, "Compositor", "models")
 }
 
-func modelPath() string { return filepath.Join(ModelDir(), ModelFileName) }
+func bundledModelPath() string {
+	executable, err := os.Executable()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(filepath.Dir(executable), "models", ModelFileName)
+}
+
+func cachedModelPath() string { return filepath.Join(ModelDir(), ModelFileName) }
+
+func modelPath() string {
+	return preferredModelPath(bundledModelPath(), cachedModelPath())
+}
+
+func preferredModelPath(bundled, cached string) string {
+	if bundled != "" {
+		if _, err := os.Stat(bundled); !os.IsNotExist(err) {
+			return bundled
+		}
+	}
+	return cached
+}
 func libPath() string {
-	for _, dir := range []string{"", ".", "models"} {
+	if executable, err := os.Executable(); err == nil {
+		p := filepath.Join(filepath.Dir(executable), libFileName())
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+	}
+	for _, dir := range []string{".", "models"} {
 		p := filepath.Join(dir, libFileName())
 		if _, err := os.Stat(p); err == nil {
 			return p
 		}
 	}
-	if _, err := os.Stat(libFileName()); err == nil {
-		return libFileName()
-	}
 	return ""
 }
 
-// ErrModelMissing reports the user-facing state when the model or runtime
-// isn't installed yet.
-var ErrModelMissing = errors.New("分割模型或 ONNX Runtime 未安装：请运行「下载分割模型」或把 onnxruntime.dll 与 u2netp.onnx 放入程序目录")
+// The two prerequisites report separately: ErrRuntimeMissing when the ONNX
+// Runtime library is absent (it is not downloaded), ErrModelMissing when only
+// the weights are (EnsureModel fetches those on first use).
+// The two prerequisites have different remedies, so they are separate errors:
+// the previous combined message told the user to run a「下载分割模型」command
+// that exists nowhere in the UI (ml.EnsureModel was never called — see
+// EnsureReady).
+var (
+	ErrRuntimeMissing = errors.New("ONNX Runtime 未安装：请把 onnxruntime.dll 放到 Compositor.exe 同级目录")
+	ErrModelMissing   = errors.New("分割模型缺失：请重新安装完整安装包，或把 u2netp.onnx 放到程序同级的 models 目录；开发版可自动下载到 %APPDATA%/Compositor/models")
+)
 
 var (
-	initOnce   sync.Once
-	initErr    error
+	initMtx    sync.Mutex
+	modelMtx   sync.Mutex
+	initReady  bool
 	sessionMtx sync.Mutex
 	session    *ort.DynamicAdvancedSession
 	sessionFor string
 )
 
-// EnsureModel downloads the pinned model when it is missing, verifying the
-// SHA-256. The runtime library is not downloaded.
+func verifyModel(path string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	hasher := sha256.New()
+	size, err := io.Copy(hasher, f)
+	if err != nil {
+		return err
+	}
+	if size < modelMinBytes {
+		return fmt.Errorf("分割模型不完整: %d 字节", size)
+	}
+	if got := hex.EncodeToString(hasher.Sum(nil)); got != ModelSHA256 {
+		return fmt.Errorf("分割模型 SHA-256 校验不符: %s", got)
+	}
+	return nil
+}
+
+// EnsureModel accepts the packaged model first. Development builds can fall
+// back to the app-data cache and download the same pinned file when absent.
 func EnsureModel() error {
+	// Multiple entry points may request the first download concurrently.
+	modelMtx.Lock()
+	defer modelMtx.Unlock()
 	p := modelPath()
-	if info, err := os.Stat(p); err == nil && info.Size() > 0 {
-		return nil
+	if _, err := os.Stat(p); !os.IsNotExist(err) {
+		return verifyModel(p)
 	}
 	if err := os.MkdirAll(ModelDir(), 0o755); err != nil {
 		return err
@@ -125,11 +176,9 @@ func EnsureModel() error {
 		os.Remove(tmp)
 		return fmt.Errorf("分割模型下载不完整: %d 字节", size)
 	}
-	if ModelSHA256 != "" {
-		if got := hex.EncodeToString(hasher.Sum(nil)); got != ModelSHA256 {
-			os.Remove(tmp)
-			return fmt.Errorf("分割模型校验不符: %s", got)
-		}
+	if got := hex.EncodeToString(hasher.Sum(nil)); got != ModelSHA256 {
+		os.Remove(tmp)
+		return fmt.Errorf("分割模型校验不符: %s", got)
 	}
 	return os.Rename(tmp, p)
 }
@@ -147,26 +196,41 @@ func httpGet(url string) (*http.Response, error) {
 	return resp, nil
 }
 
-// setup initializes the runtime and session once; it fails softly when the
-// library or model is absent (ErrModelMissing).
+// setup initializes the ONNX runtime, once. A failure is deliberately NOT
+// cached: the model is downloaded on first use (EnsureReady), so a call that
+// ran before the download must not poison every later one — which is exactly
+// what the old sync.Once did.
 func setup() error {
-	initOnce.Do(func() {
-		lib := libPath()
-		if lib == "" {
-			initErr = ErrModelMissing
-			return
-		}
-		if _, err := os.Stat(modelPath()); err != nil {
-			initErr = ErrModelMissing
-			return
-		}
-		ort.SetSharedLibraryPath(lib)
-		if err := ort.InitializeEnvironment(); err != nil {
-			initErr = fmt.Errorf("初始化 ONNX Runtime 失败: %w", err)
-			return
-		}
-	})
-	return initErr
+	initMtx.Lock()
+	defer initMtx.Unlock()
+	if initReady {
+		return nil
+	}
+	lib := libPath()
+	if lib == "" {
+		return ErrRuntimeMissing
+	}
+	if _, err := os.Stat(modelPath()); err != nil {
+		return ErrModelMissing
+	}
+	ort.SetSharedLibraryPath(lib)
+	if err := ort.InitializeEnvironment(); err != nil {
+		return fmt.Errorf("初始化 ONNX Runtime 失败: %w", err)
+	}
+	initReady = true
+	return nil
+}
+
+// EnsureReady uses the packaged model when present; development runs can
+// download the same verified model before initializing ONNX Runtime.
+func EnsureReady() error {
+	if libPath() == "" {
+		return ErrRuntimeMissing
+	}
+	if err := EnsureModel(); err != nil {
+		return err
+	}
+	return setup()
 }
 
 const inputSide = 320
@@ -175,14 +239,44 @@ const inputSide = 320
 // salient-object mask (normalized to 0–255 gray, the bitmap's size) — the
 // cacheable part while a panel is open.
 func RunSubjectMaskRaw(b *render.Bitmap) (*render.Bitmap, error) {
-	if err := setup(); err != nil {
+	// The packaged model is preferred; development runs can fetch it.
+	if err := EnsureReady(); err != nil {
 		return nil, err
 	}
 	sessionMtx.Lock()
 	defer sessionMtx.Unlock()
 	if session == nil || sessionFor != modelPath() {
+		// The graph's tensor names are read from the model instead of being
+		// hardcoded: the pinned u2netp export calls its input "input.1" but
+		// names the eight outputs after their producer nodes ("1959"…"1966"),
+		// so a literal "output.0" made every inference fail with
+		// "Invalid output name: output.0" — the feature was dead even with the
+		// model and runtime installed.
+		inputs, outputs, err := ort.GetInputOutputInfo(modelPath())
+		if err != nil {
+			return nil, fmt.Errorf("读取分割模型接口失败: %w", err)
+		}
+		if len(inputs) == 0 || len(outputs) == 0 {
+			return nil, fmt.Errorf("分割模型没有输入/输出张量")
+		}
+		// Pick the output by shape, not by position: u2netp exports one map per
+		// decoder stage under node-derived tensor names (the pinned rembg copy
+		// calls them "1959"…"1966"), and which stage is listed first is the
+		// exporter's business, not ours. The salient map is the 1×1×H×W one;
+		// inputs[0] carries the H/W we feed it.
+		out := outputs[0].Name
+		if len(inputs[0].Dimensions) == 4 {
+			h, w := inputs[0].Dimensions[2], inputs[0].Dimensions[3]
+			for _, o := range outputs {
+				if len(o.Dimensions) == 4 && o.Dimensions[1] == 1 &&
+					o.Dimensions[2] == h && o.Dimensions[3] == w {
+					out = o.Name
+					break
+				}
+			}
+		}
 		s, err := ort.NewDynamicAdvancedSession(modelPath(),
-			[]string{"input.1"}, []string{"output.0"}, nil)
+			[]string{inputs[0].Name}, []string{out}, nil)
 		if err != nil {
 			return nil, fmt.Errorf("加载分割模型失败: %w", err)
 		}

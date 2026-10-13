@@ -5,12 +5,23 @@ LGPL 依赖在文末单独一节声明（仅以动态库形式使用，源码不
 
 ## MIT
 
+- ONNX Runtime 1.29.0（Microsoft Corporation，`onnxruntime.dll`）随 Windows
+  安装包分发。许可与源码：https://github.com/microsoft/onnxruntime 。
+- `github.com/yalue/onnxruntime_go` 是 Go 动态加载绑定；版本见 `go.mod`，
+  许可见其上游仓库：https://github.com/yalue/onnxruntime_go 。
+
 | 库 | 引入票 | 用途 |
 | --- | --- | --- |
 （票 50 的自动更新最终**没有引入第三方库**：`internal/update` 只用 Go 标准库
 `crypto/ed25519` 验签 + `net/http` 拉 feed，feed 生成脚本 `scripts/genfeed` 同样只用标准库。
 原计划的 creativeprojects/go-selfupdate 未采用，原因见 [docs/dependencies.md](docs/dependencies.md)。）
 | [go-text/typesetting](https://github.com/go-text/typesetting) 主模块 | 44（计划） | 文字排版/整形 |
+
+## Apache-2.0
+
+- u2netp 显著对象分割模型（Qin 等人 U²-Net 项目，rembg 转换版）随 Windows
+  安装包分发。模型下载源：https://github.com/danielgatis/rembg/releases/download/v0.0.0/u2netp.onnx 。
+  构建脚本固定文件哈希，模型二进制不进入本仓库。
 
 ## BSD-3-Clause
 

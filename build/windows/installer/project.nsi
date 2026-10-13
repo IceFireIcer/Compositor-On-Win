@@ -95,6 +95,15 @@ Section
     SetOutPath $INSTDIR
 
     !insertmacro wails.files
+    File "..\..\bin\onnxruntime.dll"
+    File "..\..\bin\THIRD-PARTY-NOTICES.md"
+
+    # Staged by the Wails post-build hook, after build/bin cleanup.
+    SetOutPath "$INSTDIR\models"
+    File "..\..\bin\models\u2netp.onnx"
+    SetOutPath "$INSTDIR\licenses"
+    File /r "..\..\bin\licenses\*"
+    SetOutPath "$INSTDIR"
 
     CreateShortcut "$SMPROGRAMS\${INFO_PRODUCTNAME}.lnk" "$INSTDIR\${PRODUCT_EXECUTABLE}"
     CreateShortCut "$DESKTOP\${INFO_PRODUCTNAME}.lnk" "$INSTDIR\${PRODUCT_EXECUTABLE}"

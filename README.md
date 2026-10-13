@@ -24,6 +24,9 @@ Compositor 是一款免费开源的图层式图像编辑器，围绕 Photoshop �
 - Go 1.24+、Node 20+、Wails v2
 - GPU：支持 WebGPU 的设备（不可用时自动回退 Go CPU 合成）
 
+Windows amd64 的模型和 ONNX Runtime 随构建与安装包分发；构建缓存、离线
+准备和便携目录结构见 [模型分发说明](docs/ml-distribution.md)。
+
 ## 关键不变量
 
 1. `.comp` 项目格式（manifest v11）与 macOS 版**逐字节双向兼容**——规范见 [reference/Swift/docs/project-format.md](reference/Swift/docs/project-format.md)。

@@ -20,8 +20,11 @@
   应用/点选连通域）。
 - ONNX 管线（internal/ml/subject.go）：u2netp（4.6MB，Apache-2.0）经
   yalue/onnxruntime_go 动态加载；1×3×320×320 NCHW → d0 min/max 拉伸 →
-  上采样。分发：模型不进仓库，按需下载（固定 URL+SHA-256 钉版+大小下限）
-  缓存 %APPDATA%；runtime 库随安装包。离线/未装时三入口返回可读错误不崩。
+  上采样。分发（2026-10-13 修订）：模型不进仓库，Windows amd64 构建钩子
+  校验固定 SHA-256 后把模型和 runtime 随安装包分发；运行时优先 exe 同级
+  models 目录，开发版缺失时才按需下载并缓存 %APPDATA%。详见
+  [分发说明](../ml-distribution.md)；本次只验证资源准备与校验，未做真实推理、
+  GUI 或安装验收。
   进度事件：u2netp CPU 推理 ~百毫秒，面板"渲染中…"已覆盖反馈，未启
   task:progress（换大模型再启——ADR 附录记录）。
 - 三入口：移除背景滤镜（表单：质量/抠边/蒙版对比/边缘偏移；raw 掩码按

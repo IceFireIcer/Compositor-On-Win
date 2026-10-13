@@ -6,7 +6,7 @@
 .DESCRIPTION
     六步（任一步失败都以非零码退出并说明原因）：
       1. 幂等清理本次版本的旧产物（dist/ 与 build/bin 里的旧安装器）；
-      2. wails build -nsis（版本经 -ldflags 注入 Go 侧）；
+      2. wails build -nsis（构建钩子准备固定 SHA-256 的 ONNX 模型与运行时 DLL）；
       3. 可选 Authenticode 签名（证书只从参数或环境变量来，绝不落进仓库）；
       4. 把安装器改名为 Compositor-<ver>-setup.exe；
       5. 调 scripts/genfeed 生成 releases/feed.json；
@@ -424,6 +424,7 @@ func main() {
 # ---------------------------------------------------------------------------
 $wailsJson = Join-Path $RepoRoot "wails.json"
 Write-Header "3/6 wails build -nsis"
+# wails.json hooks verify the ML cache before compiling and stage it afterward.
 $originalWailsJson = Get-Content -LiteralPath $wailsJson -Raw
 $ldflags = "-X $GoPkgPrefix/internal/update.FeedURL=$FeedUrl -X $GoPkgPrefix/internal/bridge.BuildVersion=$Version"
 if ($publicKey) { $ldflags += " -X $GoPkgPrefix/internal/update.PublicKeyB64=$publicKey" }
