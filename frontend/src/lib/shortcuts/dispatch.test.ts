@@ -90,6 +90,8 @@ function filterFixture(): FilterSession {
     preparing: false,
     destructive: true,
     editLayerId: null,
+    error: null,
+    operation: null,
   };
 }
 
@@ -111,9 +113,11 @@ const CANCEL_OP = "Canvas & Layers:Cancel current canvas operation";
 const BRUSH = "Canvas & Layers:Brush tool";
 const SELECT = "Canvas & Layers:Select tool";
 const UNDO = "Menus:Undo";
+const TRANSFORM = "Menus:Transform Layer / Selection";
 const MOVE_UP = "Menus:Move Layer Up";
 const FINISH_TEXT = "Text Editing:Finish editing text";
 const HOLD = "Canvas & Layers:Temporary Hand tool (hold)";
+const CYCLE_MODE = "Canvas & Layers:Cycle tool mode";
 
 beforeEach(() => {
   calls = [];
@@ -139,7 +143,7 @@ beforeEach(() => {
   });
   activeTool.set("brush");
   setShortcutActions(
-    registry(BLEND_NEXT, BLEND_PREV, CANCEL_OP, BRUSH, SELECT, UNDO, MOVE_UP, FINISH_TEXT, HOLD),
+    registry(BLEND_NEXT, BLEND_PREV, CANCEL_OP, BRUSH, SELECT, UNDO, TRANSFORM, MOVE_UP, FINISH_TEXT, HOLD, CYCLE_MODE),
   );
 });
 
@@ -276,18 +280,38 @@ describe("杂项", () => {
     expect(calls).toEqual([]);
   });
 
-  it("未注册动作的定义不消费事件（Tab/回车/方向键留给浏览器）", () => {
-    // Cycle tool mode（Tab）与 Apply current canvas operation（回车）未接线
+  it("已接线的 Tab 消费模式循环，未接线的回车/方向键留给浏览器", () => {
     const tab = ev({ key: "Tab" });
-    expect(dispatchShortcut(tab, "canvas")).toBe(false);
-    expect(prevented(tab)).toBe(false);
+    expect(dispatchShortcut(tab, "canvas")).toBe(true);
+    expect(prevented(tab)).toBe(true);
+    expect(calls).toEqual([CYCLE_MODE]);
     const enter = ev({ key: "Enter" });
     expect(dispatchShortcut(enter, "canvas")).toBe(false);
     expect(prevented(enter)).toBe(false);
     const arrow = ev({ key: "ArrowLeft" });
     expect(dispatchShortcut(arrow, "canvas")).toBe(false);
     expect(prevented(arrow)).toBe(false);
+    expect(calls).toEqual([CYCLE_MODE]);
+  });
+
+  it("原生 select 与 button 聚焦时 Tab 不被画布模式循环抢走", () => {
+    const select = { tagName: "SELECT", isContentEditable: false };
+    const button = { tagName: "BUTTON", isContentEditable: false };
+    const selectTab = ev({ key: "Tab", target: select });
+    const buttonTab = ev({ key: "Tab", target: button });
+    expect(dispatchShortcut(selectTab, "canvas")).toBe(false);
+    expect(dispatchShortcut(buttonTab, "canvas")).toBe(false);
+    expect(prevented(selectTab)).toBe(false);
+    expect(prevented(buttonTab)).toBe(false);
     expect(calls).toEqual([]);
+  });
+
+  it("工具按钮聚焦时仍允许带修饰键的菜单快捷键", () => {
+    const button = { tagName: "BUTTON", isContentEditable: false };
+    const transform = ev({ key: "t", ctrlKey: true, target: button });
+    expect(dispatchShortcut(transform, "menu")).toBe(true);
+    expect(calls).toEqual([TRANSFORM]);
+    expect(prevented(transform)).toBe(true);
   });
 
   it("按住型条目：keydown 按下、keyup 释放", () => {

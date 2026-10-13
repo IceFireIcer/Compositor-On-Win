@@ -5,8 +5,9 @@ import {
   LayerViaCopy,
   Paste,
 } from "../../../wailsjs/go/bridge/Service";
-import { applyDocumentSnapshot } from "./document";
+import { applyDocumentSnapshot, document } from "./document";
 import { currentSelection, selectionPayload } from "./selection";
+import { workspace } from "./workspace";
 
 /**
  * 剪贴板命令（票 48）—— 前端只做两件事：把当前选区序列化给 Go、把回来的
@@ -18,7 +19,7 @@ import { currentSelection, selectionPayload } from "./selection";
 export function currentSelectionJSON(): string {
   const sel = get(currentSelection);
   if (!sel) return "";
-  return selectionPayload(sel.mask, sel.width, sel.height);
+  return selectionPayload(sel.mask, sel.width, sel.height, sel.feather);
 }
 
 /** CopySelection 的回复（internal/bridge/clipboard.go 的 copyReply）。 */
@@ -32,9 +33,50 @@ export interface CopyOutcome {
   layer: boolean;
 }
 
+interface ClipboardContext {
+  tabId: string;
+  docId: string | null;
+  activeLayerID: string | null;
+}
+
+function captureClipboardContext(): ClipboardContext {
+  const currentWorkspace = get(workspace);
+  const currentDocument = get(document);
+  return {
+    tabId: currentWorkspace.activeId,
+    docId: currentDocument.docId,
+    activeLayerID: currentDocument.activeLayerID,
+  };
+}
+
+function isCurrentClipboardContext(expected: ClipboardContext): boolean {
+  const currentWorkspace = get(workspace);
+  const currentDocument = get(document);
+  return (
+    currentWorkspace.activeId === expected.tabId &&
+    currentDocument.docId === expected.docId &&
+    currentDocument.activeLayerID === expected.activeLayerID
+  );
+}
+
+/** Apply only a reply that still belongs to the tab/layer that started it. */
+function applyClipboardSnapshot(raw: string, expected: ClipboardContext): boolean {
+  if (!isCurrentClipboardContext(expected)) return false;
+  return applyDocumentSnapshot(raw, expected.docId ?? undefined);
+}
+
+function emptyCopyOutcome(): CopyOutcome {
+  return { kind: "none", width: 0, height: 0, clipboard: false, layer: false };
+}
+
 /** ⌘C：拷贝选区像素（无选区时整幅画布 + 记住整层）。 */
 export async function copySelection(): Promise<CopyOutcome> {
-  const reply = JSON.parse(await CopySelection(currentSelectionJSON())) as Partial<CopyOutcome>;
+  const context = captureClipboardContext();
+  // Serialize before awaiting the bridge so later selection edits cannot alter
+  // the payload that this command started with.
+  const selection = currentSelectionJSON();
+  const reply = JSON.parse(await CopySelection(selection)) as Partial<CopyOutcome>;
+  if (!isCurrentClipboardContext(context)) return emptyCopyOutcome();
   return {
     kind: reply.kind === "pixels" ? "pixels" : "none",
     width: reply.width ?? 0,
@@ -47,8 +89,9 @@ export async function copySelection(): Promise<CopyOutcome> {
 /** ⌘X：拷贝后把选区内的像素抹成透明（一步"剪切"，可撤销）。 */
 export async function cutSelection(): Promise<boolean> {
   try {
-    applyDocumentSnapshot(await CutSelection(currentSelectionJSON()));
-    return true;
+    const context = captureClipboardContext();
+    const selection = currentSelectionJSON();
+    return applyClipboardSnapshot(await CutSelection(selection), context);
   } catch (err) {
     console.warn("剪切失败", err);
     return false;
@@ -62,8 +105,10 @@ export async function cutSelection(): Promise<boolean> {
  */
 export async function paste(): Promise<boolean> {
   try {
-    applyDocumentSnapshot(await Paste());
-    currentSelection.set(null);
+    const context = captureClipboardContext();
+    const selectionAtStart = get(currentSelection);
+    if (!applyClipboardSnapshot(await Paste(), context)) return false;
+    if (get(currentSelection) === selectionAtStart) currentSelection.set(null);
     return true;
   } catch (err) {
     console.warn("粘贴失败", err);
@@ -74,8 +119,11 @@ export async function paste(): Promise<boolean> {
 /** ⌘J（有选区）：选区像素就地变成新层"通过拷贝的图层"（同样丢选区）。 */
 export async function layerViaCopy(): Promise<boolean> {
   try {
-    applyDocumentSnapshot(await LayerViaCopy(currentSelectionJSON()));
-    currentSelection.set(null);
+    const context = captureClipboardContext();
+    const selectionAtStart = get(currentSelection);
+    const selection = currentSelectionJSON();
+    if (!applyClipboardSnapshot(await LayerViaCopy(selection), context)) return false;
+    if (get(currentSelection) === selectionAtStart) currentSelection.set(null);
     return true;
   } catch (err) {
     console.warn("通过拷贝的图层失败", err);

@@ -12,6 +12,13 @@ import { initialPalette, resetPalette, swapPalette, type PaletteState } from "./
 /** 前景（foreground）/ 背景（background）两个色板，初值黑/白。 */
 export const palette = writable<PaletteState>(initialPalette());
 
+/** Eyedropper overlay preference; Swift EditorSession defaults this to true. */
+export const showsSampleRing = writable<boolean>(true);
+
+export function setShowsSampleRing(value: boolean): void {
+  if (typeof value === "boolean") showsSampleRing.set(value);
+}
+
 /** X：交换前景与背景（原版 swapPaletteColors）。 */
 export function swapPaletteColors(): void {
   palette.update((p) => swapPalette(p));

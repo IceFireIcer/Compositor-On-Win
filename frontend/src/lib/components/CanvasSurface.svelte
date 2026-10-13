@@ -15,9 +15,31 @@
     zoomAt,
   } from "../state/viewport";
   import { Modifier, applyKey, clearModifiers, modifierBits } from "../state/modifiers";
-  import { activeTool } from "../state/tools";
+  import {
+    activeTool,
+    BRUSH_TOOLS,
+    brushSettings,
+    cloneSettings,
+    healSettings,
+    selectionSettings,
+    toolModes,
+    updateBrushSettings,
+    updateHealSettings,
+    wandSettings,
+  } from "../state/tools";
   import { eyedropperClick } from "../state/filters";
-  import { currentSelection } from "../state/selection";
+  import {
+    currentSelection,
+    ellipseRegion,
+    lassoRegion,
+    rectRegion,
+    select,
+    selectionMode,
+    selectionFromMask,
+    type Point as SelectionPoint,
+    type Region as SelectionRegion,
+    type SelectionMode,
+  } from "../state/selection";
   import {
     TEXT_BOX_HANDLES,
     editorBoxSize,
@@ -45,20 +67,25 @@
     }
     return d + " Z";
   }
-  import { document as documentState, reloadDocument } from "../state/document";
+  import { document as documentState, applyDocumentSnapshot } from "../state/document";
+  import { beginCanvasStroke, beginCanvasDrawing, moveCanvasDrawing, finishCanvasDrawing, setCanvasCloneSource, canvasCloneSources, type DrawingGesture } from "../state/canvasDrawing";
+  import { getCanvasEditTarget } from "../state/layerTarget";
+  import type { PointerStroke } from "../state/pointerStroke";
+  import { StrokePreview } from "../state/strokePreview";
+  import { beginBrushTipDrag, cursorCircle, dragBrushTip, type BrushTipDrag, type BrushTipHud } from "../gpu/brushCursor";
+  import { WebGpuCompositor } from "../gpu/compositor";
+  import { palette, showsSampleRing } from "../state/palette";
+  import { rgbToHex, setBackground, setForeground, type Rgb } from "../state/color";
   import {
-    BeginStroke,
-    EndStroke,
-    StrokePoint,
-    BeginHealStroke,
-    HealPoint,
-    EndHealStroke,
+    SampleCompositeColor,
+    SelectWandAt,
+    SelectObjectAt,
   } from "../../../wailsjs/go/bridge/Service";
-  import { healSettings } from "../state/tools";
   import { cursorForTool } from "./cursors";
   import {
     beginGuideCreation,
     beginGuideMove,
+    cancelGuideDrag,
     draggingGuide,
     finishGuideDrag,
     guidesJSON,
@@ -69,6 +96,7 @@
     showGuides,
     showGrid as showLayoutGrid,
     showRulers,
+    showsPixelGrid,
     visibleGuides,
   } from "../state/view";
   import { gridLines, gridStep } from "../state/snap";
@@ -77,12 +105,17 @@
   import {
     beginTransformDrag,
     beginTransformSession,
+    cancelTransformSession,
     commitTransformSession,
     dragTransform,
     transformSession,
+    transformPreviewURL,
+    transformSnapGuides,
   } from "../state/transform";
+  import { canvasSnapInput } from "../state/canvasSnap";
   import {
     HANDLES,
+    rotationHandle,
     showsTransformControls,
     transformContains,
     transformCorners,
@@ -97,6 +130,22 @@
   let viewWidth = $state(0);
   let viewHeight = $state(0);
   let panning = $state(false);
+
+  type SelectionGesture =
+    | {
+        kind: "marquee";
+        start: SelectionPoint;
+        current: SelectionPoint;
+        shape: "rect" | "ellipse";
+        mode: SelectionMode;
+      }
+    | {
+        kind: "lasso";
+        points: SelectionPoint[];
+        polygon: boolean;
+        mode: SelectionMode;
+      };
+  let selectionGesture = $state<SelectionGesture | null>(null);
 
   // Text tool (ticket 44): a press on a live text layer edits it, otherwise
   // a drag draws a paragraph box and a click makes point text.
@@ -146,10 +195,13 @@
 
   /** 写回选区（UTF-16 码元偏移，与 DOM selectionStart/End 同一坐标系）。 */
   function setSelection(next: { start: number; end: number } | null): void {
-    textSession.update((s) => {
-      if (!s || sameSel(s.selection, next)) return s;
-      return { ...s, selection: next };
-    });
+    // 先比再写：svelte/store 的 safe_not_equal 把任何对象都看成"变了"，
+    // update 即使返回同一个对象也照样 notify —— 上面的 $effect 会被这次
+    // notify 再唤醒一次，构成 setSelection ↔ effect 的死循环
+    // （运行时实测 effect_update_depth_exceeded）。值没变就根本不碰 store。
+    const cur = get(textSession);
+    if (!cur || sameSel(cur.selection, next)) return;
+    textSession.update((s) => (s ? { ...s, selection: next } : s));
   }
 
   /** 读 textarea 的当前选区；收拢的光标或未知都写 null。 */
@@ -307,8 +359,15 @@
 
   // 会话内容变化（新建/载入既有文字）后读一次 DOM 选区写回会话。只在编辑器
   // 仍持有焦点时读：失焦后 DOM 保留旧选区，不该把 blur 写下的 null 复活。
+  //
+  // 依赖收在 content 这一个字段上（$derived 只在值真的变了才通知下游）：
+  // 直接读 `$textSession?.content` 会让 effect 订阅整个会话对象，于是
+  // syncSelection 写回的 selection 又把它叫醒 —— 运行时实测就是
+  // `effect_update_depth_exceeded`（Svelte 5 的 effect 深度上限被打爆），
+  // 每敲一个字都会抛一次。
+  const sessionContent = $derived($textSession?.content);
   $effect(() => {
-    const content = $textSession?.content;
+    const content = sessionContent;
     const el = textEditor;
     if (content === undefined || !el || document.activeElement !== el) return;
     syncSelection();
@@ -319,7 +378,7 @@
   const rect = $derived(documentRect(vp, doc.width, doc.height));
   // The pixel grid appears from 800% (EditorCanvas.swift:920); lines sit on
   // every document pixel, i.e. every `ppp` CSS px >= 8px apart.
-  const showGrid = $derived(vp.zoom >= PIXEL_GRID_ZOOM);
+  const showGrid = $derived($showsPixelGrid && vp.zoom >= PIXEL_GRID_ZOOM);
   // 布局网格（View > Show Grid，票 14）：与上面那个"每文档像素一条"的像素网格
   // 不是一回事 —— 像素网格由缩放决定，布局网格由用户开关决定。
   const grid = $derived($layoutGrid);
@@ -348,15 +407,53 @@
   // document the store holds; a 404 (e.g. an empty new document) hides it
   // until the next rev.
   const docState = $derived($documentState);
+  let strokePreviewSrc = $state<string | null>(null);
   const renderSrc = $derived(
     docState.docId === doc.id
-      ? `/render/${doc.id}.png?v=${docState.rev}-${docState.filterRev}`
+      ? $transformPreviewURL ?? `/render/${doc.id}.png?v=${docState.rev}-${docState.filterRev}`
       : null,
   );
   let renderBroken = $state(false);
   $effect(() => {
     void renderSrc;
     renderBroken = false;
+  });
+
+  let gpuCanvas = $state<HTMLCanvasElement>();
+  let compositor = $state.raw<WebGpuCompositor | null>(null);
+  let gpuFrame = $state("");
+  const frameKey = $derived(`${doc.id}:${docState.rev}:${docState.filterRev}`);
+  const gpuVisible = $derived(!strokePreviewSrc && !$transformPreviewURL && gpuFrame === frameKey && docState.docId === doc.id);
+  $effect(() => {
+    const canvas = gpuCanvas;
+    if (!canvas) return;
+    let disposed = false;
+    let owned: WebGpuCompositor | null = null;
+    void WebGpuCompositor.create(canvas).then((value) => {
+      owned = value;
+      if (disposed) value.destroy();
+      else compositor = value;
+    }).catch((error: unknown) => { console.warn("WebGPU 初始化失败", error); });
+    return () => { disposed = true; owned?.destroy(); };
+  });
+  $effect(() => {
+    const renderer = compositor;
+    const canvas = gpuCanvas;
+    const key = frameKey;
+    const request = { docId: doc.id, rev: docState.rev, filterRev: docState.filterRev };
+    if (!renderer || !canvas || docState.docId !== doc.id) return;
+    if (canvas.width !== doc.width) canvas.width = doc.width;
+    if (canvas.height !== doc.height) canvas.height = doc.height;
+    let stale = false;
+    void renderer.render(request).then((result) => {
+      if (stale) return;
+      if (result.track === "gpu") gpuFrame = key;
+      else if (result.track === "cpu-fallback") gpuFrame = "";
+    }).catch((error: unknown) => {
+      if (!stale) gpuFrame = "";
+      console.warn("WebGPU 渲染失败，使用 CPU 合成", error);
+    });
+    return () => { stale = true; };
   });
 
   // Report the measured view size (and refit while followsFit). doc.id is a
@@ -428,12 +525,142 @@
   // when the stroke ends. 只有画笔类工具落笔——**move 不在这里**：它是移动/变换
   // 工具，左键拖拽应当搬动图层，而不是画一道黑笔（票 17 的接线见下方
   // beginMoveDrag / transform 覆盖层）。
-  const PAINT_TOOLS: ReadonlySet<string> = new Set(["brush"]);
+  let strokeGesture: { pointerID: number; tabID: string; layerID: string | null; targetMask: boolean; brush: boolean; name: string; stroke: PointerStroke } | null = null;
+  const strokePreview = new StrokePreview((url) => { strokePreviewSrc = url; });
+  let previewOwner: PointerStroke | null = null;
+  let stopStrokePreview: (() => void) | null = null;
+  let lastBrushPoint: { tabID: string; layerID: string | null; targetMask: boolean; point: SelectionPoint; gesture: PointerStroke } | null = null;
+  let drawingGesture = $state<(DrawingGesture & { pointerID: number }) | null>(null);
+  let brushPointer = $state<{ x: number; y: number } | null>(null);
+  let hoverPoint = $state<SelectionPoint | null>(null);
+  let tipDrag = $state<{ pointerID: number; healing: boolean; drag: BrushTipDrag } | null>(null);
+  let tipHud = $state<BrushTipHud | null>(null);
+  const tipSettings = $derived($activeTool === "spotHealing" ? $healSettings : $brushSettings);
+  const tipCircle = $derived(BRUSH_TOOLS.has($activeTool) && brushPointer
+    ? cursorCircle(tipDrag?.drag.start.x ?? brushPointer.x, tipDrag?.drag.start.y ?? brushPointer.y, tipSettings.diameter, ppp)
+    : null);
+  const cloneSource = $derived($canvasCloneSources[doc.id]);
+  const cloneSample = $derived(cloneSource
+    ? $cloneSettings.aligned && cloneSource.offset && hoverPoint
+      ? { x: hoverPoint.x + cloneSource.offset.x, y: hoverPoint.y + cloneSource.offset.y }
+      : cloneSource.anchor
+    : null);
+  let sampling = false;
+  let sampleRunning = false;
+  let samplePending: { tabID: string; x: number; y: number; background: boolean } | null = null;
+  let sampleRing = $state<{ x: number; y: number; color: Rgb; previous: Rgb } | null>(null);
+  let picking = false;
 
-  let painting = false;
-  let healing = false;
-  let strokeQueued = 0; // pending requestAnimationFrame handle
-  let strokePending: { x: number; y: number } | null = null;
+  function toolError(name: string, err: unknown): void {
+    console.warn(name, err);
+    window.alert(`${name}\n\n${err instanceof Error ? err.message : String(err)}`);
+  }
+
+  function applyDrawingResult(tabID: string, reply: unknown): void {
+    if (typeof reply === "string" && get(documentState).docId === tabID) {
+      applyDocumentSnapshot(reply, tabID);
+    }
+  }
+
+  function finishStroke(cancel: boolean): void {
+    const gesture = strokeGesture;
+    if (!gesture) return;
+    strokeGesture = null;
+    if (cancel) clearStrokePreview(gesture.stroke);
+    void gesture.stroke.finish(cancel).then((reply) => {
+      applyDrawingResult(gesture.tabID, reply);
+      clearStrokePreview(gesture.stroke);
+    })
+      .catch((err: unknown) => {
+        clearStrokePreview(gesture.stroke);
+        if (lastBrushPoint?.gesture === gesture.stroke) lastBrushPoint = null;
+        toolError(gesture.name, err);
+      });
+  }
+
+  function clearStrokePreview(owner?: PointerStroke): void {
+    if (owner && previewOwner !== owner) return;
+    stopStrokePreview?.();
+    stopStrokePreview = null;
+    previewOwner = null;
+    strokePreview.clear();
+  }
+
+  function finishDrawing(cancel: boolean): void {
+    const gesture = drawingGesture;
+    if (!gesture) return;
+    drawingGesture = null;
+    if (cancel && gesture.stroke) clearStrokePreview(gesture.stroke);
+    void finishCanvasDrawing(gesture, cancel).then((reply) => {
+      if (!cancel) applyDrawingResult(gesture.tabID, reply);
+      if (gesture.stroke) clearStrokePreview(gesture.stroke);
+    }).catch((err: unknown) => {
+      if (gesture.stroke) clearStrokePreview(gesture.stroke);
+      toolError(gesture.kind === "shape" ? "形状绘制失败" : "渐变绘制失败", err);
+    });
+  }
+
+  // Teardown or tab switches cancel outstanding gestures, including a Begin
+  // RPC that has not returned yet. They must never leave the old tab busy.
+  $effect(() => {
+    void doc.id;
+    void $activeTool;
+    return () => {
+      finishStroke(true);
+      finishDrawing(true);
+      clearStrokePreview();
+      selectionGesture = null;
+      sampling = false;
+      samplePending = null;
+      sampleRing = null;
+      cancelTipDrag();
+      brushPointer = null;
+      hoverPoint = null;
+    };
+  });
+
+  function queueSample(p: { x: number; y: number }, background: boolean): void {
+    samplePending = { tabID: doc.id, ...p, background };
+    if (sampleRunning) return;
+    sampleRunning = true;
+    void (async () => {
+      try {
+        while (samplePending) {
+          const request = samplePending;
+          samplePending = null;
+          const reply = JSON.parse(await SampleCompositeColor(request.tabID, request.x, request.y)) as { color: Rgb | null };
+          if (!reply.color || get(documentState).docId !== request.tabID) continue;
+          const previous = get(palette)[request.background ? "background" : "foreground"];
+          palette.update((value) => request.background ? setBackground(value, reply.color!) : setForeground(value, reply.color!));
+          sampleRing = { x: request.x, y: request.y, color: reply.color, previous };
+        }
+      } catch (err) {
+        samplePending = null;
+        toolError("取色失败", err);
+      } finally { sampleRunning = false; }
+    })();
+  }
+
+  async function pickSelection(e: PointerEvent): Promise<void> {
+    if (picking) return;
+    picking = true;
+    const tabID = doc.id;
+    const p = docPixelOf(e);
+    const mode = selectionModeFor(e);
+    const settings = get(wandSettings);
+    const object = get(toolModes).wand === "object";
+    try {
+      const raw = object
+        ? await SelectObjectAt(p.x, p.y)
+        : await SelectWandAt(tabID, p.x, p.y, settings.tolerance, settings.sampleRadius, settings.contiguous, settings.sampleAllLayers);
+      const reply = JSON.parse(raw) as { tabId: string; selection: { w: number; h: number; mask: string } };
+      if (get(documentState).docId !== tabID || reply.tabId !== tabID) return;
+      const bytes = Uint8Array.from(atob(reply.selection.mask), (c) => c.charCodeAt(0));
+      const region = selectionFromMask(bytes, reply.selection.w, reply.selection.h);
+      currentSelection.set(select(mode, get(currentSelection), region));
+    } catch (err) { toolError("选择失败", err); }
+    finally { picking = false; }
+  }
 
   /** Pointer position clamped into document pixel space (integer contract). */
   function docPixelOf(e: PointerEvent): { x: number; y: number } {
@@ -446,28 +673,96 @@
       doc.height,
     );
     return {
-      x: Math.min(doc.width, Math.max(0, Math.round(p.x))),
-      y: Math.min(doc.height, Math.max(0, Math.round(p.y))),
+      x: Math.min(Math.max(doc.width - 1, 0), Math.max(0, Math.round(p.x))),
+      y: Math.min(Math.max(doc.height - 1, 0), Math.max(0, Math.round(p.y))),
     };
   }
 
-  /** Coalesce move floods into one StrokePoint per animation frame. */
-  function queueStrokePoint(p: { x: number; y: number }): void {
-    strokePending = p;
-    if (strokeQueued) return;
-    strokeQueued = requestAnimationFrame(() => {
-      strokeQueued = 0;
-      const pt = strokePending;
-      strokePending = null;
-      if (painting && pt) void StrokePoint(pt.x, pt.y);
-    });
+  /** Selection edges use the document boundary, unlike brush samples. */
+  function selectionPointOf(e: PointerEvent): SelectionPoint {
+    const p = docPointOf(e);
+    return {
+      x: Math.min(doc.width, Math.max(0, p.x)),
+      y: Math.min(doc.height, Math.max(0, p.y)),
+    };
   }
 
-  $effect(() => {
-    return () => {
-      if (strokeQueued) cancelAnimationFrame(strokeQueued);
-    };
-  });
+  function selectionModeFor(e: PointerEvent): SelectionMode {
+    const configured = get(selectionSettings).combination;
+    return e.shiftKey || e.altKey ? selectionMode(e.shiftKey, e.altKey) : configured;
+  }
+
+  function selectionRegionFor(gesture: SelectionGesture): SelectionRegion {
+    if (gesture.kind === "marquee") {
+      const opts = {
+        square: false,
+        fromCenter: false,
+      };
+      return gesture.shape === "ellipse"
+        ? ellipseRegion(gesture.start, gesture.current, doc.width, doc.height, opts)
+        : rectRegion(gesture.start, gesture.current, doc.width, doc.height, opts);
+    }
+    return lassoRegion(gesture.points, doc.width, doc.height);
+  }
+
+  const selectionPreview = $derived.by(() =>
+    selectionGesture ? selectionRegionFor(selectionGesture) : null,
+  );
+
+  function beginSelection(e: PointerEvent): boolean {
+    if (e.button !== 0) return false;
+    if ($activeTool === "marquee") {
+      const p = selectionPointOf(e);
+      selectionGesture = {
+        kind: "marquee",
+        start: p,
+        current: p,
+        shape: get(toolModes).marquee,
+        mode: selectionModeFor(e),
+      };
+    } else if ($activeTool === "lasso") {
+      const p = selectionPointOf(e);
+      const polygon = get(toolModes).lasso === "polygon";
+      const current = selectionGesture;
+      if (polygon && current?.kind === "lasso" && current.polygon) {
+        current.points = [...current.points, p];
+      } else {
+        selectionGesture = {
+          kind: "lasso",
+          points: [p],
+          polygon,
+          mode: selectionModeFor(e),
+        };
+      }
+    } else {
+      return false;
+    }
+    stage?.setPointerCapture(e.pointerId);
+    e.preventDefault();
+    return true;
+  }
+
+  function finishSelection(): void {
+    const gesture = selectionGesture;
+    if (!gesture || (gesture.kind === "lasso" && gesture.polygon)) return;
+    const region = selectionRegionFor(gesture);
+    currentSelection.set(select(gesture.mode, get(currentSelection), region));
+    selectionGesture = null;
+  }
+
+  function finishPolygonSelection(): void {
+    const gesture = selectionGesture;
+    if (!gesture || gesture.kind !== "lasso" || !gesture.polygon) return;
+    const points = gesture.points.slice();
+    const last = points[points.length - 1];
+    const previous = points[points.length - 2];
+    if (last && previous && Math.hypot(last.x - previous.x, last.y - previous.y) < 1) {
+      points.pop();
+    }
+    if (points.length < 3) return;
+    currentSelection.set(select(gesture.mode, get(currentSelection), lassoRegion(points, doc.width, doc.height)));
+    selectionGesture = null;
+  }
 
   // --- 变换会话（票 17）----------------------------------------------------
   // 会话状态机在 ../state/transform.ts。这里负责：把把手/框画出来、把手命中
@@ -484,6 +779,9 @@
   });
 
   /** 会话草稿的一个单位点 → 文档坐标。 */
+  const rotationGrip = $derived($transformSession && !$transformSession.session.corners
+    ? rotationHandle($transformSession.session.draft, ppp) : null);
+
   function draftPoint(unit: { x: number; y: number }): { x: number; y: number } {
     const s = get(transformSession);
     if (!s) return { x: 0, y: 0 };
@@ -518,7 +816,7 @@
   }
 
   /** 变换拖动状态：记录按下点与模式。 */
-  let moveDrag: { startX: number; startY: number } | null = null;
+  let moveDrag: { startX: number; startY: number; commitOnRelease: boolean } | null = null;
 
   /**
    * 左键按下：把手 → resize，框内 → move。
@@ -530,16 +828,20 @@
    */
   function beginMoveDrag(e: PointerEvent): boolean {
     const active = get(transformSession);
-    const handle = active ? handleAt(e) : null;
+    const controls = active && get(showsTransformControls);
+    const p = docPointOf(e);
+    const grip = controls && !active.session.corners
+      ? rotationHandle(active.session.draft, pointsPerPixel(get(viewport))) : null;
+    const rotate = grip !== null && Math.hypot(p.x - grip.x, p.y - grip.y) * pointsPerPixel(get(viewport)) <= HANDLE_GRAB_PX;
+    const handle = controls ? handleAt(e) : null;
     const inside = active ? insideDraft(e) : pressInsideActiveLayer(e);
     // 没抓到把手、又不在图层框内：这次按下不属于变换，交给别的工具/平移逻辑。
-    if (handle === null && !inside) return false;
+    if (!rotate && handle === null && !inside) return false;
     // 到这里才确定要变换：还没有会话就开一个（V 工具直接拖图层 = 移动它）。
     if (!active && !beginTransformSession()) return false;
-    const mode: DragMode = handle !== null ? { kind: "resize", handle } : { kind: "move" };
-    const p = docPointOf(e);
+    const mode: DragMode = rotate ? { kind: "rotate" } : handle !== null ? { kind: "resize", handle } : { kind: "move" };
     if (!beginTransformDrag(mode, p)) return false;
-    moveDrag = { startX: p.x, startY: p.y };
+    moveDrag = { startX: p.x, startY: p.y, commitOnRelease: !active };
     return true;
   }
 
@@ -570,15 +872,18 @@
     dragTransform(
       { x: p.x - moveDrag.startX, y: p.y - moveDrag.startY },
       { shift: e.shiftKey, option: e.altKey, ctrl: e.ctrlKey },
+      canvasSnapInput(get(documentState), get(transformSession)?.layerID ?? "", pointsPerPixel(get(viewport)), e.ctrlKey),
     );
   }
 
-  /** 松手：提交到文档（一次历史项）。 */
+  /** V-tool moves commit on release; explicit Ctrl+T drafts wait for Enter. */
   function endMoveDrag(e: PointerEvent): void {
     if (!moveDrag) return;
+    updateMoveDrag(e);
+    const commitOnRelease = moveDrag.commitOnRelease;
     moveDrag = null;
     stage?.releasePointerCapture(e.pointerId);
-    void commitTransformSession();
+    if (commitOnRelease) void commitTransformSession();
   }
 
   // --- 参考线（票 14）------------------------------------------------------
@@ -640,7 +945,17 @@
   }
 
   function onPointerDown(e: PointerEvent): void {
+    if (strokeGesture || drawingGesture || tipDrag) return;
     const spaceHeld = ($modifierBits & Modifier.Space) !== 0;
+    if (e.button === 2 && BRUSH_TOOLS.has($activeTool)) {
+      const bounds = stage!.getBoundingClientRect();
+      brushPointer = { x: e.clientX - bounds.left, y: e.clientY - bounds.top };
+      tipDrag = { pointerID: e.pointerId, healing: $activeTool === "spotHealing",
+        drag: beginBrushTipDrag(brushPointer.x, brushPointer.y, tipSettings.diameter, tipSettings.hardness) };
+      stage?.setPointerCapture(e.pointerId);
+      e.preventDefault();
+      return;
+    }
     // 行内文字编辑器优先接管左键按下（放置光标、拖选）：让 textarea 拿到
     // 焦点，不让 Type 工具重开会话；空格/手形工具的平移仍然优先。
     if (e.button === 0 && !spaceHeld && $activeTool !== "hand" && isTextEditorTarget(e.target)) return;
@@ -671,7 +986,7 @@
       }
     }
     // An armed Levels eyedropper swallows plain clicks before any tool.
-    if (e.button === 0 && !panDrag && !painting) {
+    if (e.button === 0 && !panDrag && !strokeGesture) {
       const p = docPixelOf(e);
       if (eyedropperClick(Math.floor(p.x), Math.floor(p.y))) {
         e.preventDefault();
@@ -694,6 +1009,25 @@
       zoomAt(target, e.clientX - r.left, e.clientY - r.top, doc.width, doc.height);
       return;
     }
+    if (e.button === 0 && $activeTool === "eyedropper") {
+      sampling = true;
+      stage?.setPointerCapture(e.pointerId);
+      e.preventDefault();
+      queueSample(docPixelOf(e), e.altKey);
+      return;
+    }
+    if (e.button === 0 && $activeTool === "wand") {
+      e.preventDefault();
+      void pickSelection(e);
+      return;
+    }
+    // Selection tools own the pointer before guides, painting, or layer
+    // transforms. Polygon lasso stays open across clicks and closes on a
+    // double-click; the other gestures commit on pointer-up.
+    if (e.button === 0 && ($activeTool === "marquee" || $activeTool === "lasso")) {
+      beginSelection(e);
+      return;
+    }
     if (e.button === 0 && $activeTool === "type") {
       const p = docPixelOf(e);
       if (!editTextLayerAt(p.x, p.y)) {
@@ -703,32 +1037,82 @@
       e.preventDefault();
       return;
     }
-    if (e.button === 0 && $activeTool === "spotHealing") {
-      healing = true;
+    if (e.button === 0 && ($activeTool === "shape" || $activeTool === "gradient")) {
+      drawingGesture = { ...beginCanvasDrawing($activeTool, doc.id, docPointOf(e)), pointerID: e.pointerId };
+      if (drawingGesture.stroke) {
+        clearStrokePreview();
+        const gesture = drawingGesture;
+        const stroke = gesture.stroke!;
+        previewOwner = stroke;
+        stopStrokePreview = stroke.onProgress((progress) => {
+          if (previewOwner === stroke && get(documentState).docId === gesture.tabID) strokePreview.update(progress);
+        });
+      }
       stage?.setPointerCapture(e.pointerId);
       e.preventDefault();
-      const hs = get(healSettings);
-      void BeginHealStroke(
-        hs.mode,
-        hs.diameter,
-        hs.hardness,
-        hs.smoothing,
-        get(viewport).zoom,
-        hs.opacity,
-        Math.floor(Math.random() * 0xffffffff),
-      );
       return;
     }
-    if (e.button === 0 && PAINT_TOOLS.has($activeTool)) {
-      painting = true;
+    if (e.button === 0 && ($activeTool === "brush" || $activeTool === "spotHealing" || $activeTool === "cloneStamp" || $activeTool === "blur")) {
+      const point = docPointOf(e);
+      if ($activeTool === "cloneStamp" && e.altKey) {
+        setCanvasCloneSource(doc.id, point);
+        hoverPoint = point;
+        e.preventDefault();
+        return;
+      }
+      const layerID = get(documentState).activeLayerID;
+      const targetMask = getCanvasEditTarget(doc.id)?.targetMask ?? false;
+      const lineStart = $activeTool === "brush" && e.shiftKey && lastBrushPoint?.tabID === doc.id && lastBrushPoint.layerID === layerID && lastBrushPoint.targetMask === targetMask
+        ? lastBrushPoint.point : undefined;
+      const name = $activeTool === "spotHealing" ? "污点修复失败" : $activeTool === "cloneStamp" ? "仿制失败" : $activeTool === "blur" ? "涂抹失败" : "绘制失败";
+      try {
+        strokeGesture = { pointerID: e.pointerId, tabID: doc.id, layerID, targetMask, brush: $activeTool === "brush", name,
+          stroke: beginCanvasStroke($activeTool, doc.id, point, lineStart) };
+        clearStrokePreview();
+        const gesture = strokeGesture;
+        previewOwner = gesture.stroke;
+        stopStrokePreview = gesture.stroke.onProgress((progress) => {
+          if (previewOwner === gesture.stroke && get(documentState).docId === gesture.tabID) {
+            strokePreview.update(progress);
+          }
+        });
+      } catch (err) { toolError(name, err); return; }
       stage?.setPointerCapture(e.pointerId);
       e.preventDefault();
-      const p = docPixelOf(e);
-      void BeginStroke(p.x, p.y);
     }
   }
 
   function onPointerMove(e: PointerEvent): void {
+    const bounds = stage!.getBoundingClientRect();
+    brushPointer = { x: e.clientX - bounds.left, y: e.clientY - bounds.top };
+    hoverPoint = docPointOf(e);
+    if (tipDrag) {
+      if (tipDrag.pointerID !== e.pointerId) return;
+      tipHud = dragBrushTip(tipDrag.drag, brushPointer.x, ppp, e.shiftKey);
+      const settings = { diameter: tipHud.diameter, hardness: tipHud.hardness };
+      if (tipDrag.healing) updateHealSettings(settings);
+      else updateBrushSettings(settings);
+      return;
+    }
+    if (strokeGesture) {
+      if (strokeGesture.pointerID !== e.pointerId) return;
+      const events = e.getCoalescedEvents?.() ?? [];
+      for (const point of events.length ? events : [e]) {
+        const p = docPointOf(point);
+        strokeGesture.stroke.point(p.x, p.y);
+      }
+      return;
+    }
+    if (drawingGesture) {
+      if (drawingGesture.pointerID === e.pointerId) {
+        moveCanvasDrawing(drawingGesture, docPointOf(e), { shift: e.shiftKey, alt: e.altKey });
+      }
+      return;
+    }
+    if (sampling) {
+      queueSample(docPixelOf(e), e.altKey);
+      return;
+    }
     if (panDrag) {
       panByStore(e.clientX - panDrag.x, e.clientY - panDrag.y);
       panDrag = { x: e.clientX, y: e.clientY };
@@ -737,6 +1121,18 @@
     // 变换拖动优先于其它工具。
     if (moveDrag) {
       updateMoveDrag(e);
+      return;
+    }
+    if (selectionGesture) {
+      if (selectionGesture.kind === "marquee") {
+        selectionGesture.current = selectionPointOf(e);
+      } else if (!selectionGesture.polygon) {
+        const p = selectionPointOf(e);
+        const last = selectionGesture.points[selectionGesture.points.length - 1];
+        if (!last || Math.hypot(p.x - last.x, p.y - last.y) >= 0.5) {
+          selectionGesture.points = [...selectionGesture.points, p];
+        }
+      }
       return;
     }
     // 参考线拖动：位置用文档坐标（可以拖到画布外，松手丢回标尺就是删除）。
@@ -758,16 +1154,46 @@
       };
       return;
     }
-    if (painting) queueStrokePoint(docPixelOf(e));
-    if (healing) {
-      const p = docPixelOf(e);
-      void HealPoint(p.x, p.y);
-    }
   }
 
   function onPointerEnd(e: PointerEvent): void {
+    if (tipDrag) {
+      if (tipDrag.pointerID !== e.pointerId) return;
+      tipDrag = null;
+      tipHud = null;
+      if (stage?.hasPointerCapture(e.pointerId)) stage.releasePointerCapture(e.pointerId);
+      return;
+    }
+    if (strokeGesture) {
+      if (strokeGesture.pointerID !== e.pointerId) return;
+      const p = docPointOf(e);
+      strokeGesture.stroke.point(p.x, p.y);
+      if (strokeGesture.brush) lastBrushPoint = { tabID: strokeGesture.tabID, layerID: strokeGesture.layerID, targetMask: strokeGesture.targetMask, point: p, gesture: strokeGesture.stroke };
+      finishStroke(false);
+      if (stage?.hasPointerCapture(e.pointerId)) stage.releasePointerCapture(e.pointerId);
+      return;
+    }
+    if (drawingGesture) {
+      if (drawingGesture.pointerID !== e.pointerId) return;
+      const gesture = drawingGesture;
+      moveCanvasDrawing(gesture, docPointOf(e), { shift: e.shiftKey, alt: e.altKey });
+      if (stage?.hasPointerCapture(e.pointerId)) stage.releasePointerCapture(e.pointerId);
+      finishDrawing(false);
+      return;
+    }
+    if (sampling) {
+      sampling = false;
+      if (stage?.hasPointerCapture(e.pointerId)) stage.releasePointerCapture(e.pointerId);
+      return;
+    }
     if (moveDrag) {
       endMoveDrag(e);
+      return;
+    }
+    if (selectionGesture) {
+      const polygon = selectionGesture.kind === "lasso" && selectionGesture.polygon;
+      if (!polygon) finishSelection();
+      if (stage?.hasPointerCapture(e.pointerId)) stage.releasePointerCapture(e.pointerId);
       return;
     }
     if ($draggingGuide) {
@@ -795,37 +1221,49 @@
       }
       return;
     }
-    if (healing) {
-      healing = false;
-      void EndHealStroke();
-      return;
-    }
-    if (painting) {
-      painting = false;
-      if (strokeQueued) {
-        cancelAnimationFrame(strokeQueued);
-        strokeQueued = 0;
-      }
-      const last = strokePending;
-      strokePending = null;
-      void (async () => {
-        try {
-          if (last) await StrokePoint(last.x, last.y);
-          await EndStroke();
-        } finally {
-          // The rev only moves if the stroke landed; an unchanged rev is a
-          // no-op in the document store's rev cache (no img reload).
-          void reloadDocument();
-        }
-      })();
-    }
     if (panDrag) stage?.releasePointerCapture(e.pointerId);
     panDrag = null;
     panning = false;
   }
 
+  function onPointerCancel(e: PointerEvent): void {
+    if (strokeGesture && strokeGesture.pointerID !== e.pointerId) return;
+    if (drawingGesture && drawingGesture.pointerID !== e.pointerId) return;
+    if (tipDrag && tipDrag.pointerID !== e.pointerId) return;
+    finishStroke(true);
+    cancelTipDrag();
+    finishDrawing(true);
+    selectionGesture = null;
+    textDrag = null;
+    textDragRect = null;
+    if (moveDrag) { moveDrag = null; cancelTransformSession(); }
+    if (get(draggingGuide)) cancelGuideDrag();
+    rulerDrag = null;
+    sampling = false;
+    samplePending = null;
+    panDrag = null;
+    panning = false;
+    if (stage?.hasPointerCapture(e.pointerId)) stage.releasePointerCapture(e.pointerId);
+  }
+
+  function cancelTipDrag(): void {
+    if (tipDrag) {
+      const settings = { diameter: tipDrag.drag.diameter, hardness: tipDrag.drag.hardness };
+      if (tipDrag.healing) updateHealSettings(settings);
+      else updateBrushSettings(settings);
+    }
+    tipDrag = null;
+    tipHud = null;
+  }
+
   function onContextMenu(e: MouseEvent): void {
     e.preventDefault(); // Alt-click / right-click belong to the tools
+  }
+
+  function onDoubleClick(e: MouseEvent): void {
+    if ($activeTool !== "lasso" || !selectionGesture) return;
+    e.preventDefault();
+    finishPolygonSelection();
   }
 
   const isTextEditorTarget = (t: EventTarget | null): boolean =>
@@ -848,7 +1286,9 @@
   onpointerdown={onPointerDown}
   onpointermove={onPointerMove}
   onpointerup={onPointerEnd}
-  onpointercancel={onPointerEnd}
+  onpointercancel={onPointerCancel}
+  onpointerleave={() => { if (!strokeGesture && !tipDrag) { brushPointer = null; hoverPoint = null; } }}
+  ondblclick={onDoubleClick}
   oncontextmenu={onContextMenu}
 >
   <!-- The document: checkerboard (transparency) + Go-rendered composite +
@@ -862,7 +1302,7 @@
     style:width="{doc.width * ppp}px"
     style:height="{doc.height * ppp}px"
   >
-    {#if renderSrc && !renderBroken}
+    {#if renderSrc && !renderBroken && !gpuVisible && !strokePreviewSrc}
       <img
         class="render"
         class:crisp={vp.zoom >= CRISP_ZOOM}
@@ -872,12 +1312,51 @@
         onerror={() => (renderBroken = true)}
       />
     {/if}
+    <canvas bind:this={gpuCanvas} class="render" class:crisp={vp.zoom >= CRISP_ZOOM} class:gpu-hidden={!gpuVisible} aria-hidden="true"></canvas>
+    {#if strokePreviewSrc}
+      <img class="render" class:crisp={vp.zoom >= CRISP_ZOOM} src={strokePreviewSrc} alt="" draggable="false" />
+    {/if}
+    {#if $activeTool === "cloneStamp" && cloneSample}
+      <svg class="clone-source" viewBox="0 0 {doc.width} {doc.height}" preserveAspectRatio="none" aria-hidden="true">
+        <path d="M {cloneSample.x - 6 / ppp} {cloneSample.y} h {12 / ppp} M {cloneSample.x} {cloneSample.y - 6 / ppp} v {12 / ppp}" />
+      </svg>
+    {/if}
+    {#if drawingGesture}
+      {@const start = drawingGesture.start}
+      {@const end = drawingGesture.end}
+      <svg class="drawing-preview" viewBox="0 0 {doc.width} {doc.height}" preserveAspectRatio="none">
+        {#if drawingGesture.kind === "gradient" || drawingGesture.shape === "Line"}
+          <line x1={start.x} y1={start.y} x2={end.x} y2={end.y} />
+        {:else if drawingGesture.shape === "Ellipse"}
+          <ellipse cx={(start.x + end.x) / 2} cy={(start.y + end.y) / 2} rx={Math.abs(end.x - start.x) / 2} ry={Math.abs(end.y - start.y) / 2} />
+        {:else}
+          <rect x={Math.min(start.x, end.x)} y={Math.min(start.y, end.y)} width={Math.abs(end.x - start.x)} height={Math.abs(end.y - start.y)} />
+        {/if}
+      </svg>
+    {/if}
     {#if $currentSelection && $currentSelection.active}
       <svg class="ants" viewBox="0 0 {doc.width} {doc.height}" preserveAspectRatio="none">
         {#each $currentSelection.loops as loop, li (li)}
           <path d={loopPath(loop)} />
         {/each}
       </svg>
+    {/if}
+    {#if selectionPreview}
+      <svg class="selection-preview" viewBox="0 0 {doc.width} {doc.height}" preserveAspectRatio="none">
+        {#each selectionPreview.loops as loop, li (li)}
+          <path d={loopPath(loop)} />
+        {/each}
+      </svg>
+    {/if}
+    {#if sampleRing && $showsSampleRing && $activeTool === "eyedropper"}
+      <div
+        class="sample-ring"
+        style:left="{sampleRing.x * ppp}px"
+        style:top="{sampleRing.y * ppp}px"
+        style:border-top-color="#{rgbToHex(sampleRing.color)}"
+        style:border-bottom-color="#{rgbToHex(sampleRing.previous)}"
+        aria-hidden="true"
+      ></div>
     {/if}
     {#if showGrid}
       <div
@@ -904,14 +1383,25 @@
         preserveAspectRatio="none"
       >
         {#if draftCorners}
+          {#each $transformSnapGuides as guide, i (i)}
+            <line class="snap-guide" x1={guide.axis === "vertical" ? guide.position : 0}
+              y1={guide.axis === "horizontal" ? guide.position : 0}
+              x2={guide.axis === "vertical" ? guide.position : doc.width}
+              y2={guide.axis === "horizontal" ? guide.position : doc.height} />
+          {/each}
           <polygon
             class="transform-frame"
             points={draftCorners.map((c) => `${c.x},${c.y}`).join(" ")}
           />
           {#each HANDLES as handle, i (i)}
             {@const hp = draftPoint(handle)}
-            <circle class="transform-handle" cx={hp.x} cy={hp.y} r={6} />
+            <circle class="transform-handle" cx={hp.x} cy={hp.y} r={4 / Math.max(ppp, 0.0001)} />
           {/each}
+          {#if rotationGrip}
+            {@const top = draftPoint(HANDLES[1])}
+            <line class="transform-frame" x1={top.x} y1={top.y} x2={rotationGrip.x} y2={rotationGrip.y} />
+            <circle class="transform-handle rotation-handle" cx={rotationGrip.x} cy={rotationGrip.y} r={4 / Math.max(ppp, 0.0001)} />
+          {/if}
         {/if}
       </svg>
     {/if}
@@ -1006,6 +1496,17 @@
        舞台盒子，文档→屏幕映射走 documentRect(viewport)）。 -->
   <CropOverlay doc={{ id: doc.id, width: doc.width, height: doc.height }} />
 
+  {#if tipCircle}
+    <div class="brush-tip" style:left="{tipCircle.x}px" style:top="{tipCircle.y}px" style:width="{tipCircle.diameter}px" style:height="{tipCircle.diameter}px" aria-hidden="true">
+      {#if tipHud?.hardnessShown && tipHud.hardness > 0}
+        <div class="hardness-ring" style:width="{tipHud.hardness * 100}%" style:height="{tipHud.hardness * 100}%"></div>
+      {/if}
+      {#if tipHud}
+        <span class="tip-hud">{tipHud.mode === "size" ? `${Math.round(tipHud.diameter)} px` : `${Math.round(tipHud.hardness * 100)}%`}</span>
+      {/if}
+    </div>
+  {/if}
+
   {#if $showRulers}
     <!-- 标尺（票 14）：从标尺拖出参考线。刻度按文档坐标标号，主刻度随缩放
          自适应（rulerStep），零点是文档左上角 —— 和 .doc 的 rect 对齐。 -->
@@ -1036,6 +1537,56 @@
 </div>
 
 <style>
+  .brush-tip {
+    position: absolute;
+    box-sizing: border-box;
+    border: 1px solid #fff;
+    border-radius: 50%;
+    box-shadow: 0 0 0 1px #000;
+    pointer-events: none;
+    z-index: 10;
+  }
+  .hardness-ring {
+    position: absolute;
+    box-sizing: border-box;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    border: 1px dashed #fff;
+    border-radius: 50%;
+  }
+  .tip-hud {
+    position: absolute;
+    left: 50%;
+    top: 100%;
+    margin-top: 8px;
+    padding: 3px 6px;
+    color: #fff;
+    background: #202024;
+    border-radius: 3px;
+    white-space: nowrap;
+  }
+  .clone-source {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    stroke: #fff;
+    filter: drop-shadow(1px 1px 0 #000);
+  }
+  .clone-source path { vector-effect: non-scaling-stroke; }
+  .sample-ring {
+    position: absolute;
+    width: 40px;
+    height: 40px;
+    border: 10px solid #888;
+    border-radius: 50%;
+    transform: translate(-50%, -50%);
+    box-shadow: 0 0 0 1px #000, inset 0 0 0 1px #fff;
+    pointer-events: none;
+    z-index: 8;
+  }
   .text-box-drag {
     position: absolute;
     border: 1px dashed var(--accent, #3b82f6);
@@ -1126,6 +1677,8 @@
     stroke-width: 1;
     vector-effect: non-scaling-stroke;
   }
+
+  .snap-guide { stroke: #ff68ba; stroke-width: 1; vector-effect: non-scaling-stroke; }
   .transform-handle {
     fill: #ffffff;
     stroke: #3b82f6;
@@ -1235,6 +1788,20 @@
     image-rendering: pixelated;
   }
 
+  .gpu-hidden { visibility: hidden; }
+
+  .drawing-preview {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    fill: rgba(255, 255, 255, 0.12);
+    stroke: #fff;
+  }
+
+  .drawing-preview :is(line, ellipse, rect) { vector-effect: non-scaling-stroke; }
+
   /* Per-document-pixel grid: one hairline per pixel, tone from the original
      pixel grid painter (EditorCanvas.swift:1429: white 0.55, alpha 0.45).
      background-size is set inline to `ppp` px, so lines sit on real pixels. */
@@ -1252,6 +1819,22 @@
     stroke-width: 1;
     vector-effect: non-scaling-stroke;
     stroke-dasharray: 4 4;
+  }
+
+  .selection-preview {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+  }
+
+  .selection-preview path {
+    fill: rgba(59, 130, 246, 0.08);
+    stroke: #60a5fa;
+    stroke-width: 1;
+    vector-effect: non-scaling-stroke;
+    stroke-dasharray: 4 3;
   }
 
   .pixel-grid {

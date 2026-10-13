@@ -51,6 +51,19 @@ describe("LayerBitmapStore", () => {
     expect(r2).toBe(r1);
   });
 
+  it("passes the caller abort signal to a layer fetch", async () => {
+    let received: AbortSignal | undefined;
+    const store = new LayerBitmapStore<{ id: string }>(async (_layerId, signal) => {
+      received = signal;
+      return { bitmap: { id: "a" }, bytes: 10 };
+    }, 1000);
+    const controller = new AbortController();
+
+    await store.get("a", 1, controller.signal);
+
+    expect(received).toBe(controller.signal);
+  });
+
   it("a stale fetch arriving after a revision bump does not satisfy the new revision", async () => {
     const store = new LayerBitmapStore<{ id: string }>(async (layerId) => {
       return { bitmap: { id: layerId }, bytes: 10 };
@@ -65,6 +78,36 @@ describe("LayerBitmapStore", () => {
     expect(again).toBe(fresh);
   });
 
+  it("does not let an in-flight old revision satisfy a newer concurrent get", async () => {
+    // Use explicit deferred responses so rev 1 and rev 2 overlap. The
+    // second call must not attach itself to rev 1's promise.
+    let releaseFirst!: () => void;
+    let releaseSecond!: () => void;
+    const firstGate = new Promise<void>((resolve) => (releaseFirst = resolve));
+    const secondGate = new Promise<void>((resolve) => (releaseSecond = resolve));
+    let call = 0;
+    const concurrent = new LayerBitmapStore<{ id: string }>(async (layerId) => {
+      call += 1;
+      if (call === 1) await firstGate;
+      else await secondGate;
+      return { bitmap: { id: `${layerId}:${call}` }, bytes: 10 };
+    }, 1000);
+
+    const old = concurrent.get("a", 1);
+    const fresh = concurrent.get("a", 2);
+    releaseSecond();
+    // The old implementation joins the first promise, so release it on the
+    // next turn to make the failure deterministic instead of hanging the test.
+    setTimeout(releaseFirst, 0);
+    const freshResult = await fresh;
+    expect(freshResult.revision).toBe(2);
+    releaseFirst();
+    const oldResult = await old;
+    expect(oldResult.revision).toBe(1);
+    expect((await concurrent.get("a", 2)).bitmap).toBe(freshResult.bitmap);
+    expect(call).toBe(2);
+  });
+
   it("invalidate drops exactly the requested layer", async () => {
     const { store, fetches } = makeStore();
     await store.get("a", 1);
@@ -73,6 +116,45 @@ describe("LayerBitmapStore", () => {
     await store.get("a", 1); // refetch: invalidated
     await store.get("b", 1); // still cached
     expect(fetches).toEqual(["a", "b", "a"]);
+  });
+
+  it("keeps an old in-flight response out after invalidateAll", async () => {
+    let releaseOld!: () => void;
+    let releaseFresh!: () => void;
+    const oldGate = new Promise<void>((resolve) => (releaseOld = resolve));
+    const freshGate = new Promise<void>((resolve) => (releaseFresh = resolve));
+    let call = 0;
+    const store = new LayerBitmapStore<{ id: string }>(async (layerId) => {
+      const request = ++call;
+      await (request === 1 ? oldGate : freshGate);
+      return { bitmap: { id: `${layerId}:${request}` }, bytes: 10 };
+    }, 1000);
+
+    const old = store.get("a", 1);
+    store.invalidateAll();
+    const fresh = store.get("a", 1);
+    releaseFresh();
+    const freshResult = await fresh;
+    releaseOld();
+    await old;
+
+    expect((await store.get("a", 1)).bitmap).toBe(freshResult.bitmap);
+  });
+
+  it("does not repopulate after critical memory pressure", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const store = new LayerBitmapStore<{ id: string }>(async (layerId) => {
+      await gate;
+      return { bitmap: { id: layerId }, bytes: 10 };
+    }, 1000);
+
+    const pending = store.get("a", 1);
+    store.onMemoryPressure("critical");
+    release();
+    await pending;
+
+    expect(store.peek("a")).toBeUndefined();
   });
 
   it("cache evictions under a tight budget stay LRU-correct", async () => {

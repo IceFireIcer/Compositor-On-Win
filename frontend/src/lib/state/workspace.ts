@@ -3,6 +3,7 @@ import {
   CloseTab as CloseTabRPC,
   NewDocument as NewDocumentRPC,
   Snapshot as GetSnapshot,
+  TryCloseTab as TryCloseTabRPC,
 } from "../../../wailsjs/go/bridge/Workspace";
 import {
   BeginBlobImport,
@@ -12,12 +13,14 @@ import {
   FinishImageImport,
   ImportDroppedPaths,
   OpenProjectDialog,
+  OpenPath as OpenPathRPC,
   PickImageImport,
   SaveProjectDialog,
+  SaveProjectAsDialog,
   TransferLayer as TransferLayerRPC,
 } from "../../../wailsjs/go/bridge/Service";
 import { rasterizeSVG, uploadRaster } from "./svg";
-import { clearDocument, loadDocument } from "./document";
+import { applyDocumentSnapshot, clearDocument, loadDocument } from "./document";
 
 /**
  * Mirror of the Go Workspace (internal/bridge). Go is the source of truth:
@@ -72,8 +75,8 @@ export async function newDocument(width: number, height: number, resolution: num
  * another tab becomes active instead, App's effect on the active tab id
  * re-loads the document store for it.
  */
-export async function closeTab(id: string): Promise<Snapshot> {
-  const s = await CloseTabRPC(id);
+export async function closeTab(id: string, discard = false): Promise<Snapshot> {
+  const s = discard ? await CloseTabRPC(id) : await TryCloseTabRPC(id);
   applySnapshot(s);
   if (!hasDocument(s)) clearDocument();
   return s;
@@ -126,7 +129,18 @@ export async function cancelPendingOpen(): Promise<void> {
  * flag clears) and re-syncs the document rev.
  */
 export async function saveProject(): Promise<{ path: string; rev: number } | null> {
-  const reply = JSON.parse(await SaveProjectDialog()) as { path?: unknown; rev?: unknown };
+  return saveProjectWith(SaveProjectDialog);
+}
+
+/** Save the active document to a newly selected package path. */
+export async function saveProjectAs(): Promise<{ path: string; rev: number } | null> {
+  return saveProjectWith(SaveProjectAsDialog);
+}
+
+async function saveProjectWith(
+  saveRPC: () => Promise<string>,
+): Promise<{ path: string; rev: number } | null> {
+  const reply = JSON.parse(await saveRPC()) as { path?: unknown; rev?: unknown };
   if (!reply || typeof reply.path !== "string" || reply.path.length === 0) return null;
   applySnapshot(await GetSnapshot());
   await loadDocument();
@@ -143,6 +157,16 @@ export async function importImages(): Promise<{ failures: string[]; raws: string
   if (!paths || paths.length === 0) return null;
   const begin = JSON.parse(await BeginImageImport(paths)) as ImportBegin;
   return runImportBatch(begin);
+}
+
+/** A dropped .comp path is a project package, including a picker-provided manifest path. */
+export function isCompProjectPath(path: string): boolean {
+  const parts = path.trim().replace(/[\\/]+$/, "").split(/[\\/]/);
+  const name = parts.at(-1)?.toLowerCase() ?? "";
+  if (name === "manifest.json") {
+    return parts.at(-2)?.toLowerCase().endsWith(".comp") ?? false;
+  }
+  return name.endsWith(".comp");
 }
 
 /** One decoded import item (internal/bridge's importItem JSON). */
@@ -244,6 +268,36 @@ export async function importDroppedPaths(
   }
   if (!reply.begin) return { failures: ["拖入的文件无法读取"], raws: [] };
   return runImportBatch(reply.begin);
+}
+
+/** Route Wails file drops: projects open as tabs, all other paths stay image imports. */
+export async function routeDroppedPaths(
+  paths: string[],
+): Promise<{ failures: string[]; raws: string[] }> {
+  if (paths.length === 0) return { failures: [], raws: [] };
+
+  const projectPaths = paths.filter(isCompProjectPath);
+  const imagePaths = paths.filter((path) => !isCompProjectPath(path));
+  const failures: string[] = [];
+
+  for (const path of projectPaths) {
+    try {
+      const raw = await OpenPathRPC(path);
+      const reply = JSON.parse(raw) as { pending?: unknown };
+      if (reply.pending === true) {
+        failures.push(`${path}: 项目打开需要确认转换`);
+        continue;
+      }
+      applyDocumentSnapshot(raw);
+      applySnapshot(await GetSnapshot());
+    } catch (err) {
+      failures.push(`${path}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  if (imagePaths.length === 0) return { failures, raws: [] };
+  const imported = await importDroppedPaths(imagePaths);
+  return { failures: [...failures, ...imported.failures], raws: imported.raws };
 }
 
 /**

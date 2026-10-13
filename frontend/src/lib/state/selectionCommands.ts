@@ -22,7 +22,7 @@ export const EXPAND_CONTRACT_LIMIT = 500;
 export const FEATHER_LIMIT = 250;
 
 export function canModifySelection(s: Selection | null): boolean {
-  return s !== null && s.active;
+  return s !== null && s.active && (s.loops.some((loop) => loop.length >= 3) || s.mask.some((value) => value > 0));
 }
 
 /** Select All: the whole canvas. */
@@ -41,74 +41,110 @@ export function invertSelection(current: Selection): Selection | null {
   const inverted = new Uint8Array(width * height);
   let any = false;
   for (let i = 0; i < inverted.length; i++) {
-    if (mask[i] === 0) {
-      inverted[i] = 255;
-      any = true;
-    }
+    inverted[i] = 255 - mask[i];
+    if (inverted[i] > 0) any = true;
   }
   if (!any) return null; // everything was selected → Photoshop deselects
   return { ...selectionFromMask(inverted, width, height), feather: current.feather ?? 0 };
 }
 
-/** One round of 8-connected dilation (rounded corners, as a round-joined stroke). */
-function dilate(mask: Uint8Array, width: number, height: number): Uint8Array {
-  const out = new Uint8Array(mask.length);
-  for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-      const i = y * width + x;
-      if (mask[i] === 255) {
-        out[i] = 255;
-        continue;
-      }
-      let near = false;
-      for (let dy = -1; dy <= 1 && !near; dy++) {
-        for (let dx = -1; dx <= 1; dx++) {
-          const nx = x + dx, ny = y + dy;
-          if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue;
-          if (mask[ny * width + nx] === 255) {
-            near = true;
-            break;
-          }
-        }
-      }
-      out[i] = near ? 255 : 0;
+/**
+ * Computes one centered sliding maximum/minimum over a line. The window is
+ * clipped to the line, so samples outside the canvas do not act as implicit
+ * zeroes (or 255s for erosion).
+ */
+function slidingExtremum(
+  source: Uint8Array,
+  sourceOffset: number,
+  sourceStride: number,
+  target: Uint8Array,
+  targetOffset: number,
+  targetStride: number,
+  length: number,
+  radius: number,
+  findMaximum: boolean,
+  deque: Int32Array,
+): void {
+  let head = 0;
+  let tail = 0;
+
+  const append = (index: number): void => {
+    const value = source[sourceOffset + index * sourceStride];
+    while (tail > head) {
+      const previous = deque[tail - 1];
+      const previousValue = source[sourceOffset + previous * sourceStride];
+      if (findMaximum ? previousValue <= value : previousValue >= value) tail--;
+      else break;
     }
+    deque[tail++] = index;
+  };
+
+  for (let index = 0; index <= Math.min(length - 1, radius); index++) append(index);
+  for (let center = 0; center < length; center++) {
+    if (center > 0) {
+      const first = center - radius;
+      while (head < tail && deque[head] < first) head++;
+      const incoming = center + radius;
+      if (incoming < length) append(incoming);
+    }
+    target[targetOffset + center * targetStride] = source[sourceOffset + deque[head] * sourceStride];
   }
-  return out;
 }
 
-function erode(mask: Uint8Array, width: number, height: number): Uint8Array {
-  const inverted = new Uint8Array(mask.length);
-  for (let i = 0; i < mask.length; i++) inverted[i] = mask[i] === 255 ? 0 : 255;
-  const dilated = dilate(inverted, width, height);
+/**
+ * Chebyshev dilation/erosion over a grayscale mask. A square window's
+ * maximum/minimum is separable, reducing a radius-N morph from O(N²WH) to
+ * O(WH) with a monotonic deque on each row and column.
+ */
+function morphMask(
+  mask: Uint8Array,
+  width: number,
+  height: number,
+  radius: number,
+  findMaximum: boolean,
+): Uint8Array {
+  const horizontal = new Uint8Array(mask.length);
   const out = new Uint8Array(mask.length);
-  for (let i = 0; i < mask.length; i++) out[i] = dilated[i] === 255 ? 0 : 255;
+  const deque = new Int32Array(Math.max(1, width, height));
+
+  for (let y = 0; y < height; y++) {
+    slidingExtremum(mask, y * width, 1, horizontal, y * width, 1, width, radius, findMaximum, deque);
+  }
+  for (let x = 0; x < width; x++) {
+    slidingExtremum(horizontal, x, width, out, x, width, height, radius, findMaximum, deque);
+  }
   return out;
 }
 
 function morph(
   current: Selection,
   amount: number,
-  step: (m: Uint8Array) => Uint8Array,
+  findMaximum: boolean,
 ): Selection | null {
-  if (!canModifySelection(current) || amount < 1 || amount > EXPAND_CONTRACT_LIMIT) return null;
-  let mask = current.mask;
-  for (let i = 0; i < amount; i++) mask = step(mask);
+  if (
+    !canModifySelection(current) ||
+    !Number.isInteger(amount) ||
+    amount < 1 ||
+    amount > EXPAND_CONTRACT_LIMIT
+  ) {
+    return null;
+  }
+  const mask = morphMask(current.mask, current.width, current.height, amount, findMaximum);
   const next = selectionFromMask(mask, current.width, current.height);
-  const active = mask.some((v) => v === 255);
+  const active = mask.some((v) => v > 0);
   return { ...next, active, feather: current.feather ?? 0 };
 }
 
 /** Expand Selection: grows the outline by `amount` pixels, clipped to the canvas. */
 export function expandSelection(current: Selection | null, amount: number): Selection | null {
   if (current === null || !canModifySelection(current)) return null;
-  return morph(current, amount, (m) => dilate(m, current.width, current.height));
+  return morph(current, amount, true);
 }
 
 /** Contract Selection: shrinks by `amount`; past the middle → explicit empty. */
 export function contractSelection(current: Selection | null, amount: number): Selection | null {
   if (current === null || !canModifySelection(current)) return null;
-  return morph(current, amount, (m) => erode(m, current.width, current.height));
+  return morph(current, amount, false);
 }
 
 /**
@@ -116,7 +152,7 @@ export function contractSelection(current: Selection | null, amount: number): Se
  * selection (√(f²+a²) ≤ 250), reapplied it stacks, as the Swift comment says.
  */
 export function featherSelection(current: Selection | null, amount: number): Selection | null {
-  if (current === null || !canModifySelection(current) || amount < 1 || amount > FEATHER_LIMIT) return null;
+  if (current === null || !canModifySelection(current) || !Number.isInteger(amount) || amount < 1 || amount > FEATHER_LIMIT) return null;
   const f = current.feather ?? 0;
   return { ...current, feather: Math.min(FEATHER_LIMIT, Math.sqrt(f * f + amount * amount)) };
 }
@@ -137,6 +173,8 @@ export interface Affine {
  */
 export function transformSelection(current: Selection | null, t: Affine, width: number, height: number): Selection | null {
   if (current === null || !canModifySelection(current)) return null;
+  if (![t.a, t.b, t.c, t.d, t.e, t.f, width, height].every(Number.isFinite) ||
+      width < 1 || height < 1 || !Number.isInteger(width) || !Number.isInteger(height)) return null;
   const det = t.a * t.d - t.b * t.c;
   if (Math.abs(det) < 1e-12) return null;
   const mask = new Uint8Array(width * height);
@@ -145,13 +183,21 @@ export function transformSelection(current: Selection | null, t: Affine, width: 
       // inverse affine on the destination pixel center
       const dx = x + 0.5 - t.e;
       const dy = y + 0.5 - t.f;
-      const sx = Math.floor((t.d * dx - t.b * dy) / det);
-      const sy = Math.floor((-t.c * dx + t.a * dy) / det);
+      const sx = Math.floor((t.d * dx - t.c * dy) / det);
+      const sy = Math.floor((-t.b * dx + t.a * dy) / det);
       if (sx < 0 || sy < 0 || sx >= current.width || sy >= current.height) continue;
-      if (current.mask[sy * current.width + sx] === 255) mask[y * width + x] = 255;
+      const coverage = current.mask[sy * current.width + sx];
+      if (coverage > 0) mask[y * width + x] = coverage;
     }
   }
-  return selectionFromMask(mask, width, height);
+  // Keep the outline in document space even where its rasterized mask is
+  // clipped. Raster coverage remains clipped to the canvas; the ants path
+  // retains the full transformed boundary.
+  const loops = current.loops.map((loop) => loop.map((point) => ({
+    x: t.a * point.x + t.c * point.y + t.e,
+    y: t.b * point.x + t.d * point.y + t.f,
+  })));
+  return { ...selectionFromMask(mask, width, height), loops, feather: current.feather ?? 0 };
 }
 
 export interface SelectionStamp {
@@ -164,13 +210,18 @@ export interface SelectionStamp {
   pix: Uint8Array;
 }
 
+/** Scale one premultiplied byte the same way as the Go raster kernels. */
+function scalePremultiplied(value: number, coverage: number): number {
+  return Math.floor((value * coverage) / 255);
+}
+
 /** Copy: the selected pixels, cropped to the selection's bounding box. */
 export function copyStamp(bmp: Uint8Array, width: number, s: Selection | null): SelectionStamp | null {
   if (s === null || !canModifySelection(s)) return null;
   let minX = s.width, minY = s.height, maxX = -1, maxY = -1;
   for (let y = 0; y < s.height; y++) {
     for (let x = 0; x < s.width; x++) {
-      if (s.mask[y * s.width + x] === 255) {
+      if (s.mask[y * s.width + x] > 0) {
         if (x < minX) minX = x;
         if (x > maxX) maxX = x;
         if (y < minY) minY = y;
@@ -185,13 +236,18 @@ export function copyStamp(bmp: Uint8Array, width: number, s: Selection | null): 
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
       const sx = minX + x, sy = minY + y;
-      if (s.mask[sy * s.width + sx] !== 255) continue;
+      const coverage = s.mask[sy * s.width + sx];
+      if (coverage === 0) continue;
       const src = (sy * width + sx) * 4;
       const dst = (y * w + x) * 4;
-      pix[dst] = bmp[src];
-      pix[dst + 1] = bmp[src + 1];
-      pix[dst + 2] = bmp[src + 2];
-      pix[dst + 3] = bmp[src + 3];
+      if (coverage === 255) {
+        pix[dst] = bmp[src];
+        pix[dst + 1] = bmp[src + 1];
+        pix[dst + 2] = bmp[src + 2];
+        pix[dst + 3] = bmp[src + 3];
+      } else {
+        for (let c = 0; c < 4; c++) pix[dst + c] = scalePremultiplied(bmp[src + c], coverage);
+      }
     }
   }
   return { width: w, height: h, x: minX, y: minY, pix };
@@ -208,9 +264,15 @@ export function cutStamp(
   const out = Uint8Array.from(bmp);
   for (let y = 0; y < s.height; y++) {
     for (let x = 0; x < s.width; x++) {
-      if (s.mask[y * s.width + x] !== 255) continue;
+      const coverage = s.mask[y * s.width + x];
+      if (coverage === 0) continue;
+      const keep = 255 - coverage;
       const i = (y * width + x) * 4;
-      out[i] = out[i + 1] = out[i + 2] = out[i + 3] = 0;
+      if (keep === 0) {
+        out[i] = out[i + 1] = out[i + 2] = out[i + 3] = 0;
+      } else {
+        for (let c = 0; c < 4; c++) out[i + c] = scalePremultiplied(out[i + c], keep);
+      }
     }
   }
   return { stamp, bmp: out };
@@ -248,5 +310,5 @@ export function loopsFor(s: Selection): Point[][] {
 
 /** Marks a contract that erased everything as explicitly empty, not null. */
 export function isEmptySelection(s: Selection | null): boolean {
-  return s !== null && !s.active;
+  return s !== null && !canModifySelection(s);
 }

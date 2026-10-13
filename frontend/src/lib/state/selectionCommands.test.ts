@@ -38,6 +38,32 @@ function countMask(s: Selection | null): number {
   return n;
 }
 
+function bruteMorph(
+  mask: Uint8Array,
+  width: number,
+  height: number,
+  radius: number,
+  mode: "max" | "min",
+): Uint8Array {
+  const out = new Uint8Array(mask.length);
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      let value = mode === "max" ? 0 : 255;
+      for (let dy = -radius; dy <= radius; dy++) {
+        for (let dx = -radius; dx <= radius; dx++) {
+          const nx = x + dx;
+          const ny = y + dy;
+          if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue;
+          const sample = mask[ny * width + nx];
+          value = mode === "max" ? Math.max(value, sample) : Math.min(value, sample);
+        }
+      }
+      out[y * width + x] = value;
+    }
+  }
+  return out;
+}
+
 describe("selection existence gating", () => {
   it("deselect only fires when a selection exists", () => {
     expect(deselect(null)).toBeNull();
@@ -49,6 +75,15 @@ describe("selection existence gating", () => {
     const empty = { width: 4, height: 4, mask: new Uint8Array(16), loops: [], active: false };
     expect(expandSelection(empty, 2)).toBeNull();
     expect(copyStamp(new Uint8Array(64), 4, empty)).toBeNull();
+  });
+
+  it("treats a zero-coverage loaded mask as explicitly empty and refuses boundary edits", () => {
+    const empty = selectionFromMask(new Uint8Array(16), 4, 4);
+    expect(isEmptySelection(empty)).toBe(true);
+    expect(expandSelection(empty, 2)).toBeNull();
+    expect(contractSelection(empty, 2)).toBeNull();
+    expect(featherSelection(empty, 2)).toBeNull();
+    expect(transformSelection(empty, { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 }, 4, 4)).toBeNull();
   });
 
   it("selectAll covers the canvas; invert of everything deselects", () => {
@@ -64,9 +99,68 @@ describe("selection existence gating", () => {
     expect(countMask(inv)).toBe(12);
     expect(inv?.feather).toBe(0);
   });
+
+  it("invert complements partial coverage instead of binarizing it", () => {
+    const mask = new Uint8Array([128, 0]);
+    const current = selectionFromMask(mask, 2, 1);
+    const inv = invertSelection(current);
+    expect(inv?.mask).toEqual(new Uint8Array([127, 255]));
+  });
 });
 
 describe("expand / contract / feather", () => {
+  it("rejects non-finite or fractional feather amounts without corrupting the selection", () => {
+    const selection = rect(4, 4, 1, 1, 2, 2);
+    for (const amount of [Number.NaN, Infinity, 1.5]) expect(featherSelection(selection, amount)).toBeNull();
+    expect(selection.feather).toBeUndefined();
+  });
+  it("uses grayscale max/min coverage instead of binarizing soft masks", () => {
+    const partial = selectionFromMask(new Uint8Array([128]), 1, 1);
+    const expanded = expandSelection(partial, 1);
+    const contracted = contractSelection(partial, 1);
+    expect(expanded?.mask).toEqual(new Uint8Array([128]));
+    expect(expanded?.active).toBe(true);
+    expect(contracted?.mask).toEqual(new Uint8Array([128]));
+    expect(contracted?.active).toBe(true);
+
+    const grown = expandSelection(selectionFromMask(new Uint8Array([0, 64, 0]), 3, 1), 1);
+    expect(grown?.mask).toEqual(new Uint8Array([64, 64, 64]));
+    const shrunk = contractSelection(selectionFromMask(new Uint8Array([128, 64, 128]), 3, 1), 1);
+    expect(shrunk?.mask).toEqual(new Uint8Array([64, 64, 64]));
+  });
+
+  it("matches the brute-force Chebyshev max/min reference on randomized gray masks", () => {
+    let seed = 0x51e1ec7;
+    const nextByte = (): number => {
+      seed = (seed * 1664525 + 1013904223) >>> 0;
+      return (seed >>> 24) & 0xff;
+    };
+    const width = 5;
+    const height = 4;
+    for (let sample = 0; sample < 12; sample++) {
+      const mask = Uint8Array.from({ length: width * height }, () => nextByte());
+      mask[0] = 128; // Keep every generated input visibly soft and active.
+      const radius = (sample % 3) + 1;
+      const current = selectionFromMask(mask, width, height);
+      const expanded = expandSelection(current, radius);
+      const contracted = contractSelection(current, radius);
+      expect(expanded?.mask).toEqual(bruteMorph(mask, width, height, radius, "max"));
+      expect(contracted?.mask).toEqual(bruteMorph(mask, width, height, radius, "min"));
+      expect(expanded?.mask.every(Number.isFinite)).toBe(true);
+      expect(contracted?.mask.every(Number.isFinite)).toBe(true);
+    }
+  });
+
+  it("validates integer amounts and ignores outside-canvas samples", () => {
+    const partial = selectionFromMask(new Uint8Array([128]), 1, 1);
+    for (const amount of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, 501]) {
+      expect(expandSelection(partial, amount)).toBeNull();
+      expect(contractSelection(partial, amount)).toBeNull();
+    }
+    const all = selectAll(2, 2);
+    expect(contractSelection(all, 500)?.mask).toEqual(new Uint8Array([255, 255, 255, 255]));
+  });
+
   it("expand grows the outline by amount on every side", () => {
     // 8-connected dilation = Chebyshev metric: a square core grows to a
     // square; the Swift round-join corner softening is a mask-domain
@@ -105,6 +199,20 @@ describe("expand / contract / feather", () => {
 });
 
 describe("transform selection", () => {
+  it("retains feather and the unclipped outline when transforming beyond the canvas", () => {
+    const s = { ...selectionFromMask(new Uint8Array([128, 0, 0, 0]), 2, 2), feather: 4 };
+    const moved = transformSelection(s, { a: 1, b: 0, c: 0, d: 1, e: 3, f: 0 }, 2, 2)!;
+    expect(moved.feather).toBe(4);
+    expect(moved.loops).toHaveLength(1);
+    expect(moved.loops.flat().every((p) => p.x >= 3)).toBe(true);
+    expect(moved.mask).toEqual(new Uint8Array(4));
+    expect(s.mask[0]).toBe(128);
+  });
+
+  it("rejects non-finite affine coefficients instead of replacing the selection with an empty mask", () => {
+    const s = selectionFromMask(new Uint8Array([255]), 1, 1);
+    expect(transformSelection(s, { a: 1, b: 0, c: 0, d: 1, e: Number.NaN, f: 0 }, 1, 1)).toBeNull();
+  });
   it("reshapes the outline without touching pixels", () => {
     const s = rect(8, 8, 2, 2, 5, 5);
     const moved = transformSelection(s, { a: 1, b: 0, c: 0, d: 1, e: 2, f: 1 }, 8, 8);
@@ -117,6 +225,12 @@ describe("transform selection", () => {
   it("rejects singular affines and missing selections", () => {
     expect(transformSelection(null, { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 }, 8, 8)).toBeNull();
     expect(transformSelection(rect(8, 8, 0, 0, 1, 1), { a: 0, b: 0, c: 0, d: 0, e: 0, f: 0 }, 8, 8)).toBeNull();
+  });
+
+  it("keeps partial coverage when the selection is transformed", () => {
+    const current = selectionFromMask(new Uint8Array([128]), 1, 1);
+    const moved = transformSelection(current, { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 }, 1, 1);
+    expect(moved?.mask).toEqual(new Uint8Array([128]));
   });
 });
 
@@ -131,6 +245,15 @@ describe("selection clipboard", () => {
     expect(stamp?.pix[0]).toBe(200);
   });
 
+  it("copies partial coverage inside the crop and scales premultiplied pixels", () => {
+    const bmp = solidBitmap(4, 3, 200, 100, 50);
+    const mask = new Uint8Array(12);
+    mask[1 * 4 + 2] = 128;
+    const stamp = copyStamp(bmp, 4, selectionFromMask(mask, 4, 3));
+    expect(stamp).toMatchObject({ width: 1, height: 1, x: 2, y: 1 });
+    expect(stamp?.pix).toEqual(new Uint8Array([100, 50, 25, 128]));
+  });
+
   it("cut clears the selected pixels to transparent; paste composites back", () => {
     const bmp = solidBitmap(6, 6, 200, 100, 50);
     const { stamp, bmp: cut } = cutStamp(bmp, 6, rect(6, 6, 1, 1, 2, 2));
@@ -140,6 +263,14 @@ describe("selection clipboard", () => {
     expect(restored[(1 * 6 + 1) * 4]).toBe(200);
     expect(restored[(1 * 6 + 1) * 4 + 3]).toBe(255);
     expect(restored[(1 * 6 + 1) * 4 + 1]).toBe(100);
+  });
+
+  it("cut attenuates premultiplied pixels by the remaining soft-mask coverage", () => {
+    const bmp = solidBitmap(1, 1, 200, 100, 50);
+    const selection = selectionFromMask(new Uint8Array([128]), 1, 1);
+    const { stamp, bmp: cut } = cutStamp(bmp, 1, selection);
+    expect(stamp?.pix).toEqual(new Uint8Array([100, 50, 25, 128]));
+    expect(cut).toEqual(new Uint8Array([99, 49, 24, 127]));
   });
 
   it("paste clips the stamp at canvas edges", () => {

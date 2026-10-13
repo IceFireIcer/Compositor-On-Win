@@ -28,6 +28,10 @@ import { normalizeGrid, type LayoutGrid, type SnapToggles, DEFAULT_SNAP_TOGGLES 
 /** View > Show Grid —— 布局网格（与 800% 的像素网格是两回事，后者由缩放决定）。 */
 export const showGrid = writable(false);
 
+/** Pixel grid may be hidden independently of the layout grid. */
+export const showsPixelGrid = writable(true);
+export const gridSettingsOpen = writable(false);
+
 /** View > Show Guides —— 参考线可见性。 */
 export const showGuides = writable(true);
 
@@ -80,8 +84,10 @@ export function syncGuidesFromDocument(raw: unknown): { ok: boolean; error?: str
     return { ok: false, error: parsed.error };
   }
   guidesState.clearAll();
-  for (const guide of parsed.guides) guidesState.addGuide(guide);
-  lockGuides.set(false);
+  for (const guide of parsed.guides) {
+    guidesState.addGuide(guide);
+    guidesState.setLocked(guide.id, get(lockGuides));
+  }
   refreshVisibleGuides();
   return { ok: true };
 }

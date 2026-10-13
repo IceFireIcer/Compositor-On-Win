@@ -15,8 +15,8 @@
  *    复制文档语义。
  *
  * 仍未接线的条目（actions.test.ts 里逐条钉住，改动会提醒）分三类：
- *  - **引擎原语已在、缺 bridge RPC**：填充/清除（render/stampfill.go 有
- *    FillColor，internal/bridge 之前零调用）——票 23 的 FillSelection 落地后接。
+ *  - **菜单无独立快捷键定义**：清除选区像素没有额外的 ShortcutDefinition，
+ *    但菜单与 Delete 已通过票 23 的 FillSelection 接线。
  *  - **真缺底层能力**：工具模式循环、形状种类循环（需要模式 store）、
  *    浮动选区搬运（票 16 的 FloatingSelection 只在 reference/Swift 里）。
  *  - **不适用**：隐藏应用（macOS 专属，feature-parity「明确不做」第 4 条）。
@@ -27,12 +27,13 @@
  * （dispatch.ts 的 run() 只在动作已注册时消费）。
  */
 import { get, writable } from "svelte/store";
+import * as Service from "../../../wailsjs/go/bridge/Service";
 import {
   ApplyFilter,
   FillSelection,
+  FlipCanvas,
   MoveSelectedPixels,
   Redo,
-  SelectObjectAt,
   SelectSubject,
   SetGuides,
   Undo,
@@ -54,13 +55,15 @@ import {
   mergePlan,
   type LayerContext,
 } from "../state/layerOps";
-import { activeTool } from "../state/tools";
+import { activeTool, cycleShapeKind, cycleToolMode, setBrushMode, updateToolModes } from "../state/tools";
 import { copySelection, cutSelection, layerViaCopy, paste } from "../state/clipboard";
 import { changeBrushHardness, changeBrushSize } from "../state/tools";
 import { palette, resetPaletteColors, swapPaletteColors } from "../state/palette";
 import { currentSelection, selectionPayload, setSelectionFromMaskData } from "../state/selection";
 import { currentSelectionJSON } from "../state/clipboard";
 import { deselect, invertSelection, selectAll } from "../state/selectionCommands";
+import { openSelectionEdit, selectionEdit } from "../state/selectionEdit";
+import { getCanvasEditTarget } from "../state/layerTarget";
 import { selectTool } from "../state/tools";
 import { fitViewport, keyboardZoom, zoomToValue } from "../state/viewport";
 import {
@@ -75,6 +78,7 @@ import { requestClose } from "../state/confirm";
 import { Modifier, pressModifier, releaseModifier } from "../state/modifiers";
 import {
   cancelTextSession,
+  clampOption,
   commitTextSession,
   textDefaults,
   textSession,
@@ -96,12 +100,14 @@ import {
   showGuides,
   showRulers,
   snapEnabled,
-  guidesState,
 } from "../state/view";
 import {
   beginTransformSession,
   cancelTransformSession,
   commitTransformSession,
+  flipTransform,
+  nudgeTransform,
+  transformSession,
 } from "../state/transform";
 import { showsTransformControls } from "../state/transformSession";
 
@@ -140,21 +146,28 @@ export async function runUndoRedo(kind: "undo" | "redo"): Promise<void> {
 
 /** Select Subject / Object Selection：Go 返回的掩码进选择 store。 */
 export async function runSelect(kind: "subject" | "object"): Promise<void> {
+  if (kind === "object") {
+    updateToolModes({ wand: "object" });
+    selectTool("wand");
+    return;
+  }
   try {
     const doc = get(document);
-    const raw =
-      kind === "subject"
-        ? await SelectSubject()
-        : await SelectObjectAt(Math.floor(doc.width / 2), Math.floor(doc.height / 2));
+    const raw = await SelectSubject();
     const parsed = JSON.parse(raw) as {
+      tabId?: string;
       selection: { x: number; y: number; w: number; h: number; mask: string };
     };
+    if (get(document).docId !== doc.docId || (parsed.tabId && parsed.tabId !== doc.docId)) return;
     const binary = atob(parsed.selection.mask);
     const mask = new Uint8Array(binary.length);
     for (let i = 0; i < binary.length; i++) mask[i] = binary.charCodeAt(i);
     setSelectionFromMaskData(mask, parsed.selection.w, parsed.selection.h);
   } catch (err) {
     console.warn("主体选择失败", err);
+    // 这个失败以前只进 console：用户点「选择主体」看到的是"什么都没发生"。
+    // 缺模型是可操作的状态；开发版会尝试下载，安装版应随包提供。
+    window.alert(`选择失败\n\n${err instanceof Error ? err.message : String(err)}`);
   }
 }
 
@@ -163,7 +176,9 @@ export async function runInvert(kind: "invert" | "invertMask"): Promise<void> {
   const doc = get(document);
   if (!doc.docId || !doc.activeLayerID) return;
   try {
-    applyDocumentSnapshot(await ApplyFilter(kind, doc.activeLayerID, "{}", 0, ""));
+    const target = getCanvasEditTarget(get(workspace).activeId);
+    const operation = target?.targetMask ? "invertMask" : kind;
+    applyDocumentSnapshot(await ApplyFilter(operation, doc.activeLayerID, "{}", 0, currentSelectionJSON()), doc.docId);
   } catch (err) {
     console.warn("反相失败", err);
   }
@@ -219,8 +234,8 @@ export async function saveProjectSafe(): Promise<void> {
 /** ⌘W：关闭当前标签；脏文档先走既有确认框（与标签页 × 同一流程）。 */
 function closeActiveProject(): void {
   const tab = currentTab();
-  if (tab) requestClose(tab, async (doc) => {
-    await closeTab(doc.id);
+  if (tab) requestClose(tab, async (doc, discard) => {
+    await closeTab(doc.id, discard);
   });
 }
 
@@ -390,6 +405,10 @@ async function mergeActiveLayers(): Promise<void> {
 async function deleteActiveLayerOrMask(): Promise<void> {
   const layer = activeLayerEntry();
   if (!layer) return;
+  if (getCanvasEditTarget(get(workspace).activeId)?.targetMask) {
+    await layerOps.deleteLayerMask(layer.id);
+    return;
+  }
   await layerOps.deleteLayer(layer.id);
 }
 
@@ -398,6 +417,11 @@ async function deleteActiveLayerOrMask(): Promise<void> {
  * 像素"（有选区时搬像素）随选区浮动层（票 16 的浮层）落地，暂不接管。
  */
 async function nudgeActiveLayer(dx: number, dy: number): Promise<void> {
+  if (get(transformSession)) {
+    nudgeTransform(dx, dy);
+    return;
+  }
+  if (get(selectionEdit)) return;
   const layer = activeLayerEntry();
   if (!layer) return;
   await layerOps.nudgeLayer(layer.id, dx, dy);
@@ -418,11 +442,12 @@ async function contentAwareFill(): Promise<void> {
         doc.activeLayerID,
         "{}",
         0,
-        selectionPayload(sel.mask, sel.width, sel.height),
+        selectionPayload(sel.mask, sel.width, sel.height, sel.feather),
       ),
     );
   } catch (err) {
     console.warn("内容感知填充失败", err);
+    window.alert(`内容感知填充失败\n\n${err instanceof Error ? err.message : String(err)}`);
   }
 }
 
@@ -461,12 +486,12 @@ function currentLineHeight(): number {
 }
 
 function changeTracking(delta: number): void {
-  updateTextStyle({ tracking: get(textDefaults).tracking + delta });
+  updateTextStyle({ tracking: clampOption(get(textDefaults).tracking + delta, -100, 1000) });
 }
 
 /** 行距从当前行高算起（原版 `max(1, lineHeight ∓ step)`）。 */
 function changeLeading(delta: number): void {
-  updateTextStyle({ leading: Math.max(1, currentLineHeight() + delta) });
+  updateTextStyle({ leading: clampOption(currentLineHeight() + delta, 1, 5000) });
 }
 
 /** Esc：文字会话开着就取消文字（原版 InlineTextEditor 的 Esc），否则留给画布操作。 */
@@ -517,28 +542,6 @@ export function toggleLockGuides(): void {
   setLockGuides(!get(lockGuides));
 }
 
-/** 视图开关的当前值，供 View 菜单画勾（菜单只读，不自己存一份状态）。 */
-export function viewToggleState(): {
-  grid: boolean;
-  guides: boolean;
-  rulers: boolean;
-  snap: boolean;
-  lockGuides: boolean;
-  transformControls: boolean;
-  /** 当前文档有没有参考线（"清除参考线"据此禁用，与"显示参考线"开关无关）。 */
-  hasGuides: boolean;
-} {
-  return {
-    grid: get(showGrid),
-    guides: get(showGuides),
-    rulers: get(showRulers),
-    snap: get(snapEnabled),
-    lockGuides: get(lockGuides),
-    transformControls: get(showsTransformControls),
-    hasGuides: guidesState.guides.length > 0,
-  };
-}
-
 /**
  * ⌘H / View ▸ Show Transform Controls：只切换**控件可见性**。
  * 注意这与"开始变换"（⌘T）是两件事——原版 ⌘H 管的是变换框画不画，
@@ -579,17 +582,53 @@ export function toggleView(name: "grid" | "guides" | "rulers" | "snap"): void {
  */
 async function fill(mode: "foreground" | "background" | "clear"): Promise<void> {
   const doc = get(document);
-  if (!doc.docId || !doc.activeLayerID) return;
+  const tabID = get(workspace).activeId;
+  if (!doc.docId || !doc.activeLayerID || doc.docId !== tabID) return;
+  const target = getCanvasEditTarget(tabID);
+  if (!target) return;
+  // Capture the owner, selection and palette before crossing the async bridge.
+  const selection = currentSelectionJSON();
+  const colors = get(palette);
+  // Swift Clear on a mask is a background fill, never transparency.
+  const color = mode === "background" || (mode === "clear" && target.targetMask)
+    ? colors.background : mode === "foreground" ? colors.foreground : null;
+  const colorJSON = color ? JSON.stringify({ ...color, a: 1 }) : "";
   try {
-    const colors = get(palette);
-    const color =
-      mode === "background" ? colors.background : mode === "foreground" ? colors.foreground : null;
-    const colorJSON = color ? JSON.stringify({ ...color, a: 1 }) : "";
-    applyDocumentSnapshot(
-      await FillSelection(currentSelectionJSON(), mode, colorJSON),
-    );
+    let raw: string;
+    if (target.targetMask) {
+      // The integration owner regenerates bindings. Keep this typed seam usable
+      // before regeneration, and never fall back to the image-only endpoint.
+      const bridge = Service as typeof Service & {
+        FillLayerMask?: (tab: string, layer: string, selection: string, mode: string, color: string) => Promise<string>;
+      };
+      if (!bridge.FillLayerMask) throw new Error("FillLayerMask binding unavailable");
+      raw = await bridge.FillLayerMask(tabID, target.layerID, selection, mode, colorJSON);
+    } else {
+      raw = await FillSelection(selection, mode, colorJSON);
+    }
+    if (get(workspace).activeId === tabID && get(document).docId === doc.docId) {
+      applyDocumentSnapshot(raw, doc.docId);
+    }
   } catch (err) {
     console.warn("填充失败", err);
+  }
+}
+
+/** 清除选区像素（原版 Clear Selection Pixels）：没有活动选区时不触发整层清除。 */
+export async function clearSelectionPixels(): Promise<void> {
+  if (!get(currentSelection)?.active) return;
+  await fill("clear");
+}
+
+/** 图像 ▸ 水平/垂直翻转画布：Go 负责镜像所有图层、蒙版与参考线。 */
+export async function flipCanvas(axis: "horizontal" | "vertical"): Promise<void> {
+  const tab = currentTab();
+  const doc = get(document);
+  if (!tab || !doc.docId) return;
+  try {
+    applyDocumentSnapshot(await FlipCanvas(tab.id, axis), doc.docId);
+  } catch (err) {
+    console.warn("画布翻转失败", err);
   }
 }
 
@@ -629,8 +668,14 @@ async function moveSelectedPixels(dx: number, dy: number): Promise<void> {
 // 变换会话（票 17）
 // ---------------------------------------------------------------------------
 
-/** ⌘T：在当前活动图层上开一个变换会话。 */
+/** Ctrl+T: an active selection transforms its boundary (ticket 16). */
 function startTransform(): void {
+  if (get(selectionEdit)) return;
+  const selection = get(currentSelection);
+  if (selection) {
+    openSelectionEdit("transform");
+    return;
+  }
   beginTransformSession();
 }
 
@@ -642,6 +687,12 @@ function applyTransform(): void {
 /** Esc：放弃变换，恢复原状。 */
 function cancelTransform(): void {
   cancelTransformSession();
+}
+
+/** 图层菜单 ▸ 水平/垂直翻转图层：沿用非破坏变换会话并一次提交历史。 */
+export async function flipLayer(axis: "x" | "y"): Promise<void> {
+  if (!beginTransformSession() || !flipTransform(axis)) return;
+  await commitTransformSession();
 }
 
 // ---------------------------------------------------------------------------
@@ -711,9 +762,14 @@ export const shortcutActions: ShortcutActions = {
   "Canvas & Layers:Move / Transform tool": () => selectTool("move"),
   "Canvas & Layers:Hand tool": () => selectTool("hand"),
   "Canvas & Layers:Zoom tool": () => selectTool("zoom"),
-  "Canvas & Layers:Brush tool": () => selectTool("brush"),
-  // 原版 E = 笔刷 + 擦除模式；涂/擦模式还在画布组件里，这里先选中笔刷。
-  "Canvas & Layers:Eraser": () => selectTool("brush"),
+  "Canvas & Layers:Brush tool": () => {
+    selectTool("brush");
+    setBrushMode("paint");
+  },
+  "Canvas & Layers:Eraser": () => {
+    selectTool("brush");
+    setBrushMode("erase");
+  },
   "Canvas & Layers:Spot Healing": () => selectTool("spotHealing"),
   "Canvas & Layers:Clone Stamp": () => selectTool("cloneStamp"),
   "Canvas & Layers:Type tool": () => selectTool("type"),
@@ -725,6 +781,11 @@ export const shortcutActions: ShortcutActions = {
   "Canvas & Layers:Lasso / cycle mode": () => selectTool("lasso"),
   "Canvas & Layers:Blur / Smudge / Liquify": () => selectTool("blur"),
   "Canvas & Layers:Crop tool": () => selectTool("crop"),
+  "Canvas & Layers:Cycle tool mode": () => cycleToolMode(),
+  "Canvas & Layers:Cycle shape kind": () => {
+    if (get(activeTool) === "shape") cycleShapeKind();
+    else selectTool("shape");
+  },
 
   // --- Canvas & Layers：色板、混合模式、不透明度、临时抓手、取消 ---
   "Canvas & Layers:Swap foreground/background": () => swapPaletteColors(),
@@ -750,15 +811,14 @@ export const shortcutActions: ShortcutActions = {
   "Canvas & Layers:Apply current canvas operation": () => applyTransform(),
   "Canvas & Layers:Cancel current canvas operation": () => cancelCanvasOperation(),
   // [ / ] 与 Shift-[ / Shift-]：原版 EditorCanvas.keyDown 只对笔刷类工具生效，
-  // 步长语义在 tools.ts（changeBrushSize/changeBrushHardness）；当前设置落在
-  // healSettings（污点修复画笔 J 会真的带进 Go）；画笔/橡皮的参数仍是 Go 侧
-  // 固定值，等笔刷设置 RPC（票 21 尾项）落地后共用同一个 store。
+  // 步长与设置路由在 tools.ts：J 改 healSettings，其余笔刷改 brushSettings，
+  // 画布在每次开始笔画时读取同一份参数。
   "Canvas & Layers:Decrease brush size": () => changeBrushSize(get(activeTool), false),
   "Canvas & Layers:Increase brush size": () => changeBrushSize(get(activeTool), true),
   "Canvas & Layers:Decrease brush hardness": () => changeBrushHardness(get(activeTool), false),
   "Canvas & Layers:Increase brush hardness": () => changeBrushHardness(get(activeTool), true),
   "Canvas & Layers:Delete selection / layer / effect / lasso point": () =>
-    void deleteActiveLayerOrMask(),
+      void (get(currentSelection) !== null ? clearSelectionPixels() : deleteActiveLayerOrMask()),
   // 方向键（原版 EditorCanvas.keyDown：方向键 ±1px，Shift ±10px）；画布池的
   // Shift 兜底不适用于方向键（它有自己带 Shift 的定义），所以四条都要接线。
   "Canvas & Layers:Nudge Left 1 px": () => void nudgeActiveLayer(-1, 0),

@@ -44,8 +44,8 @@ function docJson(overrides: Record<string, unknown> = {}): Record<string, unknow
   };
 }
 
-function wire(rev: number, doc: Record<string, unknown> | null): string {
-  return JSON.stringify({ rev, doc });
+function wire(rev: number, doc: Record<string, unknown> | null, filterRev = 0): string {
+  return JSON.stringify({ rev, filterRev, doc });
 }
 
 function makeService(): DocumentService & {
@@ -67,6 +67,42 @@ beforeEach(() => {
 });
 
 describe("document snapshot parsing (ticket 04 wiring)", () => {
+  it("retains the v11 shape and all effect payloads without inventing enabled flags", () => {
+    const shape = { kind: "Line", red: 0.2, green: 0.3, blue: 0.4, cornerRadius: 0,
+      lineWidth: 3, start: [0.1, 0.2], end: [0.9, 0.8] };
+    const effects = {
+      colorOverlay: { red: 1, green: 0.25, blue: 0.5, opacity: 0.5 },
+      stroke: { enabled: false, size: 4, red: 0, green: 0, blue: 0, opacity: 1, inside: true },
+      shadow: { angle: 90, distance: 20, blur: 20, red: 0, green: 0, blue: 0, opacity: 0.5 },
+      innerShadow: { enabled: true, angle: 135, distance: 10, blur: 10, red: 0, green: 0, blue: 0, opacity: 0.5 },
+      outerGlow: { size: 20, red: 1, green: 1, blue: 1, opacity: 0.75 },
+      innerGlow: { enabled: false, size: 10, red: 1, green: 1, blue: 1, opacity: 0.75 },
+    };
+    const parsed = parseDocumentSnapshot(wire(5, docJson({ layers: [{ id: "styled", isVisible: true, shape, effects }] })));
+    expect(parsed.layers[0].shape).toEqual(shape);
+    expect(parsed.layers[0].effects).toEqual(effects);
+    expect(parsed.layers[0].effects?.colorOverlay).not.toHaveProperty("enabled");
+  });
+
+  it("clears shape/effects when the authoritative snapshot omits them", () => {
+    const shape = { kind: "Rectangle", red: 1, green: 0, blue: 0, cornerRadius: 12 };
+    const effects = { colorOverlay: { enabled: false, red: 0, green: 1, blue: 0, opacity: 1 } };
+    expect(applyDocumentSnapshot(wire(1, docJson({ layers: [{ id: "styled", shape, effects }] })))).toBe(true);
+    expect(get(document).layers[0]).toMatchObject({ shape, effects });
+    expect(applyDocumentSnapshot(wire(2, docJson({ layers: [{ id: "styled" }] })))).toBe(true);
+    expect(get(document).layers[0]).toMatchObject({ shape: null, effects: null });
+  });
+
+  it("retains flip, sampling and mask placement so later edits preserve the backend values", () => {
+    const transform = { origin: [10, 20], size: [80, 60], rotation: 15,
+      flipX: true, flipY: false, sampling: "Nearest" };
+    const maskPlacement = { origin: [30, 40], size: [80, 60], rotation: 0, flipY: true };
+    const parsed = parseDocumentSnapshot(wire(5, docJson({ layers: [{ id: "masked", name: "Masked", isVisible: true,
+      transform, maskFile: "masked.mask.png", maskEnabled: false, maskLinked: false, maskPlacement }] })));
+    expect(parsed.layers[0].transform).toEqual(transform);
+    expect(parsed.layers[0]).toMatchObject({ maskFile: "masked.mask.png", maskEnabled: false, maskLinked: false, maskPlacement });
+  });
+
   it("parses a domain.Document snapshot bottom→top with rev", () => {
     const s = parseDocumentSnapshot(wire(7, docJson()));
     expect(s.docId).toBe("doc-1");
@@ -220,6 +256,28 @@ describe("applyDocumentSnapshot rev cache + guards", () => {
     expect(get(document).rev).toBe(4);
   });
 
+  it("drops a lower document revision for the same document", () => {
+    applyDocumentSnapshot(wire(5, docJson()));
+    expect(applyDocumentSnapshot(wire(4, docJson({ activeLayerID: "l1" })))).toBe(false);
+    expect(get(document).rev).toBe(5);
+    expect(get(document).activeLayerID).toBe("l2");
+  });
+
+  it("applies a newer filter preview at the same document revision", () => {
+    applyDocumentSnapshot(wire(5, docJson(), 1));
+    expect(applyDocumentSnapshot(wire(5, docJson({ activeLayerID: "l1" }), 2))).toBe(true);
+    expect(get(document).rev).toBe(5);
+    expect(get(document).filterRev).toBe(2);
+    expect(get(document).activeLayerID).toBe("l1");
+  });
+
+  it("does not let an older filter preview clobber a newer preview", () => {
+    applyDocumentSnapshot(wire(5, docJson(), 3));
+    expect(applyDocumentSnapshot(wire(5, docJson({ activeLayerID: "l1" }), 2))).toBe(false);
+    expect(get(document).filterRev).toBe(3);
+    expect(get(document).activeLayerID).toBe("l2");
+  });
+
   it("drops a stale reply for a different document (expectedDocId guard)", () => {
     expect(applyDocumentSnapshot(wire(3, docJson()), "doc-other")).toBe(false);
     expect(get(document).docId).toBeNull();
@@ -278,9 +336,11 @@ describe("layerOps wire contract", () => {
   }
 
   /** The mock always answers rev 9, so a second op in one test needs the store
-   * rolled back to an older rev — otherwise the rev cache swallows it. */
+   * reset to an empty document before rearming the lower test revision. Lower
+   * revisions for the same document are now intentionally rejected. */
   function rearm(): void {
     svc.LayerOp.mockClear();
+    clearDocument();
     applyDocumentSnapshot(wire(1, docJson()));
   }
 
@@ -315,6 +375,20 @@ describe("layerOps wire contract", () => {
 
   it("addLayer sends an empty payload", async () => {
     await expectOp(layerOps.addLayer(), "addLayer", {});
+  });
+
+  it("addAdjustment sends the raw adjustment kind", async () => {
+    await expectOp(layerOps.addAdjustment("Levels"), "addAdjustment", {
+      kind: "Levels",
+      provisional: true,
+    });
+  });
+
+  it("can create an immediate adjustment layer without a provisional editor", async () => {
+    await expectOp(layerOps.addAdjustment("Invert", false), "addAdjustment", {
+      kind: "Invert",
+      provisional: false,
+    });
   });
 
   it("moveLayer sends the bottom→top target index", async () => {

@@ -146,6 +146,28 @@ describe("外部变更的前端接线（票 51）", () => {
     expect(get(pendingExternalChange)).toBeNull();
   });
 
+  it("载入磁盘版本失败时保留待决定状态，包恢复后可重试", async () => {
+    const pending = { tabId: "t1", path: "C:\\演示.comp" };
+    applyExternalChange({ ...pending, pending: true, dirty: true });
+    mockedResolve.mockRejectedValueOnce(new Error("DOCUMENT_BUSY"));
+    mockedResolve.mockResolvedValueOnce(DOC_ENVELOPE);
+
+    await resolveExternalChange(true);
+    expect(get(pendingExternalChange)).toEqual(pending);
+    await resolveExternalChange(true);
+    expect(mockedResolve).toHaveBeenCalledTimes(2);
+    expect(get(pendingExternalChange)).toBeNull();
+  });
+
+  it("过期的外部变更回答不重新显示提示", async () => {
+    applyExternalChange({ tabId: "t1", path: "C:\\演示.comp", pending: true, dirty: true });
+    mockedResolve.mockRejectedValueOnce(new Error("EXTERNAL_CHANGE_NOT_PENDING"));
+
+    await resolveExternalChange(true);
+
+    expect(get(pendingExternalChange)).toBeNull();
+  });
+
   it("没有待决定时不调 Go（不能凭空接受）", async () => {
     await resolveExternalChange(true);
     expect(mockedResolve).not.toHaveBeenCalled();

@@ -69,6 +69,14 @@ describe("视图开关（票 47 的 5 条视图命令）", () => {
     snapEnabled.set(false);
     expect(snapOptions().enabled).toBe(false);
   });
+
+  it("keeps guides locked when a later document snapshot refreshes their positions", () => {
+    syncGuidesFromDocument([{ id: "g", axis: "vertical", position: 20 }]);
+    setLockGuides(true);
+    syncGuidesFromDocument([{ id: "g", axis: "vertical", position: 25 }]);
+    expect(get(lockGuides)).toBe(true);
+    expect(beginGuideMove("g")).toBe(false);
+  });
 });
 
 describe("参考线镜像文档（票 14）", () => {

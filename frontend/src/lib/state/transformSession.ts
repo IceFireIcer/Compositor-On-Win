@@ -174,6 +174,14 @@ export function transformCorners(t: Transform): Vec2[] {
   ];
 }
 
+/** Swift TransformOverlay's rotation grip sits 28 screen points above top-mid. */
+export function rotationHandle(t: Transform, pointsPerPixel: number): Vec2 {
+  const top = transformedPoint(t, { x: 0.5, y: 0 });
+  const distance = 28 / Math.max(pointsPerPixel, 0.0001);
+  const radians = radiansOf(t.rotation);
+  return { x: top.x + Math.sin(radians) * distance, y: top.y - Math.cos(radians) * distance };
+}
+
 /** Rotated-quad hit test (LayerTransform.contains). */
 export function transformContains(t: Transform, p: Vec2): boolean {
   const c = transformCenter(t);
@@ -838,6 +846,8 @@ export class TransformSession {
   private _active = true;
   private _mode: DragMode | null = null;
   private _dragStart: Vec2 | null = null;
+  private _dragTransform: Transform | null = null;
+  private _dragCorners: Vec2[] | null = null;
   private _corners: Vec2[] | null = null;
   private _snapGuides: SnapHint[] = [];
   private _opacity: number | null = null;
@@ -880,7 +890,10 @@ export class TransformSession {
     if (!this._active) return false;
     this._mode = mode;
     this._dragStart = { x: startPoint.x, y: startPoint.y };
-    this._corners = mode.kind === "distort" ? transformCorners(this._draft) : null;
+    this._dragTransform = cloneTransform(this._draft);
+    this._corners = mode.kind === "distort" ? (this._corners ?? transformCorners(this._draft)) : null;
+    this._dragCorners = this._corners?.map((p) => ({ ...p })) ?? null;
+    this._snapGuides = [];
     return true;
   }
 
@@ -891,10 +904,11 @@ export class TransformSession {
    * a move snaps the rounded draft; rotation is never snapped; Ctrl vetoes.
    */
   drag(delta: Vec2, mods: DragModifiers = {}, snapInput?: SnapInput): Transform | null {
-    if (!this._active || !this._mode || !this._dragStart) return null;
+    if (!this._active || !this._mode || !this._dragStart || !this._dragTransform) return null;
+    const original = this._dragTransform;
     const point = { x: this._dragStart.x + delta.x, y: this._dragStart.y + delta.y };
     if (this._mode.kind === "distort") {
-      const next = dragCorners(this._corners ?? [], this._mode, this._dragStart, point, mods.shift === true);
+      const next = dragCorners(this._dragCorners ?? [], this._mode, this._dragStart, point, mods.shift === true);
       if (next) this._corners = next;
       return this._draft;
     }
@@ -904,15 +918,15 @@ export class TransformSession {
     if (this._mode.kind === "resize" && !m.ctrl && snapInput) {
       const snapped = snappedResizePointer(
         point,
-        { original: this.start, start: this._dragStart, handle: this._mode.handle },
+        { original, start: this._dragStart, handle: this._mode.handle },
         (m.lockRatio !== false) !== (m.shift === true),
         snapInput,
-        (p) => dragUpdated(this.start, this._mode!, this._dragStart!, p, m),
+        (p) => dragUpdated(original, this._mode!, this._dragStart!, p, m),
       );
       target = snapped.point;
       guides = snapped.guides;
     }
-    let draft = roundedTransform(dragUpdated(this.start, this._mode, this._dragStart, target, m));
+    let draft = roundedTransform(dragUpdated(original, this._mode, this._dragStart, target, m));
     if (this._mode.kind === "move" && !m.ctrl && snapInput) {
       const snapped = snappedMoveTransform(draft, snapInput);
       draft = snapped.transform;
@@ -1028,6 +1042,8 @@ export class TransformSession {
     this._active = false;
     this._mode = null;
     this._dragStart = null;
+    this._dragTransform = null;
+    this._dragCorners = null;
     this._snapGuides = [];
     const corners = this._corners;
     this._corners = null;
@@ -1045,6 +1061,8 @@ export class TransformSession {
     this._active = false;
     this._mode = null;
     this._dragStart = null;
+    this._dragTransform = null;
+    this._dragCorners = null;
     this._corners = null;
     this._snapGuides = [];
     return restored;

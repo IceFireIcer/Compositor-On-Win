@@ -43,6 +43,30 @@ function near(a: { x: number; y: number }, b: { x: number; y: number }): boolean
 const T = (over: Partial<Transform> = {}): Transform =>
   makeTransform({ origin: [0, 0], size: [100, 50], ...over });
 
+describe("successive transform gestures", () => {
+  it("starts each drag from the visible draft and preserves numeric edits", () => {
+    const session = beginTransform(T());
+    session.applyNumeric({ x: 20, rotation: 30 });
+    session.beginDrag({ kind: "move" }, { x: 0, y: 0 });
+    session.drag({ x: 5, y: 7 });
+    expect(session.draft.origin).toEqual([25, 7]);
+    expect(session.draft.rotation).toBe(30);
+    session.beginDrag({ kind: "move" }, { x: 10, y: 10 });
+    session.drag({ x: 3, y: -2 });
+    expect(session.draft.origin).toEqual([28, 5]);
+    expect(session.start.origin).toEqual([0, 0]);
+  });
+
+  it("distortion uses the total pointer delta once rather than accumulating every event", () => {
+    const session = beginTransform(T());
+    session.beginDrag({ kind: "distort", handle: 0 }, { x: 0, y: 0 });
+    session.drag({ x: 5, y: 7 });
+    session.drag({ x: 8, y: 9 });
+    expect(session.corners?.[0]).toEqual({ x: 8, y: 9 });
+    expect(session.corners?.[1]).toEqual({ x: 100, y: 0 });
+  });
+});
+
 describe("transform shape (aligns internal/domain/transform.go)", () => {
   it("defaults mirror the Go zero value with Swift's default sampling", () => {
     const t = makeTransform();

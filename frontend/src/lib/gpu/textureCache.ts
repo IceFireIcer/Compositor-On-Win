@@ -45,16 +45,17 @@ export class TextureCache<T> {
   }
 
   /** Inserts or replaces a value; evicts LRU entries while over budget. */
-  put(key: string, value: T, bytes: number): void {
+  put(key: string, value: T, bytes: number): boolean {
     if (bytes > this.limitBytes) {
       // A value that alone exceeds the budget cannot coexist with anything:
       // cache nothing rather than thrashing every other entry out.
-      return;
+      return false;
     }
     this.delete(key);
     this.entries.set(key, { value, bytes });
     this.totalBytes += bytes;
     this.evictWhileOverBudget();
+    return true;
   }
 
   delete(key: string): boolean {

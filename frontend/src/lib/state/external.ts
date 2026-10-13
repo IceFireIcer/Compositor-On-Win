@@ -28,6 +28,11 @@ export interface ExternalChangedEvent {
 /** 待用户决定的外部变更（脏文档 + 磁盘被外部改了）。 */
 export const pendingExternalChange = writable<{ tabId: string; path: string } | null>(null);
 
+function errorMessage(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  return typeof err === "string" ? err : String(err);
+}
+
 /**
  * 处理一条已解析的事件。测试直接调它，不必造 Wails 事件。
  * 干净的文档：贴新快照 + 新文档信封（画布靠 (docId, rev) 换新，Go 侧重载时 rev 会前进）。
@@ -60,8 +65,13 @@ export async function resolveExternalChange(accept: boolean): Promise<void> {
       applyDocumentSnapshot(reply);
     }
   } catch (err) {
-    // Go 说"没有待处理的外部变更"（用户已经通过别的路径处理过）：这个选择没有落点，
-    // 记一行日志就好 —— 不要把表单重新弹出来，用户已经回答过了。
+    // A transient package-read or document-busy failure remains actionable:
+    // restore the exact prompt that was optimistically hidden before the RPC.
+    // A stale answer is different: the backend already resolved that pending
+    // state, so resurfacing it would ask the user to decide twice.
+    if (!errorMessage(err).includes("EXTERNAL_CHANGE_NOT_PENDING")) {
+      pendingExternalChange.set(pending);
+    }
     console.warn("处理外部变更失败", err);
   }
 }

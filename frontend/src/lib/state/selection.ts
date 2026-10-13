@@ -49,13 +49,13 @@ export function setSelectionFromMaskData(mask: Uint8Array, width: number, height
 }
 
 /** The bridge's selection payload: base64 gray mask over the doc rect. */
-export function selectionPayload(mask: Uint8Array, width: number, height: number): string {
+export function selectionPayload(mask: Uint8Array, width: number, height: number, feather = 0): string {
   let binary = "";
   const chunk = 0x8000;
   for (let i = 0; i < mask.length; i += chunk) {
     binary += String.fromCharCode(...mask.subarray(i, i + chunk));
   }
-  return JSON.stringify({ x: 0, y: 0, w: width, h: height, mask: btoa(binary) });
+  return JSON.stringify({ x: 0, y: 0, w: width, h: height, mask: btoa(binary), ...(feather > 0 ? { feather } : {}) });
 }
 
 /** Clears the active selection. */
@@ -261,7 +261,7 @@ export function selectionFromMask(mask: Uint8Array, width: number, height: numbe
 
 function hasSelectedPixels(mask: Uint8Array): boolean {
   for (let i = 0; i < mask.length; i++) {
-    if (mask[i] === 255) return true;
+    if (mask[i] > 0) return true;
   }
   return false;
 }
@@ -288,8 +288,8 @@ export function select(mode: SelectionMode, current: Selection | null, region: R
   for (let i = 0; i < mask.length; i++) {
     const a = base !== undefined && i < base.length ? base[i] : 0;
     const b = i < next.length ? next[i] : 0;
-    if (mode === "add") mask[i] = a === 255 || b === 255 ? 255 : 0;
-    else if (mode === "subtract") mask[i] = b === 255 ? 0 : a;
+    if (mode === "add") mask[i] = Math.max(a, b);
+    else if (mode === "subtract") mask[i] = Math.max(0, a - b);
     else mask[i] = b;
   }
   return { width, height, mask, loops: outlineLoops(mask, width, height), active: true };

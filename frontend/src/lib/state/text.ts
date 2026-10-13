@@ -193,10 +193,15 @@ export async function commitTextSession(): Promise<void> {
   // （TypeTool.swift:271-281）——一次桥接失败不该吞掉用户刚输入的文字。
   // 失败时异常照常抛出，调用方 warn 后会话仍在，用户可以重试 ⌘回车。
   const raw = await TextCommit(JSON.stringify(payload));
-  textSession.set(null);
+  // The bridge can resolve after Esc, another text session, or a draft edit.
+  // Only close the exact immutable session that produced this request; the
+  // document reply still belongs to the successful commit and is safe to apply.
+  if (get(textSession) === sess) {
+    textSession.set(null);
+    // 默认值只留基础样式：下一次新建文字不带 runs（原版 applyText 的收尾）。
+    textDefaults.set({ ...sess.style, colorRuns: undefined, fontRuns: undefined });
+  }
   applyDocumentSnapshot(raw);
-  // 默认值只留基础样式：下一次新建文字不带 runs（原版 applyText 的收尾）。
-  textDefaults.set({ ...sess.style, colorRuns: undefined, fontRuns: undefined });
 }
 
 /** Cancel: drop the session (nothing was committed yet). */

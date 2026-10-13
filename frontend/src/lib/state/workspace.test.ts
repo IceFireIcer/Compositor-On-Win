@@ -7,11 +7,13 @@ import {
   hasDocument,
   importDroppedBlobs,
   importDroppedPaths,
+  routeDroppedPaths,
   importImages,
   newDocument,
   transferLayer,
   openProject,
   saveProject,
+  saveProjectAs,
   workspace,
 } from "./workspace";
 import { applyDocumentSnapshot, clearDocument, document, setDocumentService } from "./document";
@@ -23,6 +25,7 @@ vi.mock("../../../wailsjs/go/bridge/Workspace", () => ({
   NewDocument: vi.fn(),
   SelectTab: vi.fn(),
   Snapshot: vi.fn(),
+  TryCloseTab: vi.fn(),
 }));
 vi.mock("../../../wailsjs/go/bridge/Service", () => ({
   BeginBlobImport: vi.fn(),
@@ -32,8 +35,10 @@ vi.mock("../../../wailsjs/go/bridge/Service", () => ({
   ImportDroppedPaths: vi.fn(),
   LayerOp: vi.fn(),
   OpenProjectDialog: vi.fn(),
+  OpenPath: vi.fn(),
   PickImageImport: vi.fn(),
   SaveProjectDialog: vi.fn(),
+  SaveProjectAsDialog: vi.fn(),
   TransferLayer: vi.fn(),
 }));
 vi.mock("./svg", () => ({ rasterizeSVG: vi.fn(), uploadRaster: vi.fn() }));
@@ -41,6 +46,7 @@ import {
   CloseTab,
   NewDocument as NewDocumentRPC,
   Snapshot as GetSnapshot,
+  TryCloseTab,
 } from "../../../wailsjs/go/bridge/Workspace";
 import {
   BeginBlobImport,
@@ -49,8 +55,10 @@ import {
   FinishImageImport,
   ImportDroppedPaths,
   OpenProjectDialog,
+  OpenPath,
   PickImageImport,
   SaveProjectDialog,
+  SaveProjectAsDialog,
   TransferLayer,
 } from "../../../wailsjs/go/bridge/Service";
 import { rasterizeSVG, uploadRaster } from "./svg";
@@ -78,14 +86,17 @@ function snapshot(
 
 const mockedNewDocument = vi.mocked(NewDocumentRPC);
 const mockedCloseTab = vi.mocked(CloseTab);
+const mockedTryCloseTab = vi.mocked(TryCloseTab);
 const mockedGetSnapshot = vi.mocked(GetSnapshot);
 const mockedOpenDialog = vi.mocked(OpenProjectDialog);
 const mockedSaveDialog = vi.mocked(SaveProjectDialog);
+const mockedSaveAsDialog = vi.mocked(SaveProjectAsDialog);
 const mockedDocSnapshot = vi.mocked(DocumentSnapshot);
 const mockedPickImages = vi.mocked(PickImageImport);
 const mockedBeginImport = vi.mocked(BeginImageImport);
 const mockedFinishImport = vi.mocked(FinishImageImport);
 const mockedDroppedPaths = vi.mocked(ImportDroppedPaths);
+const mockedOpenPath = vi.mocked(OpenPath);
 const mockedBlobImport = vi.mocked(BeginBlobImport);
 const mockedTransfer = vi.mocked(TransferLayer);
 const mockedRasterizeSVG = vi.mocked(rasterizeSVG);
@@ -159,7 +170,7 @@ describe("workspace ↔ document glue (ticket 04 wiring)", () => {
   it("closeTab clears the document state when the last tab closes", async () => {
     applySnapshot(snapshot([{ id: "doc-1" }], "doc-1"));
     applyDocumentSnapshot(wireDoc("doc-1", 2));
-    mockedCloseTab.mockResolvedValue(bridge.Snapshot.createFrom({ tabs: [], activeId: "" }));
+    mockedTryCloseTab.mockResolvedValue(bridge.Snapshot.createFrom({ tabs: [], activeId: "" }));
 
     await closeTab("doc-1");
 
@@ -170,7 +181,7 @@ describe("workspace ↔ document glue (ticket 04 wiring)", () => {
   it("closeTab keeps the workspace and document when tabs remain", async () => {
     applySnapshot(snapshot([{ id: "doc-1" }, { id: "doc-2" }], "doc-2"));
     applyDocumentSnapshot(wireDoc("doc-2", 2));
-    mockedCloseTab.mockResolvedValue(snapshot([{ id: "doc-1" }], "doc-1"));
+    mockedTryCloseTab.mockResolvedValue(snapshot([{ id: "doc-1" }], "doc-1"));
 
     await closeTab("doc-2");
 
@@ -178,6 +189,15 @@ describe("workspace ↔ document glue (ticket 04 wiring)", () => {
     // The document store is refreshed by App's effect on the active tab id,
     // not synchronously here.
     expect(get(document).docId).toBe("doc-2");
+  });
+
+  it("closeTab uses explicit discard only after confirmation", async () => {
+    mockedCloseTab.mockResolvedValue(bridge.Snapshot.createFrom({ tabs: [], activeId: "" }));
+
+    await closeTab("doc-1", true);
+
+    expect(mockedCloseTab).toHaveBeenCalledWith("doc-1");
+    expect(mockedTryCloseTab).not.toHaveBeenCalled();
   });
 
   it("openProject refreshes both stores on success", async () => {
@@ -219,6 +239,20 @@ describe("workspace ↔ document glue (ticket 04 wiring)", () => {
 
     await expect(saveProject()).resolves.toBeNull();
     expect(mockedGetSnapshot).not.toHaveBeenCalled();
+  });
+
+  it("saveProjectAs always uses the Save As bridge and refreshes both stores", async () => {
+    applySnapshot(snapshot([{ id: "doc-1" }], "doc-1"));
+    mockedSaveAsDialog.mockResolvedValue(JSON.stringify({ path: "C:/p/copy.comp", rev: 10 }));
+    mockedGetSnapshot.mockResolvedValue(snapshot([{ id: "doc-1", dirty: false }], "doc-1"));
+    mockedDocSnapshot.mockResolvedValue(wireDoc("doc-1", 10));
+
+    await expect(saveProjectAs()).resolves.toEqual({ path: "C:/p/copy.comp", rev: 10 });
+
+    expect(mockedSaveAsDialog).toHaveBeenCalledTimes(1);
+    expect(mockedSaveDialog).not.toHaveBeenCalled();
+    expect(activeTab(get(workspace))?.dirty).toBe(false);
+    expect(get(document).rev).toBe(10);
   });
 });
 
@@ -300,6 +334,22 @@ describe("拖放导入与跨标签搬运（票 48）", () => {
     mockedGetSnapshot.mockReset();
     mockedDocSnapshot.mockReset();
     mockedFinishImport.mockReset();
+  });
+
+  it("拖入 .comp 包按大小写与 manifest 路径打开项目，而不是当作图像导入", async () => {
+    const projectPaths = ["C:/Projects/Upper.COMP", "C:\\Projects\\Inside.comp\\manifest.json"];
+    const imagePath = "C:/Projects/photo.PNG";
+    mockedOpenPath.mockResolvedValue(wireDoc("opened-project", 7));
+    mockedDroppedPaths.mockResolvedValue(JSON.stringify({ committed: true }));
+    mockedGetSnapshot.mockResolvedValue(snapshot([{ id: "opened-project", name: "项目" }], "opened-project"));
+    mockedDocSnapshot.mockResolvedValue(wireDoc("opened-project", 7));
+
+    const result = await routeDroppedPaths([...projectPaths, imagePath]);
+
+    expect(result).toEqual({ failures: [], raws: [] });
+    expect(mockedOpenPath).toHaveBeenNthCalledWith(1, projectPaths[0]);
+    expect(mockedOpenPath).toHaveBeenNthCalledWith(2, projectPaths[1]);
+    expect(mockedDroppedPaths).toHaveBeenCalledWith([imagePath]);
   });
 
   it("拖入的磁盘文件全为栅格时 Go 已直接提交：只刷新快照与文档", async () => {

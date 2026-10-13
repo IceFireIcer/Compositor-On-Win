@@ -75,14 +75,32 @@ export function registerCanvasModalGuard(guard: () => boolean): () => void {
 
 /**
  * 事件目标是不是文本输入控件。原版抑制的是 first responder 为 NSText 的情况；
- * 浏览器里对应 INPUT / TEXTAREA / contentEditable（影子 DOM 里用
+ * 浏览器里对应 INPUT / TEXTAREA / SELECT / contentEditable（影子 DOM 里用
  * `getRootNode().host` 继续向上找）。
  */
 export function isEditableTarget(target: EventTarget | null): boolean {
   let el = target as (HTMLElement & { getRootNode?: () => Node }) | null;
   for (let depth = 0; el && depth < 8; depth++) {
     const tag = typeof el.tagName === "string" ? el.tagName.toUpperCase() : "";
-    if (tag === "INPUT" || tag === "TEXTAREA" || el.isContentEditable === true) return true;
+    if (
+      tag === "INPUT" ||
+      tag === "TEXTAREA" ||
+      tag === "SELECT" ||
+      el.isContentEditable === true
+    ) return true;
+    const root = typeof el.getRootNode === "function" ? el.getRootNode() : null;
+    const host = root && (root as ShadowRoot).host ? ((root as ShadowRoot).host as HTMLElement) : null;
+    if (!host || host === el) break;
+    el = host;
+  }
+  return false;
+}
+
+function isButtonTarget(target: EventTarget | null): boolean {
+  let el = target as (HTMLElement & { getRootNode?: () => Node }) | null;
+  for (let depth = 0; el && depth < 8; depth++) {
+    const tag = typeof el.tagName === "string" ? el.tagName.toUpperCase() : "";
+    if (tag === "BUTTON") return true;
     const root = typeof el.getRootNode === "function" ? el.getRootNode() : null;
     const host = root && (root as ShadowRoot).host ? ((root as ShadowRoot).host as HTMLElement) : null;
     if (!host || host === el) break;
@@ -93,6 +111,10 @@ export function isEditableTarget(target: EventTarget | null): boolean {
 
 /** 输入优先：文本控件聚焦或内联文字会话打开。 */
 function typingWins(e: KeyboardEvent): boolean {
+  // Preserve native button navigation/activation for ordinary keys, while
+  // allowing application shortcuts with an explicit modifier to work after a
+  // tool button has been clicked.
+  if (isButtonTarget(e.target)) return !(e.ctrlKey || e.metaKey || e.altKey);
   return isEditableTarget(e.target) || get(textSession) !== null;
 }
 

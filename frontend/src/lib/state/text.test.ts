@@ -202,6 +202,31 @@ describe("text session (ticket 44)", () => {
     expect(get(docStore).rev).toBe(10);
   });
 
+  it("does not close a newer text session when an older commit resolves", async () => {
+    startPointText(10, 20);
+    textSession.update((s) => (s ? { ...s, content: "first" } : s));
+
+    let resolveCommit!: (raw: string) => void;
+    mockedCommit.mockReturnValue(
+      new Promise<string>((resolve) => {
+        resolveCommit = resolve;
+      }),
+    );
+    const firstCommit = commitTextSession();
+    expect(mockedCommit).toHaveBeenCalledTimes(1);
+
+    // A user can start another text session before the bridge returns.
+    startPointText(100, 200);
+    textSession.update((s) => (s ? { ...s, content: "second" } : s));
+    resolveCommit('{"rev":13,"filterRev":0,"doc":null}');
+    await firstCommit;
+
+    expect(get(textSession)).toMatchObject({
+      anchor: { x: 100, y: 200 },
+      content: "second",
+    });
+  });
+
   it("commit carries the runs and keeps them out of the defaults", async () => {
     const colorRuns: ColorRun[] = [{ location: 0, length: 1, red: 1, green: 0, blue: 0 }];
     const fontRuns: FontRun[] = [{ location: 1, length: 1, fontName: "Menlo" }];

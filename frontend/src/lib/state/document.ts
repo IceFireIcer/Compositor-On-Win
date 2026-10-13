@@ -2,6 +2,7 @@ import { get, writable } from "svelte/store";
 import * as BridgeService from "../../../wailsjs/go/bridge/Service";
 import { Snapshot as GetSnapshot } from "../../../wailsjs/go/bridge/Workspace";
 import type { ColorRun, FontRun } from "./text";
+import type { ShapeStyle } from "./shapeStyle";
 import { syncGuidesFromDocument } from "./view";
 
 /**
@@ -40,10 +41,54 @@ export interface DocLayer {
   adjustment: Record<string, unknown> | null;
   /** Editable text metadata (ticket 39/44); null = not a text layer. */
   text: TextRecord | null;
+  /** v11 editable geometry, mirrored verbatim from domain.ShapeStyle. */
+  shape?: ShapeStyle | null;
+  /** domain.Effects wire bundle; omitted enabled stays omitted (= enabled). */
+  effects?: LayerEffectsRecord | null;
   /** Layer placement in document pixels (origin/size/rotation). */
-  transform: { origin: [number, number]; size: [number, number]; rotation?: number };
+  transform: {
+    origin: [number, number]; size: [number, number]; rotation?: number;
+    flipX?: boolean; flipY?: boolean; sampling?: "Nearest" | "Smooth" | "High quality";
+  };
   /** Version 4/6 mask file, when the layer carries one. */
   maskFile?: string | null;
+  maskEnabled?: boolean;
+  maskLinked?: boolean;
+  maskPlacement?: DocLayer["transform"] | null;
+}
+
+/** These records mirror internal/domain/effects.go, not GPU pass settings.
+ * The backend validates and owns them; snapshot parsing adds no defaults. */
+export interface OverlayEffectRecord {
+  enabled?: boolean | null;
+  red: number;
+  green: number;
+  blue: number;
+  opacity: number;
+}
+
+export interface StrokeEffectRecord extends OverlayEffectRecord {
+  size: number;
+  inside: boolean;
+}
+
+export interface ShadowEffectRecord extends OverlayEffectRecord {
+  angle: number;
+  distance: number;
+  blur: number;
+}
+
+export interface GlowEffectRecord extends OverlayEffectRecord {
+  size: number;
+}
+
+export interface LayerEffectsRecord {
+  stroke?: StrokeEffectRecord | null;
+  shadow?: ShadowEffectRecord | null;
+  colorOverlay?: OverlayEffectRecord | null;
+  innerShadow?: ShadowEffectRecord | null;
+  outerGlow?: GlowEffectRecord | null;
+  innerGlow?: GlowEffectRecord | null;
 }
 
 /** The manifest's text record (domain.TextStyle shape). */
@@ -162,7 +207,13 @@ interface RawLayer {
   imageFile?: unknown;
   adjustment?: unknown;
   text?: unknown;
+  shape?: unknown;
+  effects?: unknown;
   transform?: unknown;
+  maskFile?: unknown;
+  maskEnabled?: unknown;
+  maskLinked?: unknown;
+  maskPlacement?: unknown;
 }
 
 interface RawDocument {
@@ -203,8 +254,22 @@ function parseLayer(raw: RawLayer): DocLayer {
     imageFile: asString(raw.imageFile),
     adjustment: raw.adjustment == null ? null : (raw.adjustment as Record<string, unknown>),
     text: parseTextRecord(raw.text),
+    shape: mirrorRecord<ShapeStyle>(raw.shape),
+    effects: mirrorRecord<LayerEffectsRecord>(raw.effects),
     transform: parseTransform(raw.transform),
+    ...(asString(raw.maskFile) ? {
+      maskFile: asString(raw.maskFile),
+      maskEnabled: raw.maskEnabled !== false,
+      maskLinked: raw.maskLinked !== false,
+      maskPlacement: raw.maskPlacement ? parseTransform(raw.maskPlacement) : null,
+    } : {}),
   };
+}
+
+/** Preserve the authoritative payload, clearing it when a later snapshot
+ * omits it. Validation of the domain fields belongs to Go. */
+function mirrorRecord<T extends object>(raw: unknown): T | null {
+  return raw !== null && typeof raw === "object" && !Array.isArray(raw) ? raw as T : null;
 }
 
 function parseTextRecord(raw: unknown): TextRecord | null {
@@ -302,7 +367,7 @@ function parseFontRuns(raw: unknown, contentLength: number): FontRun[] | undefin
   });
 }
 
-function parseTransform(raw: unknown): { origin: [number, number]; size: [number, number]; rotation?: number } {
+function parseTransform(raw: unknown): DocLayer["transform"] {
   const fallback = { origin: [0, 0] as [number, number], size: [0, 0] as [number, number] };
   if (raw == null || typeof raw !== "object") return fallback;
   const t = raw as Record<string, unknown>;
@@ -312,6 +377,9 @@ function parseTransform(raw: unknown): { origin: [number, number]; size: [number
     origin: pair(t.origin),
     size: pair(t.size),
     rotation: asNumber(t.rotation, 0),
+    ...(typeof t.flipX === "boolean" ? { flipX: t.flipX } : {}),
+    ...(typeof t.flipY === "boolean" ? { flipY: t.flipY } : {}),
+    ...(t.sampling === "Nearest" || t.sampling === "Smooth" || t.sampling === "High quality" ? { sampling: t.sampling } : {}),
   };
 }
 
@@ -357,7 +425,16 @@ export function applyDocumentSnapshot(raw: string, expectedDocId?: string): bool
   }
   if (expectedDocId !== undefined && next.docId !== expectedDocId) return false;
   const current = get(document);
-  if (current.docId === next.docId && current.rev === next.rev) return false;
+  // Replies can arrive out of order across bridge calls. Revisions are
+  // monotonic for one document; filter previews share the document revision
+  // and are ordered by their own counter.
+  if (
+    current.docId === next.docId &&
+    (next.rev < current.rev ||
+      (next.rev === current.rev && next.filterRev <= current.filterRev))
+  ) {
+    return false;
+  }
   document.set(next);
   // 参考线是文档的一部分（票 14），画布要立即看到新列表。损坏的 guides 由
   // syncGuidesFromDocument 退化成空列表并返回原因，不能把整次加载带崩。
@@ -430,6 +507,7 @@ export type LayerOpName =
   | "setBlendMode"
   | "deleteLayer"
   | "addLayer"
+  | "addAdjustment"
   | "moveLayer"
   // Ticket 47: the C46–C53 layer command family (Group/Ungroup/Clipping/
   // Merge/Duplicate/Delete mask/Delete effect/Nudge) lives in Go so the
@@ -453,6 +531,7 @@ export type LayerOpName =
  *   setBlendMode {"id","blendMode"}
  *   deleteLayer {"id"}
  *   addLayer    {}
+ *   addAdjustment {"kind":"Levels","provisional":true} // editor-owned creation
  *   moveLayer   {"id","to":targetIndex}   // index in the bottom→top array
  *   duplicateLayer {"id"} | {"ids":[…]}   // copy above the source (ticket 47)
  *   groupLayers {"ids":[…],"id"}         // folder around the selected siblings
@@ -483,11 +562,15 @@ export const layerOps = {
   setVisible: (id: string, visible: boolean) => runLayerOp("setVisible", { id, visible }),
   rename: (id: string, name: string) => runLayerOp("rename", { id, name }),
   setOpacity: (id: string, opacity: number) => runLayerOp("setOpacity", { id, opacity }),
+  setAdjustment: (id: string, adjustment: Record<string, unknown>) =>
+    runLayerOp("setAdjustment", { id, adjustment }),
   // Go's layerOpPayload spells this field "mode" (internal/bridge/document.go);
   // sending "blendMode" left the op with an empty mode and failed validation.
   setBlendMode: (id: string, mode: string) => runLayerOp("setBlendMode", { id, mode }),
   deleteLayer: (id: string) => runLayerOp("deleteLayer", { id }),
   addLayer: () => runLayerOp("addLayer", {}),
+  addAdjustment: (kind: string, provisional = true) =>
+    runLayerOp("addAdjustment", { kind, provisional }),
   moveLayer: (id: string, to: number) => runLayerOp("moveLayer", { id, to }),
 
   // --- ticket 47: the C46–C53 layer command family -------------------------
