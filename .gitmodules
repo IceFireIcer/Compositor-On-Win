@@ -1,0 +1,4 @@
+[submodule "reference/Swift"]
+	path = reference/Swift
+	url = https://github.com/robbietilton/Compositor.git
+	branch = main

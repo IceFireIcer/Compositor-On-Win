@@ -38,6 +38,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0 # CHANGELOG 段落 / git log 摘要需要历史
+          submodules: recursive
 
       - uses: actions/setup-go@v5
         with:
