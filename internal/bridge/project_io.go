@@ -20,6 +20,11 @@ import (
 // projectFilter is the file-dialog filter for .comp packages.
 var projectFilter = runtime.FileFilter{DisplayName: "Compositor 项目", Pattern: "*.comp"}
 
+// manifestFilter is the Windows-friendly way to select a folder package: the
+// native picker cannot select a .comp directory directly, but it can select
+// the manifest file inside it.
+var manifestFilter = runtime.FileFilter{DisplayName: "Compositor 项目清单", Pattern: "manifest.json"}
+
 // photoshopFilter accepts Photoshop files for import (ticket 38).
 var photoshopFilter = runtime.FileFilter{DisplayName: "Photoshop 文件", Pattern: "*.psd;*.psb"}
 
@@ -30,7 +35,7 @@ func defaultOpenDialog(ctx context.Context) (string, error) {
 	}
 	return runtime.OpenFileDialog(ctx, runtime.OpenDialogOptions{
 		Title:   "打开项目",
-		Filters: []runtime.FileFilter{projectFilter, photoshopFilter},
+		Filters: []runtime.FileFilter{projectFilter, manifestFilter, photoshopFilter},
 	})
 }
 
@@ -91,6 +96,20 @@ func isPhotoshopPath(path string) bool {
 	return strings.EqualFold(ext, ".psd") || strings.EqualFold(ext, ".psb")
 }
 
+// normalizeProjectPath converts the file-picker representation of a .comp
+// package (Project.comp\manifest.json) back to the package directory expected
+// by project.Store. Other paths, including Photoshop files, are unchanged.
+func normalizeProjectPath(path string) string {
+	path = filepath.Clean(path)
+	if strings.EqualFold(filepath.Base(path), "manifest.json") {
+		parent := filepath.Dir(path)
+		if strings.EqualFold(filepath.Ext(parent), ".comp") {
+			return parent
+		}
+	}
+	return path
+}
+
 // openPath loads one path and applies it: a .comp becomes the active tab, a
 // Photoshop file with conversion notes parks in the pending slot. Returns
 // whether a conversion report is waiting for the user.
@@ -98,6 +117,17 @@ func isPhotoshopPath(path string) bool {
 // Shared by the open dialog, the recent-projects menu and the shell paths
 // (ticket 49), so every entry point opens a file exactly the same way.
 func (s *Service) openPath(path string) (bool, error) {
+	path = normalizeProjectPath(path)
+	// An explicit open of an already-open package is a tab activation, not an
+	// external reload. Avoid even reading the package here: it may be dirty in
+	// memory, or the disk copy may be mid-write. The watcher owns disk reloads.
+	if tabID, ok := s.ws.TabIDForPath(path); ok {
+		if _, err := s.ws.SelectTab(tabID); err != nil {
+			return false, err
+		}
+		s.noteRecent(path)
+		return false, nil
+	}
 	conversions, doc, bitmaps, err := s.loadAny(path)
 	if err != nil {
 		return false, err
@@ -240,18 +270,29 @@ func (s *Service) loadProject(path string) (*domain.Document, map[string]*render
 // SaveProjectDialog writes the active document: an already-known package
 // path saves in place, otherwise the save picker runs first. Every
 // referenced asset is encoded from the in-memory bitmap library (the store
-// reads ImageFile names → library). Reply: {"path":"…","rev":N}; a cancel
+// reads ImageFile names -> library). Reply: {"path":"…","rev":N}; a cancel
 // yields {"path":"","rev":N}.
 func (s *Service) SaveProjectDialog() (string, error) {
+	return s.saveProjectDialog(false)
+}
+
+// SaveProjectAsDialog always asks for a destination, even when the active tab
+// already has a package path. The tab adopts the new path only after the
+// complete snapshot has been written successfully.
+func (s *Service) SaveProjectAsDialog() (string, error) {
+	return s.saveProjectDialog(true)
+}
+
+func (s *Service) saveProjectDialog(saveAs bool) (string, error) {
 	if s.ws == nil {
 		return "", errNoDocument
 	}
-	curPath, tabName, err := s.ws.ActiveSaveInfo()
+	tabID, curPath, _, err := s.ws.activeSaveTarget()
 	if err != nil {
 		return "", err
 	}
 	path := curPath
-	if path == "" {
+	if saveAs || path == "" {
 		picked, err := s.saveDialog(s.runtimeCtx())
 		if err != nil {
 			return "", fmt.Errorf("保存文件对话框失败: %w", err)
@@ -261,14 +302,24 @@ func (s *Service) SaveProjectDialog() (string, error) {
 		}
 		path = ensureCompExt(picked)
 	}
-	_ = tabName // the tab renames itself from the final path inside SaveActive
-	rev, err := s.ws.SaveActive(path)
+	// A save replaces manifest.json atomically. Retire the old watcher before
+	// the write so its coalesced callback cannot mistake our own commit for an
+	// external edit in the small gap before the new baseline is installed.
+	watchPath, _, watching := s.ws.TabState(tabID)
+	if watching && watchPath != "" {
+		s.unwatchProject(tabID)
+	}
+	rev, err := s.ws.saveTab(tabID, path)
 	if err != nil {
+		// A rejected or failed save must leave the document observable again.
+		if currentPath, _, ok := s.ws.TabState(tabID); ok && currentPath != "" {
+			s.watchProject(tabID, currentPath)
+		}
 		return "", err
 	}
 	// 保存（含另存为）之后重新记基线：我们自己写的这版内容不该被当成"外部变更"，
 	// 而另存为换了路径，旧路径的监视器要退休。
-	if tabID, ok := s.ws.TabIDForPath(path); ok {
+	if _, _, ok := s.ws.TabState(tabID); ok {
 		s.watchProject(tabID, path)
 	}
 	s.noteRecent(path) // 保存过的项目也进最近列表（原版 Save As 同样记一笔）

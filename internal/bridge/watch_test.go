@@ -374,8 +374,50 @@ func TestExternalDirtyDocumentAsksBeforeReplacing(t *testing.T) {
 		}
 	}
 	// 没有待决定状态时再调应报错（不能凭空接受）。
+	if _, err := fixture.svc.ResolveExternalChange(fixture.tabID, true); err == nil || !strings.Contains(err.Error(), "EXTERNAL_CHANGE_NOT_PENDING") {
+		t.Fatalf("没有待处理的外部变更应返回稳定错误码，错误=%v", err)
+	}
+}
+
+// Accepting a pending change can race a package writer that is still replacing
+// manifest.json. A failed load must leave the prompt actionable so the user
+// can retry after the package becomes readable.
+func TestResolveExternalChangeRestoresPendingAfterLoadFailure(t *testing.T) {
+	fixture := newExternalTest(t, "背景")
+	doEdit(t, fixture.svc)
+
+	agentRewrite(t, fixture.dir, renameLayer("代理版本"))
+	payloads := waitForEvents(t, fixture.shell, externalEvent, 1, 5*time.Second)
+	if event := changeEvent(t, payloads[0]); !event.Pending {
+		t.Fatalf("脏文档应先进入待决定状态: %+v", event)
+	}
+
+	manifest := filepath.Join(fixture.dir, "manifest.json")
+	manifestBytes, err := os.ReadFile(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(manifest); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := fixture.svc.ResolveExternalChange(fixture.tabID, true); err == nil {
-		t.Fatal("没有待处理的外部变更时应报错")
+		t.Fatal("包不可读时接受外部版本应失败")
+	}
+	if entry := fixture.svc.watchedEntry(fixture.tabID); entry == nil || !entry.pending {
+		t.Fatal("外部版本载入失败后应保留待决定状态")
+	}
+	if got := topLayerName(t, fixture.svc); got == "代理版本" {
+		t.Fatal("载入失败不应覆盖本地文档")
+	}
+
+	if err := os.WriteFile(manifest, manifestBytes, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fixture.svc.ResolveExternalChange(fixture.tabID, true); err != nil {
+		t.Fatalf("包恢复可读后应能重试接受外部版本: %v", err)
+	}
+	if got := topLayerName(t, fixture.svc); got != "代理版本" {
+		t.Fatalf("重试接受后图层名 = %q，想要 代理版本", got)
 	}
 }
 
@@ -477,6 +519,19 @@ func TestWatchStopsWhenTheTabCloses(t *testing.T) {
 func TestExternalUnreadablePackageIsIgnoredUntilFixed(t *testing.T) {
 	fixture := newExternalTest(t, "背景")
 	before := topLayerName(t, fixture.svc)
+	var store project.Store
+	original, err := store.Open(fixture.dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assets := map[string][]byte{}
+	for _, name := range referencedAssetNames(original) {
+		data, err := store.ReadAsset(fixture.dir, name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		assets[name] = data
+	}
 
 	manifest := filepath.Join(fixture.dir, "manifest.json")
 	if err := os.Remove(manifest); err != nil {
@@ -490,16 +545,83 @@ func TestExternalUnreadablePackageIsIgnoredUntilFixed(t *testing.T) {
 		t.Fatalf("读不了的包不该改画面：%q → %q", before, got)
 	}
 
-	// 恢复成一个真的包（代理重写整包，不需要读回）→ 重载。
+	// 修复同一项目：保留原 documentID 和资产，再提交一份合法 manifest。
 	if err := os.Remove(manifest); err != nil {
 		t.Fatal(err)
 	}
-	writeAgentPackage(t, fixture.dir, "修好了")
+	original.Layers[0].Name = "修好了"
+	if err := store.Save(fixture.dir, original, assets); err != nil {
+		t.Fatal(err)
+	}
 	payloads := waitForEvents(t, fixture.shell, externalEvent, 1, 5*time.Second)
 	if event := changeEvent(t, payloads[0]); event.Pending {
 		t.Fatalf("修好后应直接重载: %+v", event)
 	}
 	if got := topLayerName(t, fixture.svc); got != "修好了" {
 		t.Fatalf("修好后最上层 = %q，想要 修好了", got)
+	}
+}
+
+// A coordinator callback can already be inside OnStable when Save retires its
+// watcher. That callback belongs to the old watcher and must not reload the
+// newly saved session (or emit a stale external-change event) after Save has
+// installed the replacement watcher.
+func TestSaveIgnoresStaleCallbackFromRetiredWatcher(t *testing.T) {
+	fixture := newExternalTest(t, "背景")
+	doEdit(t, fixture.svc)
+	entry := fixture.svc.watchedEntry(fixture.tabID)
+	if entry == nil {
+		t.Fatal("打开项目后应有项目监视器")
+	}
+	oldStable := entry.coordinator.OnStable
+	callbackStarted := make(chan struct{})
+	callbackRelease := make(chan struct{})
+	callbackDone := make(chan struct{})
+	entry.coordinator.Base = time.Millisecond
+	entry.coordinator.Digest = func(string) (string, error) {
+		return "stale-digest", nil
+	}
+	entry.coordinator.OnStable = func(digest string) {
+		close(callbackStarted)
+		<-callbackRelease
+		oldStable(digest)
+		close(callbackDone)
+	}
+	entry.coordinator.Notify()
+	select {
+	case <-callbackStarted:
+	case <-time.After(time.Second):
+		t.Fatal("旧监视器没有进入稳定变更回调")
+	}
+
+	saved := make(chan error, 1)
+	go func() {
+		_, err := fixture.svc.SaveProjectDialog()
+		saved <- err
+	}()
+	select {
+	case err := <-saved:
+		if err != nil {
+			t.Fatalf("保存期间旧回调不应阻塞保存: %v", err)
+		}
+	case <-time.After(time.Second):
+		close(callbackRelease)
+		t.Fatal("保存被已退休监视器的回调阻塞")
+	}
+
+	close(callbackRelease)
+	select {
+	case <-callbackDone:
+	case <-time.After(time.Second):
+		t.Fatal("旧监视器回调未退出")
+	}
+	if entry := fixture.svc.watchedEntry(fixture.tabID); entry == nil {
+		t.Fatal("保存成功后应安装新的项目监视器")
+	}
+	if sess := activeSessionOf(t, fixture.svc); !sess.hist.CanUndo() {
+		t.Fatal("保存不应清空仍可撤销的历史")
+	}
+	if got := len(fixture.shell.eventPayloads(externalEvent)); got != 0 {
+		t.Fatalf("已退休监视器不应在保存后发出外部变更事件，收到 %d 条", got)
 	}
 }

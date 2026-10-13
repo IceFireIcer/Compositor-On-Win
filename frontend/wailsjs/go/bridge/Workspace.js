@@ -90,6 +90,10 @@ export function TabState(arg1) {
   return window['go']['bridge']['Workspace']['TabState'](arg1);
 }
 
+export function TryCloseTab(arg1) {
+  return window['go']['bridge']['Workspace']['TryCloseTab'](arg1);
+}
+
 export function UndoActive() {
   return window['go']['bridge']['Workspace']['UndoActive']();
 }

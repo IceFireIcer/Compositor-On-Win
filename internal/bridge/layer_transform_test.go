@@ -6,6 +6,7 @@ package bridge
 // 一律不动），一步可撤销。
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 
@@ -127,5 +128,47 @@ func TestApplyLayerTransformUnchangedIsNotAnUndoStep(t *testing.T) {
 	}
 	if env := parseEnvelope(t, out); env.Rev != 0 {
 		t.Fatalf("原样提交不该产生历史，rev = %d", env.Rev)
+	}
+}
+
+type pinnedLayerTransformAPI interface {
+	ApplyLayerTransformToTab(tabID string, expectedRev uint64, layerID string, transformJSON string) (string, error)
+}
+
+func requirePinnedLayerTransform(t *testing.T, svc *Service) pinnedLayerTransformAPI {
+	t.Helper()
+	api, ok := any(svc).(pinnedLayerTransformAPI)
+	if !ok {
+		t.Fatal("the public bridge cannot commit a tab- and revision-pinned transform")
+	}
+	return api
+}
+
+func TestApplyLayerTransformToTabRejectsTabSwitch(t *testing.T) {
+	svc, tabID := newTestService(t, 40, 30)
+	before := mustDocumentSnapshot(t, svc)
+	draft := before.Doc.Layers[0].Transform
+	draft.Origin = [2]float64{2, 3}
+	other, err := svc.ws.NewDocument(20, 10, 72)
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherBefore := mustDocumentSnapshot(t, svc)
+
+	_, err = requirePinnedLayerTransform(t, svc).ApplyLayerTransformToTab(tabID, uint64(before.Rev), before.Doc.Layers[0].ID, payloadJSON(t, draft))
+	if err == nil || !strings.Contains(err.Error(), "TRANSFORM_STALE") {
+		t.Fatalf("a transform from a different active tab must be rejected: %v", err)
+	}
+	if got := mustDocumentSnapshot(t, svc); !reflect.DeepEqual(got, otherBefore) {
+		t.Fatalf("rejected transform changed the newly active tab: %+v", got)
+	}
+	if got := svc.ws.Snapshot().ActiveID; got != other.ActiveID {
+		t.Fatalf("rejected transform changed the active tab: %s", got)
+	}
+	if _, err := svc.ws.SelectTab(tabID); err != nil {
+		t.Fatal(err)
+	}
+	if got := mustDocumentSnapshot(t, svc); !reflect.DeepEqual(got, before) {
+		t.Fatalf("rejected transform changed its original tab: %+v", got)
 	}
 }

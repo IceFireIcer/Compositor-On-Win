@@ -5,7 +5,11 @@ package bridge
 // commit-vs-ApplyFilter consistency.
 
 import (
+	"bytes"
 	"encoding/json"
+	"fmt"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -137,6 +141,164 @@ func TestApplyFilterSelectionLimitsChanges(t *testing.T) {
 				t.Fatalf("选区外 (%d,%d) 必须不变", x, y)
 			}
 		}
+	}
+}
+
+func TestParseFilterSelectionAppliesFeatherOnce(t *testing.T) {
+	mask := make([]uint8, 9*5)
+	for y := 0; y < 5; y++ {
+		for x := 0; x < 5; x++ {
+			mask[y*9+x] = 255
+		}
+	}
+	marshal := func(feather float64) string {
+		t.Helper()
+		payload, err := json.Marshal(filterSelection{W: 9, H: 5, Mask: mask, Feather: feather})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(payload)
+	}
+
+	hard, err := parseFilterSelection(marshal(0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(hard.Mask, mask) {
+		t.Fatal("legacy selection without feather must preserve its coverage")
+	}
+	soft, err := parseFilterSelection(marshal(4))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if soft.Mask[2*9+5] == 0 || soft.Mask[2*9+5] == 255 {
+		t.Fatalf("feathered edge coverage = %d, want partial coverage", soft.Mask[2*9+5])
+	}
+	if !bytes.Equal(mask[:5], []byte{255, 255, 255, 255, 255}) {
+		t.Fatal("feathering mutated the caller's mask")
+	}
+	if _, err := parseFilterSelection(marshal(251)); err == nil {
+		t.Fatal("out-of-range feather accepted")
+	}
+}
+
+func TestBeginContentFillRequiresSelectionBeforeOpeningSession(t *testing.T) {
+	svc, _ := newTestService(t, 16, 16)
+	if _, err := svc.BeginFilterEdit(FilterContentFill, "", "{}", 0, ""); err == nil {
+		t.Fatal("内容感知填充没有选区时必须拒绝打开会话")
+	} else if !strings.Contains(err.Error(), "需要选区") {
+		t.Fatalf("错误必须说明需要选区: %v", err)
+	}
+	// A rejected fill must not leave a session behind that blocks the next
+	// filter the user opens.
+	if _, err := svc.BeginFilterEdit(FilterGaussian, "", `{"radius":1}`, 0, ""); err != nil {
+		t.Fatalf("拒绝填充后无法打开其他滤镜: %v", err)
+	}
+	if _, err := svc.CancelFilterEdit(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSelectObjectAtRejectsPointsOutsideCanvasBeforeRendering(t *testing.T) {
+	svc, _ := newTestService(t, 16, 12)
+	sess := activeSessionOf(t, svc)
+	// A missing asset makes valid requests stop at rendering, without needing
+	// an ONNX runtime or downloading a model. Invalid clicks must stop sooner.
+	delete(sess.bitmaps, *sess.doc.Layers[0].ImageFile)
+	for _, point := range [][2]int{{-1, -1}, {-1, 0}, {0, -1}, {16, 0}, {0, 12}, {16, 12}} {
+		if _, err := svc.SelectObjectAt(point[0], point[1]); err == nil || !strings.Contains(err.Error(), "不在画布内") {
+			t.Errorf("画布外点击 %v 必须报告范围错误，实际: %v", point, err)
+		}
+	}
+	for _, point := range [][2]int{{0, 0}, {15, 11}} {
+		if _, err := svc.SelectObjectAt(point[0], point[1]); err == nil || !strings.Contains(err.Error(), "缺少资产") {
+			t.Errorf("画布内点击 %v 必须进入渲染，实际: %v", point, err)
+		}
+	}
+	if _, err := svc.SelectSubject(); err == nil || !strings.Contains(err.Error(), "缺少资产") {
+		t.Fatalf("选择主体必须仍能进入渲染，实际: %v", err)
+	}
+}
+
+func TestSubjectSelectionIsSafeDuringDocumentAndPixelEdits(t *testing.T) {
+	svc, _ := newTestService(t, 128, 96)
+	before := mustDocumentSnapshot(t, svc)
+	bottomID := before.Doc.Layers[0].ID
+	added := mustLayerOp(t, svc, "addLayer", "{}")
+	sess := activeSessionOf(t, svc)
+	// The bottom layer renders pixels; a missing top asset then terminates
+	// selection before inference. This exercises the real composite path
+	// alongside public edits without an ONNX runtime or network dependency.
+	for _, layer := range added.Doc.Layers {
+		if layer.ID != bottomID {
+			delete(sess.bitmaps, *layer.ImageFile)
+		}
+	}
+	opacities := []string{
+		payloadJSON(t, map[string]any{"id": bottomID, "opacity": 0.5}),
+		payloadJSON(t, map[string]any{"id": bottomID, "opacity": 1}),
+	}
+	start := make(chan struct{})
+	errors := make(chan error, 2)
+	var workers sync.WaitGroup
+	workers.Add(2)
+	go func() {
+		defer workers.Done()
+		<-start
+		for i := 0; i < 64; i++ {
+			var err error
+			if i%2 == 0 {
+				_, err = svc.SelectSubject()
+			} else {
+				_, err = svc.SelectObjectAt(64, 48)
+			}
+			if err == nil || !strings.Contains(err.Error(), "缺少资产") {
+				errors <- fmt.Errorf("选择应报告缺少资产，实际: %v", err)
+				return
+			}
+		}
+	}()
+	go func() {
+		defer workers.Done()
+		<-start
+		for i := 0; i < 64; i++ {
+			if _, err := svc.LayerOp("setOpacity", opacities[i%2]); err != nil {
+				errors <- err
+				return
+			}
+			if _, err := svc.ApplyFilter(FilterInvert, bottomID, "{}", 0, ""); err != nil {
+				errors <- err
+				return
+			}
+		}
+	}()
+	close(start)
+	workers.Wait()
+	close(errors)
+	for err := range errors {
+		t.Error(err)
+	}
+}
+
+func TestApplyContentFillReportsMissingDonors(t *testing.T) {
+	svc, _ := newTestService(t, 16, 16)
+	sess := activeSessionOf(t, svc)
+	paintRect(sess, 0, 0, 16, 16, 128)
+
+	// Selecting the entire opaque layer leaves content_fill no unselected,
+	// opaque pixels from which it can synthesize the requested fill.
+	mask := make([]uint8, 16*16)
+	for i := range mask {
+		mask[i] = 255
+	}
+	selPayload, err := json.Marshal(filterSelection{X: 0, Y: 0, W: 16, H: 16, Mask: mask})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.ApplyFilter(FilterContentFill, "", "{}", 0, string(selPayload)); err == nil {
+		t.Fatal("内容感知填充没有可用源像素时必须报告错误")
+	} else if !strings.Contains(err.Error(), "没有可用") {
+		t.Fatalf("错误必须说明没有可用源像素: %v", err)
 	}
 }
 

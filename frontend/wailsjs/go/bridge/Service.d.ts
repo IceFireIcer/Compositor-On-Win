@@ -7,6 +7,8 @@ export function ApplyFilter(arg1:string,arg2:string,arg3:string,arg4:number,arg5
 
 export function ApplyLayerTransform(arg1:string,arg2:string):Promise<string>;
 
+export function ApplyLayerTransformToTab(arg1:string,arg2:number,arg3:string,arg4:string):Promise<string>;
+
 export function ApplyLevelsSample(arg1:string,arg2:number,arg3:number,arg4:number):Promise<string>;
 
 export function ApplyUpdate():Promise<string>;
@@ -17,9 +19,17 @@ export function BeginExportPreview():Promise<string>;
 
 export function BeginFilterEdit(arg1:string,arg2:string,arg3:string,arg4:number,arg5:string):Promise<string>;
 
+export function BeginGradientEdit(arg1:string,arg2:string,arg3:string,arg4:number,arg5:number):Promise<string>;
+
 export function BeginHealStroke(arg1:number,arg2:number,arg3:number,arg4:number,arg5:number,arg6:number,arg7:number):Promise<string>;
 
+export function BeginHealingStroke(arg1:string,arg2:string,arg3:string,arg4:number,arg5:number):Promise<string>;
+
 export function BeginImageImport(arg1:Array<string>):Promise<string>;
+
+export function BeginPaintStroke(arg1:string,arg2:string,arg3:string,arg4:number,arg5:number):Promise<string>;
+
+export function BeginRetouchStroke(arg1:string,arg2:string,arg3:string,arg4:number,arg5:number):Promise<string>;
 
 export function BeginStroke(arg1:number,arg2:number):Promise<string>;
 
@@ -33,6 +43,8 @@ export function CameraRawWhiteBalanceSample(arg1:number,arg2:number):Promise<str
 
 export function CancelFilterEdit():Promise<string>;
 
+export function CancelFilterSession(arg1:string,arg2:number):Promise<string>;
+
 export function CancelImageImport():Promise<void>;
 
 export function CancelPendingOpen():Promise<void>;
@@ -44,6 +56,8 @@ export function CheckForUpdates():Promise<string>;
 export function ClearRecentProjects():Promise<string>;
 
 export function CommitFilter(arg1:string):Promise<string>;
+
+export function CommitGradientEdit(arg1:string,arg2:boolean):Promise<string>;
 
 export function ConfirmPendingOpen():Promise<string>;
 
@@ -59,9 +73,19 @@ export function DocumentSnapshot():Promise<string>;
 
 export function DownloadUpdate():Promise<string>;
 
+export function DrawGradient(arg1:string,arg2:number,arg3:number,arg4:number,arg5:number,arg6:string,arg7:string):Promise<string>;
+
+export function DrawShape(arg1:string,arg2:string,arg3:number,arg4:number,arg5:number,arg6:number,arg7:string):Promise<string>;
+
 export function EndExportPreview():Promise<void>;
 
 export function EndHealStroke():Promise<string>;
+
+export function EndHealingStroke(arg1:string,arg2:boolean):Promise<string>;
+
+export function EndPaintStroke(arg1:string,arg2:boolean):Promise<string>;
+
+export function EndRetouchStroke(arg1:string,arg2:boolean):Promise<string>;
 
 export function EndStroke():Promise<string>;
 
@@ -71,11 +95,17 @@ export function ExportJPEGPreview(arg1:number,arg2:string):Promise<string>;
 
 export function ExportPNG(arg1:string):Promise<string>;
 
+export function FillLayerMask(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string):Promise<string>;
+
 export function FillSelection(arg1:string,arg2:string,arg3:string):Promise<string>;
 
 export function FinishImageImport():Promise<string>;
 
+export function FlipCanvas(arg1:string,arg2:string):Promise<string>;
+
 export function HealPoint(arg1:number,arg2:number):Promise<string>;
+
+export function HealingStrokePoint(arg1:string,arg2:number,arg3:number):Promise<void>;
 
 export function ImageSize(arg1:string):Promise<string>;
 
@@ -91,6 +121,8 @@ export function LevelsAuto(arg1:number):Promise<string>;
 
 export function ListFonts():Promise<string>;
 
+export function LoadLayerSelection(arg1:string,arg2:string,arg3:string):Promise<string>;
+
 export function MoveSelectedPixels(arg1:string,arg2:number,arg3:number):Promise<string>;
 
 export function OpenPath(arg1:string):Promise<string>;
@@ -99,9 +131,13 @@ export function OpenProjectDialog():Promise<string>;
 
 export function OpenShellPaths():Promise<string>;
 
+export function PaintStrokePoint(arg1:string,arg2:number,arg3:number):Promise<void>;
+
 export function Paste():Promise<string>;
 
 export function PickImageImport():Promise<Array<string>>;
+
+export function PlaceLayer(arg1:string,arg2:string,arg3:string,arg4:string):Promise<string>;
 
 export function RawBeginDevelop(arg1:string):Promise<string>;
 
@@ -123,15 +159,29 @@ export function ReportReady():Promise<string>;
 
 export function ResolveExternalChange(arg1:string,arg2:boolean):Promise<string>;
 
+export function RetouchStrokePoint(arg1:string,arg2:number,arg3:number):Promise<void>;
+
+export function SampleColorRange(arg1:string,arg2:number,arg3:number):Promise<string>;
+
+export function SampleCompositeColor(arg1:string,arg2:number,arg3:number):Promise<string>;
+
 export function SampleLevelsPoint(arg1:number,arg2:number):Promise<string>;
 
+export function SaveProjectAsDialog():Promise<string>;
+
 export function SaveProjectDialog():Promise<string>;
+
+export function SelectColorRange(arg1:string,arg2:string):Promise<string>;
 
 export function SelectObjectAt(arg1:number,arg2:number):Promise<string>;
 
 export function SelectSubject():Promise<string>;
 
+export function SelectWandAt(arg1:string,arg2:number,arg3:number,arg4:number,arg5:number,arg6:boolean,arg7:boolean):Promise<string>;
+
 export function SetGuides(arg1:string):Promise<string>;
+
+export function SetLayerMask(arg1:string,arg2:string,arg3:string,arg4:string):Promise<string>;
 
 export function Startup(arg1:context.Context):Promise<void>;
 
@@ -148,6 +198,8 @@ export function Trim(arg1:string):Promise<string>;
 export function Undo():Promise<string>;
 
 export function UpdateFilterPreview(arg1:string):Promise<string>;
+
+export function UpdateGradientEdit(arg1:string,arg2:number,arg3:number,arg4:number,arg5:number,arg6:string):Promise<string>;
 
 export function UpdateInfo():Promise<string>;
 

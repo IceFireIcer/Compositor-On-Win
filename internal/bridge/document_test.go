@@ -248,6 +248,159 @@ func TestLayerOpAddLayerPutsBlankLayerOnTopAndActivates(t *testing.T) {
 	_ = bgID
 }
 
+func TestLayerOpAddAdjustmentCreatesNonDestructiveLayerAboveActive(t *testing.T) {
+	svc, _ := newTestService(t, 32, 32)
+	before := mustDocumentSnapshot(t, svc)
+	bg := before.Doc.Layers[0]
+	if bg.ImageFile == nil {
+		t.Fatal("背景层缺少图像资产")
+	}
+	sess := activeSessionOf(t, svc)
+	background := sess.bitmaps[*bg.ImageFile].Clone()
+	bitmapCount := len(sess.bitmaps)
+
+	after := mustLayerOp(t, svc, "addAdjustment", payloadJSON(t, map[string]any{
+		"kind": string(domain.AdjustmentLevels),
+	}))
+	if after.Rev != 1 {
+		t.Fatalf("addAdjustment 后 rev = %d，想要 1", after.Rev)
+	}
+	if len(after.Doc.Layers) != 2 {
+		t.Fatalf("调整图层后层数 = %d，想要 2", len(after.Doc.Layers))
+	}
+	adjustment := after.Doc.Layers[1]
+	if adjustment.Name != string(domain.AdjustmentLevels) {
+		t.Fatalf("调整图层名称 = %q，想要 %q", adjustment.Name, domain.AdjustmentLevels)
+	}
+	if after.Doc.ActiveLayerID == nil || *after.Doc.ActiveLayerID != adjustment.ID {
+		t.Fatal("新调整图层应当被激活")
+	}
+	if adjustment.ImageFile != nil {
+		t.Fatalf("调整图层不应有图像资产: %v", adjustment.ImageFile)
+	}
+	if adjustment.IsGroupLayer() {
+		t.Fatal("调整图层不应是编组")
+	}
+	if adjustment.Adjustment == nil || adjustment.Adjustment.Kind != domain.AdjustmentLevels {
+		t.Fatalf("调整记录不符: %+v", adjustment.Adjustment)
+	}
+	for i, got := range adjustment.Adjustment.Levels.Ranges {
+		if got != domain.IdentityLevelRange() {
+			t.Fatalf("Levels identity range %d = %+v，想要 %+v", i, got, domain.IdentityLevelRange())
+		}
+	}
+	if got := activeSessionOf(t, svc).hist.UndoCount(); got != 1 {
+		t.Fatalf("addAdjustment 历史条目 = %d，想要 1", got)
+	}
+	afterSession := activeSessionOf(t, svc)
+	if len(afterSession.bitmaps) != bitmapCount {
+		t.Fatalf("addAdjustment 不应新增像素资产: %d → %d", bitmapCount, len(afterSession.bitmaps))
+	}
+	if got := afterSession.bitmaps[*bg.ImageFile]; got == nil || !reflect.DeepEqual(got.Pix, background.Pix) {
+		t.Fatal("addAdjustment 改变了已有像素")
+	}
+}
+
+func TestLayerOpAddAdjustmentRejectsUnknownKindWithoutMutation(t *testing.T) {
+	svc, _ := newTestService(t, 32, 32)
+	before := mustDocumentSnapshot(t, svc)
+
+	after := layerOpMustFail(t, svc, "addAdjustment", `{"kind":"NotAnAdjustment"}`, "调整类型无效")
+	if after.Rev != before.Rev || !reflect.DeepEqual(after.Doc, before.Doc) {
+		t.Fatalf("无效调整类型改变了文档: before rev=%d after rev=%d", before.Rev, after.Rev)
+	}
+	if got := activeSessionOf(t, svc).hist.UndoCount(); got != 0 {
+		t.Fatalf("无效调整类型写入了历史: %d", got)
+	}
+}
+
+func TestLayerOpAddAdjustmentInsideActiveGroupUsesGroupParentAndTopSlot(t *testing.T) {
+	svc, _ := newTestService(t, 32, 32)
+	mustLayerOp(t, svc, "addLayer", "{}")
+	mustLayerOp(t, svc, "addLayer", "{}")
+	grouped := mustLayerOp(t, svc, "groupLayers", payloadJSON(t, map[string]any{
+		"ids": []string{mustDocumentSnapshot(t, svc).Doc.Layers[1].ID, mustDocumentSnapshot(t, svc).Doc.Layers[2].ID},
+		"id":  mustDocumentSnapshot(t, svc).Doc.Layers[2].ID,
+	}))
+
+	var group domain.Layer
+	groupIndex := -1
+	for i, layer := range grouped.Doc.Layers {
+		if layer.IsGroupLayer() {
+			group = layer
+			groupIndex = i
+			break
+		}
+	}
+	if groupIndex < 0 {
+		t.Fatal("编组结果缺少 folder")
+	}
+	if grouped.Doc.ActiveLayerID == nil || *grouped.Doc.ActiveLayerID != group.ID {
+		t.Fatalf("编组后活动图层 = %v，想要 %s", grouped.Doc.ActiveLayerID, group.ID)
+	}
+
+	after := mustLayerOp(t, svc, "addAdjustment", payloadJSON(t, map[string]any{
+		"kind": string(domain.AdjustmentExposure),
+	}))
+	if after.Doc.ActiveLayerID == nil {
+		t.Fatal("调整图层没有被激活")
+	}
+	adjustmentIndex := findLayerIndex(after.Doc, *after.Doc.ActiveLayerID)
+	if adjustmentIndex <= groupIndex {
+		t.Fatalf("调整图层索引 = %d，编组索引 = %d", adjustmentIndex, groupIndex)
+	}
+	adjustment := after.Doc.Layers[adjustmentIndex]
+	if adjustment.ParentID == nil || *adjustment.ParentID != group.ID {
+		t.Fatalf("调整图层 parentID = %v，想要 %s", adjustment.ParentID, group.ID)
+	}
+	for i := groupIndex + 1; i < adjustmentIndex; i++ {
+		if after.Doc.Layers[i].ParentID == nil || *after.Doc.Layers[i].ParentID != group.ID {
+			t.Fatalf("调整图层没有位于编组所有后代之上: index=%d layer=%+v", i, after.Doc.Layers[i])
+		}
+	}
+}
+
+func TestLayerOpAddAdjustmentSeedsRepresentativeDefaults(t *testing.T) {
+	cases := []struct {
+		kind  domain.AdjustmentKind
+		check func(*testing.T, *domain.Adjustment)
+	}{
+		{domain.AdjustmentExposure, func(t *testing.T, a *domain.Adjustment) {
+			if a.ExposureSettings == nil || *a.ExposureSettings != (domain.ExposureSettings{Gamma: 1}) {
+				t.Fatalf("曝光默认值 = %+v", a.ExposureSettings)
+			}
+		}},
+		{domain.AdjustmentGradientMap, func(t *testing.T, a *domain.Adjustment) {
+			if a.GradientMapSettings == nil || a.GradientMapSettings.Highlights != (domain.RGB{Red: 1, Green: 1, Blue: 1}) {
+				t.Fatalf("渐变映射默认值 = %+v", a.GradientMapSettings)
+			}
+		}},
+		{domain.AdjustmentGrain, func(t *testing.T, a *domain.Adjustment) {
+			if a.GrainSettings == nil || a.GrainSettings.Size != 1.5 || a.GrainSettings.Roughness != 50 {
+				t.Fatalf("颗粒默认值 = %+v", a.GrainSettings)
+			}
+		}},
+		{domain.AdjustmentAddNoise, func(t *testing.T, a *domain.Adjustment) {
+			if a.NoiseAmount == nil || *a.NoiseAmount != 10 || a.NoiseGaussian == nil || a.NoiseMonochromatic == nil || a.NoiseSeed == nil {
+				t.Fatalf("添加杂色默认值 = %+v", a)
+			}
+		}},
+	}
+
+	svc, _ := newTestService(t, 32, 32)
+	for _, tc := range cases {
+		e := mustLayerOp(t, svc, "addAdjustment", payloadJSON(t, map[string]any{"kind": tc.kind}))
+		if e.Doc.ActiveLayerID == nil {
+			t.Fatalf("%s 没有活动图层", tc.kind)
+		}
+		layer := e.Doc.Layers[findLayerIndex(e.Doc, *e.Doc.ActiveLayerID)]
+		if layer.Adjustment == nil || layer.Adjustment.Kind != tc.kind {
+			t.Fatalf("%s 调整记录 = %+v", tc.kind, layer.Adjustment)
+		}
+		tc.check(t, layer.Adjustment)
+	}
+}
+
 func TestLayerOpSetActive(t *testing.T) {
 	svc, _ := newTestService(t, 32, 32)
 	mustLayerOp(t, svc, "addLayer", "{}")

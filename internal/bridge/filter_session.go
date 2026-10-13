@@ -39,6 +39,13 @@ type filterSession struct {
 	params   filterParams
 	seed     uint32
 	sel      *filterSelection
+	// Adjustment layers have no raster asset. Their preview is represented by
+	// temporarily changing the layer metadata; cancel restores this snapshot
+	// and commit records the metadata transition in document history.
+	metadataOnly               bool
+	originalAdjustment         *domain.Adjustment
+	provisionalCreation        bool
+	provisionalHistoryRevision string
 	// Vignette on an empty layer frames and fills the canvas instead.
 	emptyLayer bool
 
@@ -54,6 +61,43 @@ type filterSession struct {
 	// Remove Background caches the raw model mask for the session's frozen
 	// grid — moving a slider only redoes the refining (MaskCache semantics).
 	subjectRaw *render.Bitmap
+}
+
+// filterRenderSource builds the temporary raster override without changing
+// editable metadata in the live document. RenderPNG should use this source
+// while the preview is open; cancel and identity commits retain the original.
+func (sess *session) filterRenderSource() (*domain.Document, render.PixelSource) {
+	doc, source := sess.doc, sess.pixelSource()
+	f := sess.filter
+	if f == nil || f.preview == nil {
+		return doc, source
+	}
+	doc = cloneDocForEdit(doc)
+	if l, err := layerByID(doc, f.layerID); err == nil {
+		l.Transform = f.grownT
+		l.Shape, l.Text, l.Adjustment = nil, nil, nil
+	}
+	return doc, func(name string) (*render.Bitmap, error) {
+		if name == f.assetKey {
+			return f.preview, nil
+		}
+		return source(name)
+	}
+}
+
+func cloneAdjustment(a *domain.Adjustment) *domain.Adjustment {
+	if a == nil {
+		return nil
+	}
+	b, err := json.Marshal(a)
+	if err != nil {
+		return nil
+	}
+	var out domain.Adjustment
+	if err := json.Unmarshal(b, &out); err != nil {
+		return nil
+	}
+	return &out
 }
 
 // rasterJournalEntry restores one filter commit's pixels on undo/redo. The
@@ -96,19 +140,19 @@ func (sess *session) applyRasterJournal(rev string, after bool) {
 
 // ensureSubjectMask returns the session's cached raw model mask, running
 // the model once for the grid (Swift's MaskCache).
-func (sess *session) ensureSubjectMask(grid *render.Bitmap) *render.Bitmap {
+func (sess *session) ensureSubjectMask(grid *render.Bitmap) (*render.Bitmap, error) {
 	if sess.filter == nil {
-		return nil
+		return nil, fmt.Errorf("没有打开的滤镜会话")
 	}
 	if sess.filter.subjectRaw != nil {
-		return sess.filter.subjectRaw
+		return sess.filter.subjectRaw, nil
 	}
 	raw, err := ml.RunSubjectMaskRaw(grid)
 	if err != nil {
-		return nil // the caller's no-mask path leaves the preview untouched
+		return nil, err
 	}
 	sess.filter.subjectRaw = raw
-	return raw
+	return raw, nil
 }
 
 // resolveFilterTarget locates the editable pixel layer and its bitmap.
@@ -207,6 +251,33 @@ func prepareFilterGrid(kind string, base *render.Bitmap, baseT domain.Transform,
 // Service endpoints
 // ---------------------------------------------------------------------------
 
+// A settings envelope may identify its owning tab/session. Older callers omit
+// this and retain the active-tab contract; the UI supplies it for every async
+// lifecycle mutation so tab switches and reopened dialogs cannot retarget it.
+func (s *Service) filterRequestSessionLocked(settingsJSON string, requireOpen bool) (*session, string, error) {
+	var request struct {
+		Owner *struct {
+			TabID string `json:"tabId"`
+			Seed  uint32 `json:"seed"`
+		} `json:"filterSession"`
+	}
+	if err := json.Unmarshal([]byte(settingsJSON), &request); err != nil {
+		return nil, "", fmt.Errorf("无法解析滤镜参数: %w", err)
+	}
+	tabID := s.ws.active
+	if request.Owner != nil {
+		tabID = request.Owner.TabID
+	}
+	sess := s.ws.sessions[tabID]
+	if sess == nil {
+		return nil, "", errNoDocument
+	}
+	if requireOpen && (sess.filter == nil || (request.Owner != nil && sess.filter.seed != request.Owner.Seed)) {
+		return nil, "", fmt.Errorf("滤镜会话已关闭或被替换")
+	}
+	return sess, tabID, nil
+}
+
 // BeginFilterEdit opens a filter/adjustment dialog session on the active
 // tab: validates the kind, grows the grid, prepares the preview source. The
 // canvas keeps showing the stored pixels until the first preview lands.
@@ -223,20 +294,57 @@ func (s *Service) BeginFilterEdit(kind, layerID, settingsJSON string, seed uint3
 	}
 	s.ws.mu.Lock()
 	defer s.ws.mu.Unlock()
-	sess := s.ws.activeSessionLocked()
-	if sess == nil {
-		return "", errNoDocument
+	sess, _, err := s.filterRequestSessionLocked(settingsJSON, false)
+	if err != nil {
+		return "", err
 	}
 	if sess.filter != nil {
 		return "", fmt.Errorf("已有打开的滤镜会话")
+	}
+	if kind == FilterContentFill && sel == nil {
+		return "", fmt.Errorf("内容感知填充需要选区")
 	}
 	var p filterParams
 	if err := json.Unmarshal([]byte(settingsJSON), &p); err != nil {
 		return "", fmt.Errorf("无法解析滤镜参数: %w", err)
 	}
 	p = p.normalized(kind)
-	if _, isAdjust := adjustmentKind(kind); isAdjust && p.Adjustment == nil {
-		return "", fmt.Errorf("调整会话缺少 adjustment 参数")
+	normalizeAdjustment(kind, &p)
+	if _, isAdjust := adjustmentKind(kind); isAdjust {
+		// Editing an existing non-destructive adjustment must not go through
+		// resolveFilterTarget: adjustment layers intentionally have no bitmap.
+		targetID := layerID
+		if targetID == "" && sess.doc.ActiveLayerID != nil {
+			targetID = *sess.doc.ActiveLayerID
+		}
+		candidate, layerErr := layerByID(sess.doc, targetID)
+		if layerErr != nil {
+			return "", layerErr
+		}
+		if candidate.Adjustment != nil {
+			if candidate.Adjustment.Kind != "" && candidate.Adjustment.Kind != p.Adjustment.Kind {
+				return "", fmt.Errorf("调整类型不匹配: 图层是 %q，请求是 %q", candidate.Adjustment.Kind, p.Adjustment.Kind)
+			}
+			fs := &filterSession{
+				kind:               kind,
+				layerID:            candidate.ID,
+				params:             p,
+				seed:               seed,
+				metadataOnly:       true,
+				originalAdjustment: cloneAdjustment(candidate.Adjustment),
+				previewScale:       1,
+			}
+			if marker := sess.provisionalAdjustment; marker != nil &&
+				marker.layerID == candidate.ID && marker.historyRevision == sess.hist.Revision() {
+				fs.provisionalCreation = true
+				fs.provisionalHistoryRevision = marker.historyRevision
+			}
+			if fs.originalAdjustment == nil {
+				return "", fmt.Errorf("无法保存调整图层的原始参数")
+			}
+			sess.filter = fs
+			return sess.envelope()
+		}
 	}
 	l, base, err := resolveFilterTarget(sess, layerID)
 	if err != nil {
@@ -264,20 +372,46 @@ func (s *Service) UpdateFilterPreview(settingsJSON string) (string, error) {
 		return "", errNoDocument
 	}
 	s.ws.mu.Lock()
-	sess := s.ws.activeSessionLocked()
-	if sess == nil || sess.filter == nil {
+	sess, tabID, ownerErr := s.filterRequestSessionLocked(settingsJSON, true)
+	if ownerErr != nil {
 		s.ws.mu.Unlock()
-		return "", fmt.Errorf("没有打开的滤镜会话")
+		return "", ownerErr
 	}
 	f := sess.filter
+	var request struct {
+		Owner struct {
+			RequestID uint64 `json:"requestId"`
+		} `json:"filterSession"`
+	}
+	_ = json.Unmarshal([]byte(settingsJSON), &request)
 	var p filterParams
 	if err := json.Unmarshal([]byte(settingsJSON), &p); err != nil {
 		s.ws.mu.Unlock()
 		return "", fmt.Errorf("无法解析滤镜参数: %w", err)
 	}
 	p = p.normalized(f.kind)
+	normalizeAdjustment(f.kind, &p)
 	f.params = p
 	f.generation++
+	if f.metadataOnly {
+		l, err := layerByID(sess.doc, f.layerID)
+		if err != nil {
+			s.ws.mu.Unlock()
+			return "", err
+		}
+		if p.Adjustment == nil {
+			s.ws.mu.Unlock()
+			return "", fmt.Errorf("调整会话缺少 adjustment 参数")
+		}
+		// The live document is the render source while this session is open;
+		// history is deliberately untouched until CommitFilter succeeds.
+		l.Adjustment = cloneAdjustment(p.Adjustment)
+		f.previewRev++
+		s.emitFilterPreview(tabID, f.previewRev, f.seed, request.Owner.RequestID, "")
+		out, err := sess.envelope()
+		s.ws.mu.Unlock()
+		return out, err
+	}
 	gen := f.generation
 	// Worker snapshot: everything the render touches, copied under the lock.
 	src := f.previewSrc
@@ -291,27 +425,40 @@ func (s *Service) UpdateFilterPreview(settingsJSON string) (string, error) {
 	}
 	var subjectRaw *render.Bitmap
 	if kind == FilterRemoveBackground {
-		subjectRaw = sess.ensureSubjectMask(src)
+		var err error
+		subjectRaw, err = sess.ensureSubjectMask(src)
+		if err != nil {
+			s.ws.mu.Unlock()
+			return "", err
+		}
 	}
 	docW, docH := sess.doc.Width, sess.doc.Height
-	tabID := s.ws.active
-	s.ws.mu.Unlock()
 
 	go func() {
 		work := src.Clone()
-		runFilterJob(kind, work, &p, scale, seed, docW, docH, grownT, emptyLayer, fillMask, subjectRaw)
-		blendThroughSelection(work, src, sel, grownT)
+		err := runFilterJob(kind, work, &p, scale, seed, docW, docH, grownT, emptyLayer, fillMask, subjectRaw)
+		if err == nil {
+			blendThroughSelection(work, src, sel, grownT)
+		}
 		s.ws.mu.Lock()
 		defer s.ws.mu.Unlock()
-		sess := s.ws.activeSessionLocked()
-		if sess == nil || sess.filter != f || f.generation != gen {
+		if s.ws.sessions[tabID] != sess || sess.filter != f || f.generation != gen {
 			return // superseded or session closed: drop the stale render
+		}
+		if err != nil {
+			s.emitFilterPreview(tabID, f.previewRev, seed, request.Owner.RequestID, err.Error())
+			return // keep the last known-good preview and report worker failure
 		}
 		f.preview = work
 		f.previewRev++
-		s.emitFilterPreview(tabID, f.previewRev)
+		s.emitFilterPreview(tabID, f.previewRev, seed, request.Owner.RequestID, "")
 	}()
-	return sess.envelope()
+	// The worker publishes previewRev under the workspace lock. Capture the
+	// reply before releasing that same lock so envelope() cannot race a worker
+	// that lands between the RPC snapshot and its return.
+	out, err := sess.envelope()
+	s.ws.mu.Unlock()
+	return out, err
 }
 
 // CommitFilter renders at full size, writes the pixels back into the bitmap
@@ -323,9 +470,9 @@ func (s *Service) CommitFilter(settingsJSON string) (string, error) {
 	}
 	s.ws.mu.Lock()
 	defer s.ws.mu.Unlock()
-	sess := s.ws.activeSessionLocked()
-	if sess == nil || sess.filter == nil {
-		return "", fmt.Errorf("没有打开的滤镜会话")
+	sess, tabID, ownerErr := s.filterRequestSessionLocked(settingsJSON, true)
+	if ownerErr != nil {
+		return "", ownerErr
 	}
 	f := sess.filter
 	var p filterParams
@@ -333,6 +480,10 @@ func (s *Service) CommitFilter(settingsJSON string) (string, error) {
 		return "", fmt.Errorf("无法解析滤镜参数: %w", err)
 	}
 	p = p.normalized(f.kind)
+	normalizeAdjustment(f.kind, &p)
+	if f.metadataOnly {
+		return s.commitAdjustmentFilterLocked(sess, f, p)
+	}
 	p.CameraRawClipping = nil // the clip view is preview-only, never committed
 	p.CameraRawSharpenMask = false
 	l, err := layerByID(sess.doc, f.layerID)
@@ -348,8 +499,16 @@ func (s *Service) CommitFilter(settingsJSON string) (string, error) {
 	if f.kind == FilterContentFill {
 		fillMask = selectionLayerMask(f.sel, f.grownT, f.grown.W, f.grown.H)
 	}
-	subjectRaw := sess.ensureSubjectMask(f.grown)
-	runFilterJob(f.kind, work, &p, 1, f.seed, sess.doc.Width, sess.doc.Height, f.grownT, f.emptyLayer, fillMask, subjectRaw)
+	var subjectRaw *render.Bitmap
+	if f.kind == FilterRemoveBackground {
+		subjectRaw, err = sess.ensureSubjectMask(f.grown)
+		if err != nil {
+			return "", err
+		}
+	}
+	if err := runFilterJob(f.kind, work, &p, 1, f.seed, sess.doc.Width, sess.doc.Height, f.grownT, f.emptyLayer, fillMask, subjectRaw); err != nil {
+		return "", err
+	}
 	blendThroughSelection(work, f.grown, f.sel, f.grownT)
 	// Trim back to alpha bounds (PixelFilter.trimmed); a fully empty result
 	// keeps the grown grid, as the Swift guard does.
@@ -372,11 +531,13 @@ func (s *Service) CommitFilter(settingsJSON string) (string, error) {
 	docChanged := l.Transform != newT
 	if !pixelsChanged && !docChanged {
 		sess.filter = nil
+		sess.rev++             // closing a preview is observable even when pixels are unchanged
 		return sess.envelope() // true no-op: no entry, redo stack intact
 	}
 	beforeRasters := map[string]*render.Bitmap{f.assetKey: oldBitmap}
 	sess.hist.Begin(name, *sess.doc, sess.doc.ActiveLayerID)
 	l.Transform = newT
+	l.Shape, l.Text, l.Adjustment = nil, nil, nil
 	sess.bitmaps[f.assetKey] = result
 	if pixelsChanged {
 		sess.hist.EndForced(*sess.doc, sess.doc.ActiveLayerID)
@@ -386,7 +547,49 @@ func (s *Service) CommitFilter(settingsJSON string) (string, error) {
 	}
 	sess.filter = nil
 	sess.rev++
-	s.ws.setTabDirtyLocked(s.ws.active, true)
+	s.ws.setTabDirtyLocked(tabID, true)
+	return sess.envelope()
+}
+
+// commitAdjustmentFilterLocked commits a live adjustment-layer edit. The
+// preview mutates the live layer so the normal composite endpoint can render
+// it; restore the pre-edit value before opening history, otherwise undo would
+// capture the preview instead of the user's starting state.
+func (s *Service) commitAdjustmentFilterLocked(sess *session, f *filterSession, p filterParams) (string, error) {
+	l, err := layerByID(sess.doc, f.layerID)
+	if err != nil {
+		return "", err
+	}
+	if p.Adjustment == nil || f.originalAdjustment == nil {
+		return "", fmt.Errorf("调整会话缺少 adjustment 参数")
+	}
+	next := cloneAdjustment(p.Adjustment)
+	before := cloneAdjustment(f.originalAdjustment)
+	if next == nil || before == nil {
+		return "", fmt.Errorf("无法复制调整参数")
+	}
+	oldJSON, _ := json.Marshal(before)
+	nextJSON, _ := json.Marshal(next)
+	if bytes.Equal(oldJSON, nextJSON) {
+		l.Adjustment = before
+		sess.filter = nil
+		sess.provisionalAdjustment = nil
+		sess.rev++
+		return sess.envelope()
+	}
+
+	l.Adjustment = before
+	name := "编辑调整图层"
+	if kind, ok := adjustmentKind(f.kind); ok {
+		name = "编辑调整图层 · " + string(kind)
+	}
+	sess.hist.Begin(name, *sess.doc, sess.doc.ActiveLayerID)
+	l.Adjustment = next
+	sess.hist.End(*sess.doc, sess.doc.ActiveLayerID)
+	sess.filter = nil
+	sess.provisionalAdjustment = nil
+	sess.rev++
+	s.ws.setTabDirtyLocked(sess.doc.DocumentID, true)
 	return sess.envelope()
 }
 
@@ -403,7 +606,57 @@ func (s *Service) CancelFilterEdit() (string, error) {
 	if sess == nil || sess.filter == nil {
 		return "", fmt.Errorf("没有打开的滤镜会话")
 	}
+	return s.cancelFilterLocked(sess, s.ws.active)
+}
+
+// CancelFilterSession cancels exactly the session whose dialog requested it,
+// even if a different tab became active before Wails dispatched the call.
+func (s *Service) CancelFilterSession(tabID string, seed uint32) (string, error) {
+	if s.ws == nil {
+		return "", errNoDocument
+	}
+	s.ws.mu.Lock()
+	defer s.ws.mu.Unlock()
+	sess := s.ws.sessions[tabID]
+	if sess == nil || sess.filter == nil || sess.filter.seed != seed {
+		return "", fmt.Errorf("滤镜会话已关闭或被替换")
+	}
+	return s.cancelFilterLocked(sess, tabID)
+}
+
+func (s *Service) cancelFilterLocked(sess *session, tabID string) (string, error) {
+	if sess.filter.metadataOnly {
+		f := sess.filter
+		if f.provisionalCreation {
+			if sess.provisionalAdjustment == nil ||
+				sess.provisionalAdjustment.layerID != f.layerID ||
+				sess.hist.Revision() != f.provisionalHistoryRevision {
+				return "", fmt.Errorf("调整图层创建事务已发生变化，无法取消")
+			}
+			snap, ok := sess.hist.DiscardLastUndo()
+			if !ok {
+				return "", fmt.Errorf("无法丢弃调整图层创建记录")
+			}
+			doc := snap.Document
+			doc.ActiveLayerID = snap.ActiveLayerID
+			sess.doc = &doc
+			sess.provisionalAdjustment = nil
+			sess.filter = nil
+			sess.rev++
+			s.ws.setTabDirtyLocked(tabID, sess.path == "" || sess.hist.IsModified())
+			s.ws.syncTabSizeLocked(tabID, sess.doc)
+			return sess.envelope()
+		}
+		l, err := layerByID(sess.doc, f.layerID)
+		if err != nil {
+			return "", err
+		}
+		if restored := cloneAdjustment(f.originalAdjustment); restored != nil {
+			l.Adjustment = restored
+		}
+	}
 	sess.filter = nil
+	sess.provisionalAdjustment = nil
 	sess.rev++
 	return sess.envelope()
 }
@@ -432,9 +685,7 @@ func (s *Service) ApplyFilter(kind, layerID, settingsJSON string, seed uint32, s
 		return "", fmt.Errorf("无法解析滤镜参数: %w", err)
 	}
 	p = p.normalized(kind)
-	if _, isAdjust := adjustmentKind(kind); isAdjust && p.Adjustment == nil {
-		return "", fmt.Errorf("调整缺少 adjustment 参数")
-	}
+	normalizeAdjustment(kind, &p)
 	// Mask invert runs on the mask asset, not the layer pixels.
 	if kind == FilterInvertMask {
 		return s.applyInvertMaskLocked(sess, layerID, sel)
@@ -455,8 +706,16 @@ func (s *Service) ApplyFilter(kind, layerID, settingsJSON string, seed uint32, s
 	if kind == FilterContentFill {
 		fillMask = selectionLayerMask(sel, fs.grownT, fs.grown.W, fs.grown.H)
 	}
-	subjectRaw := sess.ensureSubjectMask(fs.grown)
-	runFilterJob(kind, work, &p, 1, seed, sess.doc.Width, sess.doc.Height, fs.grownT, fs.emptyLayer, fillMask, subjectRaw)
+	var subjectRaw *render.Bitmap
+	if kind == FilterRemoveBackground {
+		subjectRaw, err = ml.RunSubjectMaskRaw(fs.grown)
+		if err != nil {
+			return "", err
+		}
+	}
+	if err := runFilterJob(kind, work, &p, 1, seed, sess.doc.Width, sess.doc.Height, fs.grownT, fs.emptyLayer, fillMask, subjectRaw); err != nil {
+		return "", err
+	}
 	blendThroughSelection(work, fs.grown, sel, fs.grownT)
 	newT := fs.grownT
 	result := work
@@ -481,6 +740,7 @@ func (s *Service) ApplyFilter(kind, layerID, settingsJSON string, seed uint32, s
 	}
 	sess.hist.Begin(name, *sess.doc, sess.doc.ActiveLayerID)
 	l.Transform = newT
+	l.Shape, l.Text, l.Adjustment = nil, nil, nil
 	sess.bitmaps[*l.ImageFile] = result
 	if pixelsChanged {
 		sess.hist.EndForced(*sess.doc, sess.doc.ActiveLayerID)
@@ -591,11 +851,13 @@ func (s *Service) LayerHistogram() (string, error) {
 
 // emitFilterPreview pushes the finished preview revision to the window so
 // the canvas refetches without polling.
-func (s *Service) emitFilterPreview(tabID string, filterRev int) {
+func (s *Service) emitFilterPreview(tabID string, filterRev int, seed uint32, requestID uint64, previewError string) {
 	if s.runtimeCtx() == nil {
 		return
 	}
-	runtime.EventsEmit(s.runtimeCtx(), "filterPreview:"+tabID, filterRev)
+	runtime.EventsEmit(s.runtimeCtx(), "filterPreview:"+tabID, filterRev, map[string]any{
+		"seed": seed, "requestId": requestID, "error": previewError,
+	})
 }
 
 // SampleLevelsPoint returns the active layer's straight sRGB at a document
@@ -661,9 +923,20 @@ func (s *Service) ApplyLevelsSample(settingsJSON string, x, y int, mode int) (st
 	if !ok || bmp == nil {
 		return "", fmt.Errorf("内存位图库缺少资产 %s", *l.ImageFile)
 	}
-	rgb, ok2 := render.SampleLevelsPoint(bmp, x, y)
-	if !ok2 {
-		return "", fmt.Errorf("取样点 (%d,%d) 落在图层外", x, y)
+	var rgb [3]float64
+	if f := sess.filter; f != nil && f.kind == "adjust:Levels" && f.grown != nil {
+		r, g, b, sampleErr := sampleLayerPixel(sess, f, x, y)
+		if sampleErr != nil {
+			return "", sampleErr
+		}
+		rgb = [3]float64{r, g, b}
+	} else {
+		dx, dy := docToLayerIndex(l.Transform, bmp.W, bmp.H, float64(x)+0.5, float64(y)+0.5)
+		var ok bool
+		rgb, ok = render.SampleLevelsPoint(bmp, int(math.Floor(dx)), int(math.Floor(dy)))
+		if !ok {
+			return "", fmt.Errorf("取样点 (%d,%d) 落在图层外", x, y)
+		}
 	}
 	var settings domain.LevelsSettings
 	if err := json.Unmarshal([]byte(settingsJSON), &settings); err != nil {
@@ -805,7 +1078,7 @@ func (s *Service) CameraRawWhiteBalanceSample(x, y int) (string, error) {
 	s.ws.mu.Lock()
 	defer s.ws.mu.Unlock()
 	sess := s.ws.activeSessionLocked()
-	if sess == nil || sess.filter == nil {
+	if sess == nil || sess.filter == nil || sess.filter.kind != FilterCameraRaw || sess.filter.grown == nil {
 		return "", fmt.Errorf("没有打开的 Camera Raw 会话")
 	}
 	r, g, b, err := sampleLayerPixel(sess, sess.filter, x, y)
@@ -833,7 +1106,7 @@ func (s *Service) CameraRawAutoWhiteBalance() (string, error) {
 	s.ws.mu.Lock()
 	defer s.ws.mu.Unlock()
 	sess := s.ws.activeSessionLocked()
-	if sess == nil || sess.filter == nil {
+	if sess == nil || sess.filter == nil || sess.filter.kind != FilterCameraRaw || sess.filter.grown == nil {
 		return "", fmt.Errorf("没有打开的 Camera Raw 会话")
 	}
 	var red, green, blue, count float64
@@ -872,7 +1145,7 @@ func (s *Service) CameraRawDefringeSample(x, y int, settingsJSON string) (string
 	s.ws.mu.Lock()
 	defer s.ws.mu.Unlock()
 	sess := s.ws.activeSessionLocked()
-	if sess == nil || sess.filter == nil {
+	if sess == nil || sess.filter == nil || sess.filter.kind != FilterCameraRaw || sess.filter.grown == nil {
 		return "", fmt.Errorf("没有打开的 Camera Raw 会话")
 	}
 	r, g, b, err := sampleLayerPixel(sess, sess.filter, x, y)
@@ -1015,8 +1288,26 @@ func (s *Service) subjectSelectionJSON(px, py int) (string, error) {
 		s.ws.mu.Unlock()
 		return "", errNoDocument
 	}
-	doc := sess.doc
-	source := sess.pixelSource()
+	if px >= 0 && (px >= sess.doc.Width || py >= sess.doc.Height) {
+		s.ws.mu.Unlock()
+		return "", fmt.Errorf("取样点不在画布内")
+	}
+	// Rendering and inference run outside the edit lock. Capture both the
+	// manifest and pixel bytes together so concurrent edits cannot change
+	// the source or mix document revisions while selection is running.
+	doc := cloneDocForEdit(sess.doc)
+	bitmaps := make(map[string]*render.Bitmap, len(sess.bitmaps))
+	for name, bmp := range sess.bitmaps {
+		if bmp != nil {
+			bitmaps[name] = bmp.Clone()
+		}
+	}
+	source := render.PixelSource(func(name string) (*render.Bitmap, error) {
+		if bmp := bitmaps[name]; bmp != nil {
+			return bmp, nil
+		}
+		return nil, fmt.Errorf("内存位图库缺少资产 %s", name)
+	})
 	tabID := s.ws.active
 	s.ws.mu.Unlock()
 
@@ -1051,7 +1342,11 @@ func (s *Service) SelectSubject() (string, error) {
 	return s.subjectSelectionJSON(-1, -1)
 }
 
-// SelectObjectAt keeps only the object under the document pixel.
+// SelectObjectAt keeps only the object under an in-bounds document pixel
+// in the tab active when the request starts. The reply identifies that tab.
 func (s *Service) SelectObjectAt(x, y int) (string, error) {
+	if x < 0 || y < 0 {
+		return "", fmt.Errorf("取样点不在画布内")
+	}
 	return s.subjectSelectionJSON(x, y)
 }

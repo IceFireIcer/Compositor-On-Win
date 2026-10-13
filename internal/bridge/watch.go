@@ -12,6 +12,7 @@ package bridge
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"compositor-win/internal/domain"
@@ -51,10 +52,12 @@ func (s *Service) watchProject(tabID, path string) {
 	}
 	s.unwatchProject(tabID)
 
+	entry := &watchedProject{path: path}
 	coordinator := watch.NewCoordinator(path)
 	coordinator.OnStable = func(digest string) {
-		s.externalChanged(tabID, path, digest)
+		s.externalChanged(tabID, entry, digest)
 	}
+	entry.coordinator = coordinator
 	// 基线：先记住当前磁盘内容，只有真的变了才报告。读不出来（写了一半）就让
 	// coordinator 记住"没有基线"，下一次变更会无条件报一次。
 	if err := coordinator.Remember(); err != nil {
@@ -65,18 +68,30 @@ func (s *Service) watchProject(tabID, path string) {
 		s.logf("外部变更监视启动失败（%s）: %v", path, err)
 		return
 	}
+	entry.watcher = watcher
 	s.watchMu.Lock()
 	if s.watched == nil {
 		s.watched = map[string]*watchedProject{}
 	}
-	s.watched[tabID] = &watchedProject{path: path, watcher: watcher, coordinator: coordinator}
+	s.watched[tabID] = entry
 	s.watchMu.Unlock()
 }
 
 // unwatchProject 停掉并忘掉一个标签的监视器（标签关闭、另存为、文档消失时用）。
 func (s *Service) unwatchProject(tabID string) {
+	s.unwatchProjectIfCurrent(tabID, nil)
+}
+
+// unwatchProjectIfCurrent retires one watcher. When expected is non-nil, a
+// delayed callback from an older watcher cannot stop the replacement watcher
+// installed for the same tab during Save As or a reload.
+func (s *Service) unwatchProjectIfCurrent(tabID string, expected *watchedProject) {
 	s.watchMu.Lock()
 	entry := s.watched[tabID]
+	if expected != nil && entry != expected {
+		s.watchMu.Unlock()
+		return
+	}
 	delete(s.watched, tabID)
 	s.watchMu.Unlock()
 	if entry == nil {
@@ -115,6 +130,26 @@ func (s *Service) setPendingExternal(tabID string, pending bool) {
 	}
 }
 
+// setPendingExternalIfCurrent changes pending state only for the watcher that
+// produced the callback. This closes the same stale-answer window as the
+// watcher identity check in externalChanged.
+func (s *Service) setPendingExternalIfCurrent(tabID string, expected *watchedProject, pending bool) bool {
+	s.watchMu.Lock()
+	defer s.watchMu.Unlock()
+	entry := s.watched[tabID]
+	if entry == nil || entry != expected {
+		return false
+	}
+	entry.pending = pending
+	return true
+}
+
+func (s *Service) isCurrentWatcher(tabID string, expected *watchedProject) bool {
+	s.watchMu.Lock()
+	defer s.watchMu.Unlock()
+	return expected != nil && s.watched[tabID] == expected
+}
+
 // takePendingExternal 在锁内**取出并清掉**待决定状态，返回它对应的包路径。把"判断 + 取走"
 // 合成一次原子操作，避免调用方拿着锁外的指针跨慢操作（读盘）继续用。
 func (s *Service) takePendingExternal(tabID string) (path string, ok bool) {
@@ -128,15 +163,48 @@ func (s *Service) takePendingExternal(tabID string) (path string, ok bool) {
 	return entry.path, true
 }
 
-// externalChanged 在 coordinator 的 goroutine 上跑：包内容稳定在一份新摘要上了。
-func (s *Service) externalChanged(tabID, path, digest string) {
-	if s.ws == nil {
+// restorePendingExternal puts a decision back when loading or applying the
+// disk version fails. The path check prevents a stale response from marking a
+// newer watcher (for example, after Save As) as pending.
+func (s *Service) restorePendingExternal(tabID, path string) {
+	s.watchMu.Lock()
+	defer s.watchMu.Unlock()
+	if entry := s.watched[tabID]; entry != nil && sameDocumentPath(entry.path, path) {
+		entry.pending = true
+	}
+}
+
+// promptExternalChange records a pending external change using the current
+// workspace state. It is also the fallback when a clean-check races with an
+// edit and the guarded reload refuses to replace the session.
+func (s *Service) promptExternalChange(tabID string, expected *watchedProject) {
+	if s.ws == nil || !s.isCurrentWatcher(tabID, expected) {
 		return
 	}
+	path := expected.path
 	currentPath, dirty, ok := s.ws.TabState(tabID)
-	if !ok || currentPath != path {
+	if !ok || !sameDocumentPath(currentPath, path) {
+		s.unwatchProjectIfCurrent(tabID, expected)
+		return
+	}
+	if !s.setPendingExternalIfCurrent(tabID, expected, true) {
+		return
+	}
+	s.emitExternal(externalChangedEvent{
+		TabID: tabID, Path: path, Pending: true, Dirty: dirty || s.ws.TabBusy(tabID), Snapshot: s.ws.Snapshot(),
+	})
+}
+
+// externalChanged 在 coordinator 的 goroutine 上跑：包内容稳定在一份新摘要上了。
+func (s *Service) externalChanged(tabID string, expected *watchedProject, digest string) {
+	if s.ws == nil || !s.isCurrentWatcher(tabID, expected) {
+		return
+	}
+	path := expected.path
+	currentPath, dirty, ok := s.ws.TabState(tabID)
+	if !ok || !sameDocumentPath(currentPath, path) {
 		// 标签关了，或者文档已经另存到别处：这个监视器退休。
-		s.unwatchProject(tabID)
+		s.unwatchProjectIfCurrent(tabID, expected)
 		return
 	}
 	doc, bitmaps, err := s.loadProject(path)
@@ -146,32 +214,42 @@ func (s *Service) externalChanged(tabID, path, digest string) {
 		s.logf("外部变更未载入（%s）: %v", path, err)
 		return
 	}
+	if !s.isCurrentWatcher(tabID, expected) {
+		return
+	}
 	// 有未保存修改，或者**正有编辑在飞**（笔刷拖着、滤镜对话框开着）：绝不静默覆盖。
 	// 前者是 Swift 的语义；后者是我们自己的补丁 —— 重载会把整个会话换掉，笔画/滤镜
 	// 落在一个已经没人看的文档上会丢，也不能指望用户在这种状态下回答询问。
 	if dirty || s.ws.TabBusy(tabID) {
-		s.setPendingExternal(tabID, true)
-		s.emitExternal(externalChangedEvent{
-			TabID: tabID, Path: path, Pending: true, Dirty: true, Snapshot: s.ws.Snapshot(),
-		})
+		s.promptExternalChange(tabID, expected)
 		return
 	}
-	s.applyExternalReload(tabID, path, doc, bitmaps, digest)
+	s.applyExternalReload(tabID, expected, doc, bitmaps, digest)
 }
 
 // applyExternalReload 原地换掉标签的内容：标签 id/位置/活动标签都不变，撤销栈清空
 // （等同重新打开文件），脏标记归零。
-func (s *Service) applyExternalReload(tabID, path string, doc *domain.Document, bitmaps map[string]*render.Bitmap, _ string) {
+func (s *Service) applyExternalReload(tabID string, expected *watchedProject, doc *domain.Document, bitmaps map[string]*render.Bitmap, _ string) {
+	if !s.isCurrentWatcher(tabID, expected) {
+		return
+	}
+	path := expected.path
 	snapshot, reloadedID, ok, err := s.ws.ReloadDocument(path, doc, bitmaps)
 	if err != nil {
+		if errors.Is(err, errDocumentDirty) || errors.Is(err, errDocumentBusy) {
+			s.promptExternalChange(tabID, expected)
+			return
+		}
 		s.logf("外部变更重载失败（%s）: %v", path, err)
 		return
 	}
 	if !ok {
-		s.unwatchProject(tabID)
+		s.unwatchProjectIfCurrent(tabID, expected)
 		return
 	}
-	s.setPendingExternal(reloadedID, false)
+	if !s.setPendingExternalIfCurrent(reloadedID, expected, false) {
+		return
+	}
 
 	// 文档信封只在前端"正在看这个标签"时才发：前端只维护**活动标签**的文档镜像，
 	// 把它不认识的后台标签文档发过去只会把当前画布覆盖掉。后台标签的重载只需要前端
@@ -199,7 +277,10 @@ func (s *Service) ResolveExternalChange(tabID string, accept bool) (string, erro
 	}
 	path, ok := s.takePendingExternal(tabID)
 	if !ok {
-		return "", fmt.Errorf("没有待处理的外部变更")
+		// The frontend optimistically clears its prompt while this RPC is in
+		// flight. Keep this machine-readable so it knows a stale answer should
+		// stay dismissed, whereas a temporary read/busy failure is retryable.
+		return "", errExternalChangeNotPending
 	}
 	if !accept {
 		// 保留本地修改：什么都不换，只回当前文档（活动标签才有意义）。
@@ -210,11 +291,13 @@ func (s *Service) ResolveExternalChange(tabID string, accept bool) (string, erro
 	}
 	doc, bitmaps, err := s.loadProject(path)
 	if err != nil {
+		s.restorePendingExternal(tabID, path)
 		return "", err
 	}
 	// 直接把这一版贴上去（不必再走 coordinator 的稳定等待：用户已经看到并同意了）。
-	_, reloadedID, reloaded, err := s.ws.ReloadDocument(path, doc, bitmaps)
+	_, reloadedID, reloaded, err := s.ws.reloadDocument(path, doc, bitmaps, true)
 	if err != nil {
+		s.restorePendingExternal(tabID, path)
 		return "", err
 	}
 	if !reloaded {

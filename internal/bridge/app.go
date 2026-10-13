@@ -11,6 +11,8 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/wailsapp/wails/v2/pkg/runtime"
+
 	"compositor-win/internal/memory"
 	"compositor-win/internal/project"
 	"compositor-win/internal/render"
@@ -37,8 +39,9 @@ type Service struct {
 	// 而 Startup 的写在窗口创建时 —— 普通字段在 -race 下会报竞争。
 	ctx atomic.Pointer[context.Context]
 
-	openDialog func(ctx context.Context) (string, error)
-	saveDialog func(ctx context.Context) (string, error)
+	openDialog    func(ctx context.Context) (string, error)
+	saveDialog    func(ctx context.Context) (string, error)
+	messageDialog func(ctx context.Context, options runtime.MessageDialogOptions) (string, error)
 
 	// Image import batch (ticket 40): files decoded by BeginImageImport
 	// wait here for the frontend's SVG rasters before the commit lands.
@@ -97,10 +100,11 @@ type Service struct {
 // workspace binding in main.go).
 func NewService(ws *Workspace) *Service {
 	service := &Service{
-		ws:         ws,
-		openDialog: defaultOpenDialog,
-		saveDialog: defaultSaveDialog,
-		watched:    map[string]*watchedProject{},
+		ws:            ws,
+		openDialog:    defaultOpenDialog,
+		saveDialog:    defaultSaveDialog,
+		messageDialog: runtime.MessageDialog,
+		watched:       map[string]*watchedProject{},
 	}
 	if ws != nil {
 		// Closing a tab retires its external-change watcher; the reload path also

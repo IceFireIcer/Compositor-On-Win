@@ -59,7 +59,7 @@ func (s *Service) DocumentSnapshot() (string, error) {
 
 // LayerOp applies one layer command to the active document and returns the
 // fresh envelope. ops: setActive / setVisible / rename / setOpacity /
-// setBlendMode / deleteLayer / addLayer / setAdjustment / moveLayer, plus the
+// setBlendMode / deleteLayer / addLayer / addAdjustment / setAdjustment / moveLayer, plus the
 // ticket-47 command family (layer_commands.go): duplicateLayer / groupLayers /
 // ungroupLayer / setClippingMask / deleteLayerMask / deleteEffect / nudgeLayer /
 // mergeLayers. Every op runs inside a history transaction (中文命令名); a
@@ -68,11 +68,42 @@ func (s *Service) LayerOp(op string, payload string) (string, error) {
 	if s.ws == nil {
 		return "", errNoDocument
 	}
+	var provisional bool
+	if op == "addAdjustment" && strings.TrimSpace(payload) != "" {
+		var marker struct {
+			Provisional bool `json:"provisional"`
+		}
+		if err := json.Unmarshal([]byte(payload), &marker); err != nil {
+			return "", fmt.Errorf("无法解析 payload: %w", err)
+		}
+		provisional = marker.Provisional
+	}
 	name, fn, err := planLayerOp(op, payload)
 	if err != nil {
 		return "", err
 	}
-	return s.ws.EditActive(name, fn)
+	raw, err := s.ws.EditActive(name, fn)
+	if err != nil || !provisional {
+		return raw, err
+	}
+	// The creation is already a normal history entry. Record its identity and
+	// revision after EditActive so a later editor cancel can discard exactly
+	// this entry, without affecting ordinary addAdjustment callers.
+	s.ws.mu.Lock()
+	defer s.ws.mu.Unlock()
+	sess := s.ws.activeSessionLocked()
+	if sess == nil || sess.doc.ActiveLayerID == nil {
+		return raw, nil
+	}
+	created, lookupErr := layerByID(sess.doc, *sess.doc.ActiveLayerID)
+	if lookupErr != nil || created.Adjustment == nil {
+		return raw, nil
+	}
+	sess.provisionalAdjustment = &provisionalAdjustmentCreation{
+		layerID:         created.ID,
+		historyRevision: sess.hist.Revision(),
+	}
+	return raw, nil
 }
 
 // Undo rolls the active document back one entry (frontend menu plumbing;
@@ -95,13 +126,15 @@ func (s *Service) Redo() (string, error) {
 // layerOpPayload is the union of every op's fields; each op picks what it
 // needs and rejects the request when a required field is missing.
 type layerOpPayload struct {
-	LayerID    string             `json:"id"`
-	Visible    *bool              `json:"visible"`
-	Name       *string            `json:"name"`
-	Opacity    *float64           `json:"opacity"`
-	Mode       string             `json:"mode"`
-	To         *int               `json:"to"`
-	Adjustment *domain.Adjustment `json:"adjustment"`
+	LayerID     string             `json:"id"`
+	Kind        string             `json:"kind"`
+	Provisional bool               `json:"provisional"`
+	Visible     *bool              `json:"visible"`
+	Name        *string            `json:"name"`
+	Opacity     *float64           `json:"opacity"`
+	Mode        string             `json:"mode"`
+	To          *int               `json:"to"`
+	Adjustment  *domain.Adjustment `json:"adjustment"`
 }
 
 // planLayerOp parses and fully validates a LayerOp request, returning the
@@ -224,6 +257,82 @@ func planLayerOp(op string, payload string) (string, func(*session) error, error
 			return nil
 		}, nil
 
+	case "addAdjustment":
+		kind := domain.AdjustmentKind(p.Kind)
+		if !isAdjustmentKind(kind) {
+			return "", nil, fmt.Errorf("addAdjustment 调整类型无效: %q", p.Kind)
+		}
+		return "新建" + string(kind) + "调整", func(sess *session) error {
+			activeIndex := -1
+			var active *domain.Layer
+			if sess.doc.ActiveLayerID != nil {
+				activeIndex = findLayerIndex(sess.doc, *sess.doc.ActiveLayerID)
+				if activeIndex < 0 {
+					return fmt.Errorf("活动图层不存在: %s", *sess.doc.ActiveLayerID)
+				}
+				active = &sess.doc.Layers[activeIndex]
+			}
+
+			parentID := ""
+			if active != nil {
+				if active.IsGroupLayer() {
+					parentID = active.ID
+				} else {
+					parentID = parentIDOf(active)
+				}
+			}
+
+			isGroup := false
+			opacity := 1.0
+			blend := domain.BlendNormal
+			layer := domain.Layer{
+				ID:        newUUID(),
+				Name:      string(kind),
+				IsVisible: true,
+				Transform: domain.Transform{
+					Origin:   [2]float64{0, 0},
+					Size:     [2]float64{float64(sess.doc.Width), float64(sess.doc.Height)},
+					Sampling: domain.SamplingNearest,
+				},
+				IsGroup:   &isGroup,
+				Opacity:   &opacity,
+				BlendMode: &blend,
+				Adjustment: newAdjustmentDefaults(
+					kind,
+					newAdjustmentSeed(),
+					newAdjustmentSeed(),
+				),
+			}
+			if parentID != "" {
+				layer.ParentID = idPtr(parentID)
+			}
+
+			insertion := len(sess.doc.Layers)
+			if active != nil {
+				insertion = activeIndex + 1
+				if active.IsGroupLayer() {
+					descendants := descendantIDsOf(sess.doc, active.ID)
+					for i := activeIndex + 1; i < len(sess.doc.Layers); i++ {
+						if descendants[sess.doc.Layers[i].ID] {
+							insertion = i + 1
+						}
+					}
+				}
+			}
+			if insertion < 0 || insertion > len(sess.doc.Layers) {
+				return fmt.Errorf("addAdjustment 插入位置无效: %d", insertion)
+			}
+			sess.doc.Layers = append(sess.doc.Layers, domain.Layer{})
+			copy(sess.doc.Layers[insertion+1:], sess.doc.Layers[insertion:])
+			sess.doc.Layers[insertion] = layer
+			id := layer.ID
+			sess.doc.ActiveLayerID = &id
+			if err := sess.doc.Validate(); err != nil {
+				return fmt.Errorf("新建调整图层后文档无效: %w", err)
+			}
+			return nil
+		}, nil
+
 	case "setAdjustment":
 		if p.LayerID == "" {
 			return "", nil, fmt.Errorf("setAdjustment 缺少 id")
@@ -302,6 +411,59 @@ func planLayerOp(op string, payload string) (string, func(*session) error, error
 		return "", nil, fmt.Errorf("未知操作 %q", op)
 	}
 }
+
+// newAdjustmentDefaults builds the complete initial record for a new
+// non-destructive adjustment layer. Keeping identity values explicit matters
+// for Levels and Curves, whose zero values are valid JSON but not identity.
+func newAdjustmentDefaults(kind domain.AdjustmentKind, grainSeed, noiseSeed uint32) *domain.Adjustment {
+	rangeIdentity := domain.IdentityLevelRange()
+	a := &domain.Adjustment{
+		Kind: kind,
+		Levels: domain.LevelsSettings{
+			Channel: domain.LevelsRGB,
+			Ranges:  [4]domain.LevelRange{rangeIdentity, rangeIdentity, rangeIdentity, rangeIdentity},
+		},
+		Curves: domain.CurvesSettings{
+			Channel: domain.LevelsRGB,
+		},
+	}
+	for i := range a.Curves.Channels {
+		a.Curves.Channels[i] = domain.IdentityCurvePoints()
+	}
+
+	switch kind {
+	case domain.AdjustmentExposure:
+		a.ExposureSettings = &domain.ExposureSettings{Exposure: 0, Offset: 0, Gamma: 1}
+	case domain.AdjustmentGradientMap:
+		a.GradientMapSettings = &domain.GradientMapSettings{
+			Shadows:    domain.RGB{},
+			Highlights: domain.RGB{Red: 1, Green: 1, Blue: 1},
+		}
+	case domain.AdjustmentGrain:
+		a.GrainSettings = &domain.GrainSettings{Amount: 25, Size: 1.5, Roughness: 50, Seed: grainSeed}
+	case domain.AdjustmentAddNoise:
+		gaussian, monochromatic := false, false
+		a.NoiseAmount = float64Ptr(10)
+		a.NoiseGaussian = &gaussian
+		a.NoiseMonochromatic = &monochromatic
+		a.NoiseSeed = &noiseSeed
+	case domain.AdjustmentGaussianBlur:
+		a.BlurRadius = float64Ptr(10)
+	case domain.AdjustmentMotionBlur:
+		a.MotionAngle = float64Ptr(0)
+		a.MotionDistance = float64Ptr(10)
+	case domain.AdjustmentBlackWhite:
+		a.BlackWhiteSettings = &domain.BlackWhiteSettings{
+			Reds: 40, Yellows: 60, Greens: 40, Cyans: 60, Blues: 20, Magentas: 80,
+			TintHue: 40, TintSaturation: 20,
+		}
+	case domain.AdjustmentColorBalance:
+		a.ColorBalanceSettings = &domain.ColorBalanceSettings{PreserveLuminosity: true}
+	}
+	return a
+}
+
+func float64Ptr(value float64) *float64 { return &value }
 
 // deleteLayerSubtree removes a layer and, when it is a folder, everything
 // inside it (orphans would fail package validation). Removing the active

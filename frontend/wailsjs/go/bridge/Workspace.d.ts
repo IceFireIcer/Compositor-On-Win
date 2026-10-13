@@ -48,4 +48,6 @@ export function TabIDForPath(arg1:string):Promise<string|boolean>;
 
 export function TabState(arg1:string):Promise<string>;
 
+export function TryCloseTab(arg1:string):Promise<bridge.Snapshot>;
+
 export function UndoActive():Promise<string>;

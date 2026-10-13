@@ -29,6 +29,15 @@ func (s *Service) RenderHandler() http.Handler {
 }
 
 func (s *Service) serveRender(w http.ResponseWriter, r *http.Request) {
+	if s.serveStrokePreview(w, r) {
+		return
+	}
+	if s.serveRenderAssets(w, r) {
+		return
+	}
+	if s.serveRenderSnapshot(w, r) {
+		return
+	}
 	if m := uploadPathRe.FindStringSubmatch(r.URL.Path); m != nil && r.Method == http.MethodPut {
 		s.servePixelUpload(w, r, m[1])
 		return
@@ -49,6 +58,10 @@ func (s *Service) serveRender(w http.ResponseWriter, r *http.Request) {
 	}
 	if s.ws == nil {
 		http.NotFound(w, r)
+		return
+	}
+	if r.URL.Query().Has("transform") {
+		s.serveTransformPreview(w, r, m[1])
 		return
 	}
 	data, ok, err := s.ws.RenderPNG(m[1])

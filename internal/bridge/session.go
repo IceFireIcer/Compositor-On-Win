@@ -2,6 +2,7 @@ package bridge
 
 import (
 	crand "crypto/rand"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,7 +13,13 @@ import (
 )
 
 // errNoDocument is returned by every endpoint that needs an active tab.
-var errNoDocument = errors.New("没有打开的文档")
+var (
+	errNoDocument               = errors.New("没有打开的文档")
+	errDocumentDirty            = errors.New("DOCUMENT_DIRTY: 文档有未保存的更改，需要确认后重载")
+	errDocumentBusy             = errors.New("DOCUMENT_BUSY: 文档有尚未完成的编辑，完成或取消后再重载")
+	errDocumentIDConflict       = errors.New("DOCUMENT_ID_CONFLICT: 文档 ID 已被当前工作区使用")
+	errExternalChangeNotPending = errors.New("EXTERNAL_CHANGE_NOT_PENDING: 没有待处理的外部变更")
+)
 
 // session is one open document's live state: the domain model, its undo
 // history, the package path it was loaded from ("" until first save), and
@@ -25,8 +32,9 @@ type session struct {
 	hist     *history.History
 	path     string
 	bitmaps  map[string]*render.Bitmap
-	rev      int // frontend revision: bumped on every observable change
-	layerSeq int // names the next 图层 N
+	rev      int  // frontend revision: bumped on every observable change
+	layerSeq int  // names the next 图层 N
+	saving   bool // package snapshot is being encoded/written outside the edit lock
 
 	// Brush state: at most one stroke in flight per document. The stroke
 	// paints into its own tile grid (render.Stroke never touches the base),
@@ -39,6 +47,10 @@ type session struct {
 	// journal pairing filter commits with history revisions.
 	filter        *filterSession
 	rasterJournal []rasterJournalEntry
+	// A menu-created adjustment layer is marked provisional until its editor
+	// commits. The marker is set only by the frontend's explicit provisional
+	// LayerOp payload, so direct bridge callers retain normal layer history.
+	provisionalAdjustment *provisionalAdjustmentCreation
 
 	// In-flight spot-healing stroke.
 	heal *healBrush
@@ -57,6 +69,11 @@ type session struct {
 	// NSPasteboard.changeCount (SelectionClipboard.swift:4-18).
 	clipPixels *clipPixels
 	clipLayer  *clipLayer
+}
+
+type provisionalAdjustmentCreation struct {
+	layerID         string
+	historyRevision string
 }
 
 // newSession wraps a parsed/created document into a fresh session with an
@@ -192,4 +209,12 @@ func newUUID() string {
 	b[6] = (b[6] & 0x0f) | 0x40
 	b[8] = (b[8] & 0x3f) | 0x80
 	return fmt.Sprintf("%X-%X-%X-%X-%X", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
+}
+
+func newAdjustmentSeed() uint32 {
+	var b [4]byte
+	if _, err := crand.Read(b[:]); err != nil {
+		panic(err) // crypto/rand failure is unrecoverable
+	}
+	return binary.LittleEndian.Uint32(b[:])
 }

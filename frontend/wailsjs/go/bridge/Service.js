@@ -10,6 +10,10 @@ export function ApplyLayerTransform(arg1, arg2) {
   return window['go']['bridge']['Service']['ApplyLayerTransform'](arg1, arg2);
 }
 
+export function ApplyLayerTransformToTab(arg1, arg2, arg3, arg4) {
+  return window['go']['bridge']['Service']['ApplyLayerTransformToTab'](arg1, arg2, arg3, arg4);
+}
+
 export function ApplyLevelsSample(arg1, arg2, arg3, arg4) {
   return window['go']['bridge']['Service']['ApplyLevelsSample'](arg1, arg2, arg3, arg4);
 }
@@ -30,12 +34,28 @@ export function BeginFilterEdit(arg1, arg2, arg3, arg4, arg5) {
   return window['go']['bridge']['Service']['BeginFilterEdit'](arg1, arg2, arg3, arg4, arg5);
 }
 
+export function BeginGradientEdit(arg1, arg2, arg3, arg4, arg5) {
+  return window['go']['bridge']['Service']['BeginGradientEdit'](arg1, arg2, arg3, arg4, arg5);
+}
+
 export function BeginHealStroke(arg1, arg2, arg3, arg4, arg5, arg6, arg7) {
   return window['go']['bridge']['Service']['BeginHealStroke'](arg1, arg2, arg3, arg4, arg5, arg6, arg7);
 }
 
+export function BeginHealingStroke(arg1, arg2, arg3, arg4, arg5) {
+  return window['go']['bridge']['Service']['BeginHealingStroke'](arg1, arg2, arg3, arg4, arg5);
+}
+
 export function BeginImageImport(arg1) {
   return window['go']['bridge']['Service']['BeginImageImport'](arg1);
+}
+
+export function BeginPaintStroke(arg1, arg2, arg3, arg4, arg5) {
+  return window['go']['bridge']['Service']['BeginPaintStroke'](arg1, arg2, arg3, arg4, arg5);
+}
+
+export function BeginRetouchStroke(arg1, arg2, arg3, arg4, arg5) {
+  return window['go']['bridge']['Service']['BeginRetouchStroke'](arg1, arg2, arg3, arg4, arg5);
 }
 
 export function BeginStroke(arg1, arg2) {
@@ -62,6 +82,10 @@ export function CancelFilterEdit() {
   return window['go']['bridge']['Service']['CancelFilterEdit']();
 }
 
+export function CancelFilterSession(arg1, arg2) {
+  return window['go']['bridge']['Service']['CancelFilterSession'](arg1, arg2);
+}
+
 export function CancelImageImport() {
   return window['go']['bridge']['Service']['CancelImageImport']();
 }
@@ -84,6 +108,10 @@ export function ClearRecentProjects() {
 
 export function CommitFilter(arg1) {
   return window['go']['bridge']['Service']['CommitFilter'](arg1);
+}
+
+export function CommitGradientEdit(arg1, arg2) {
+  return window['go']['bridge']['Service']['CommitGradientEdit'](arg1, arg2);
 }
 
 export function ConfirmPendingOpen() {
@@ -114,12 +142,32 @@ export function DownloadUpdate() {
   return window['go']['bridge']['Service']['DownloadUpdate']();
 }
 
+export function DrawGradient(arg1, arg2, arg3, arg4, arg5, arg6, arg7) {
+  return window['go']['bridge']['Service']['DrawGradient'](arg1, arg2, arg3, arg4, arg5, arg6, arg7);
+}
+
+export function DrawShape(arg1, arg2, arg3, arg4, arg5, arg6, arg7) {
+  return window['go']['bridge']['Service']['DrawShape'](arg1, arg2, arg3, arg4, arg5, arg6, arg7);
+}
+
 export function EndExportPreview() {
   return window['go']['bridge']['Service']['EndExportPreview']();
 }
 
 export function EndHealStroke() {
   return window['go']['bridge']['Service']['EndHealStroke']();
+}
+
+export function EndHealingStroke(arg1, arg2) {
+  return window['go']['bridge']['Service']['EndHealingStroke'](arg1, arg2);
+}
+
+export function EndPaintStroke(arg1, arg2) {
+  return window['go']['bridge']['Service']['EndPaintStroke'](arg1, arg2);
+}
+
+export function EndRetouchStroke(arg1, arg2) {
+  return window['go']['bridge']['Service']['EndRetouchStroke'](arg1, arg2);
 }
 
 export function EndStroke() {
@@ -138,6 +186,10 @@ export function ExportPNG(arg1) {
   return window['go']['bridge']['Service']['ExportPNG'](arg1);
 }
 
+export function FillLayerMask(arg1, arg2, arg3, arg4, arg5) {
+  return window['go']['bridge']['Service']['FillLayerMask'](arg1, arg2, arg3, arg4, arg5);
+}
+
 export function FillSelection(arg1, arg2, arg3) {
   return window['go']['bridge']['Service']['FillSelection'](arg1, arg2, arg3);
 }
@@ -146,8 +198,16 @@ export function FinishImageImport() {
   return window['go']['bridge']['Service']['FinishImageImport']();
 }
 
+export function FlipCanvas(arg1, arg2) {
+  return window['go']['bridge']['Service']['FlipCanvas'](arg1, arg2);
+}
+
 export function HealPoint(arg1, arg2) {
   return window['go']['bridge']['Service']['HealPoint'](arg1, arg2);
+}
+
+export function HealingStrokePoint(arg1, arg2, arg3) {
+  return window['go']['bridge']['Service']['HealingStrokePoint'](arg1, arg2, arg3);
 }
 
 export function ImageSize(arg1) {
@@ -178,6 +238,10 @@ export function ListFonts() {
   return window['go']['bridge']['Service']['ListFonts']();
 }
 
+export function LoadLayerSelection(arg1, arg2, arg3) {
+  return window['go']['bridge']['Service']['LoadLayerSelection'](arg1, arg2, arg3);
+}
+
 export function MoveSelectedPixels(arg1, arg2, arg3) {
   return window['go']['bridge']['Service']['MoveSelectedPixels'](arg1, arg2, arg3);
 }
@@ -194,12 +258,20 @@ export function OpenShellPaths() {
   return window['go']['bridge']['Service']['OpenShellPaths']();
 }
 
+export function PaintStrokePoint(arg1, arg2, arg3) {
+  return window['go']['bridge']['Service']['PaintStrokePoint'](arg1, arg2, arg3);
+}
+
 export function Paste() {
   return window['go']['bridge']['Service']['Paste']();
 }
 
 export function PickImageImport() {
   return window['go']['bridge']['Service']['PickImageImport']();
+}
+
+export function PlaceLayer(arg1, arg2, arg3, arg4) {
+  return window['go']['bridge']['Service']['PlaceLayer'](arg1, arg2, arg3, arg4);
 }
 
 export function RawBeginDevelop(arg1) {
@@ -242,12 +314,32 @@ export function ResolveExternalChange(arg1, arg2) {
   return window['go']['bridge']['Service']['ResolveExternalChange'](arg1, arg2);
 }
 
+export function RetouchStrokePoint(arg1, arg2, arg3) {
+  return window['go']['bridge']['Service']['RetouchStrokePoint'](arg1, arg2, arg3);
+}
+
+export function SampleColorRange(arg1, arg2, arg3) {
+  return window['go']['bridge']['Service']['SampleColorRange'](arg1, arg2, arg3);
+}
+
+export function SampleCompositeColor(arg1, arg2, arg3) {
+  return window['go']['bridge']['Service']['SampleCompositeColor'](arg1, arg2, arg3);
+}
+
 export function SampleLevelsPoint(arg1, arg2) {
   return window['go']['bridge']['Service']['SampleLevelsPoint'](arg1, arg2);
 }
 
+export function SaveProjectAsDialog() {
+  return window['go']['bridge']['Service']['SaveProjectAsDialog']();
+}
+
 export function SaveProjectDialog() {
   return window['go']['bridge']['Service']['SaveProjectDialog']();
+}
+
+export function SelectColorRange(arg1, arg2) {
+  return window['go']['bridge']['Service']['SelectColorRange'](arg1, arg2);
 }
 
 export function SelectObjectAt(arg1, arg2) {
@@ -258,8 +350,16 @@ export function SelectSubject() {
   return window['go']['bridge']['Service']['SelectSubject']();
 }
 
+export function SelectWandAt(arg1, arg2, arg3, arg4, arg5, arg6, arg7) {
+  return window['go']['bridge']['Service']['SelectWandAt'](arg1, arg2, arg3, arg4, arg5, arg6, arg7);
+}
+
 export function SetGuides(arg1) {
   return window['go']['bridge']['Service']['SetGuides'](arg1);
+}
+
+export function SetLayerMask(arg1, arg2, arg3, arg4) {
+  return window['go']['bridge']['Service']['SetLayerMask'](arg1, arg2, arg3, arg4);
 }
 
 export function Startup(arg1) {
@@ -292,6 +392,10 @@ export function Undo() {
 
 export function UpdateFilterPreview(arg1) {
   return window['go']['bridge']['Service']['UpdateFilterPreview'](arg1);
+}
+
+export function UpdateGradientEdit(arg1, arg2, arg3, arg4, arg5, arg6) {
+  return window['go']['bridge']['Service']['UpdateGradientEdit'](arg1, arg2, arg3, arg4, arg5, arg6);
 }
 
 export function UpdateInfo() {

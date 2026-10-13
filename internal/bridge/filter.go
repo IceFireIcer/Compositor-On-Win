@@ -164,11 +164,12 @@ func blurMargin(kind string, p *filterParams) int {
 // filterSelection carries the active selection in document pixels; Mask is
 // the W×H gray coverage (Wails marshals []byte as base64).
 type filterSelection struct {
-	X    int     `json:"x"`
-	Y    int     `json:"y"`
-	W    int     `json:"w"`
-	H    int     `json:"h"`
-	Mask []uint8 `json:"mask"`
+	X       int     `json:"x"`
+	Y       int     `json:"y"`
+	W       int     `json:"w"`
+	H       int     `json:"h"`
+	Mask    []uint8 `json:"mask"`
+	Feather float64 `json:"feather,omitempty"`
 }
 
 // parseFilterSelection decodes the optional selection payload.
@@ -180,8 +181,21 @@ func parseFilterSelection(raw string) (*filterSelection, error) {
 	if err := json.Unmarshal([]byte(raw), &sel); err != nil {
 		return nil, fmt.Errorf("无法解析选区: %w", err)
 	}
+	if err := validSelectionCanvas(sel.W, sel.H); err != nil {
+		return nil, err
+	}
 	if sel.W <= 0 || sel.H <= 0 || len(sel.Mask) != sel.W*sel.H {
 		return nil, fmt.Errorf("选区蒙版尺寸不符")
+	}
+	if math.IsNaN(sel.Feather) || math.IsInf(sel.Feather, 0) || sel.Feather < 0 || sel.Feather > maxSelectionFeather {
+		return nil, fmt.Errorf("选区羽化须在 0–%g", maxSelectionFeather)
+	}
+	if sel.Feather > 0 {
+		mask, err := selectionFeatherMask(sel.Mask, sel.W, sel.H, sel.Feather)
+		if err != nil {
+			return nil, err
+		}
+		sel.Mask = mask
 	}
 	return &sel, nil
 }
@@ -313,7 +327,7 @@ func vignetteFrameFor(work *render.Bitmap, workT domain.Transform, docW, docH in
 // (PixelFilter.run). blur kernels receive the scaled slider so a
 // downscaled preview blurs proportionally less.
 func runFilterJob(kind string, work *render.Bitmap, p *filterParams, scale float64, seed uint32,
-	docW, docH int, workT domain.Transform, emptyLayer bool, fillMask []uint8, subjectRaw *render.Bitmap) {
+	docW, docH int, workT domain.Transform, emptyLayer bool, fillMask []uint8, subjectRaw *render.Bitmap) error {
 	switch kind {
 	case FilterGaussian:
 		render.ApplyGaussianBlur(work, p.Radius*scale)
@@ -352,33 +366,111 @@ func runFilterJob(kind string, work *render.Bitmap, p *filterParams, scale float
 	case FilterInvert:
 		render.ApplyInvert(work)
 	case FilterContentFill:
-		if fillMask != nil {
-			render.ContentFill(work, fillMask)
+		if fillMask == nil {
+			return fmt.Errorf("内容感知填充需要选区")
+		}
+		if !render.ContentFill(work, fillMask) {
+			return fmt.Errorf("内容感知填充没有可用源像素")
 		}
 	case FilterDither:
 		render.ApplyDitherFilter(work, p.Dither)
 	case FilterRemoveBackground:
-		if subjectRaw != nil {
-			mask := render.RefineSubjectMask(subjectRaw, work, p.RefineEdges, p.ShiftEdge,
-				p.MatteContrast, float64(max(work.W, work.H)))
-			if p.BackgroundQuality != "advanced" {
-				mask = subjectRaw
-			}
-			render.ApplySubjectMask(work, mask)
+		if subjectRaw == nil {
+			return fmt.Errorf("移除背景需要分割结果")
 		}
+		mask := render.RefineSubjectMask(subjectRaw, work, p.RefineEdges, p.ShiftEdge,
+			p.MatteContrast, float64(max(work.W, work.H)))
+		if p.BackgroundQuality != "advanced" {
+			mask = subjectRaw
+		}
+		render.ApplySubjectMask(work, mask)
 	default:
 		if _, ok := adjustmentKind(kind); ok && p.Adjustment != nil {
 			render.ApplyAdjustment(p.Adjustment, work)
 		}
 	}
+	return nil
 }
 
-// adjustmentKind extracts "adjust:<AdjustmentKind>" payloads.
+// fillAdjustmentDefaults completes a partial adjustment payload so the
+// identity is the starting point instead of "whatever zero means here".
+//
+// The Image menu's adjustment items only know the kind (beginFilter sends
+// {"adjustment":null}); before this, every one of them died in BeginFilterEdit
+// with "调整会话缺少 adjustment 参数". Substituting the kind alone is not enough
+// for two kinds, because their zero values are NOT the identity:
+//   - Curves: a channel with fewer than two anchors has no table (identity);
+//   - Levels: an all-zero range normalizes to black=0/white=1/gamma=0.1, i.e.
+//     a blown-out image.
+//
+// The other kinds already render untouched when their settings block is
+// missing (Grain / Add Noise / Black & White / Color Balance guard on nil, and
+// Exposure / Gradient Map / Hue-Saturation have explicit *OrDefault helpers),
+// so they need no filling.
+func fillAdjustmentDefaults(a *domain.Adjustment) {
+	if a == nil {
+		return
+	}
+	switch a.Kind {
+	case domain.AdjustmentCurves:
+		for i := range a.Curves.Channels {
+			if len(a.Curves.Channels[i]) < 2 {
+				a.Curves.Channels[i] = domain.IdentityCurvePoints()
+			}
+		}
+	case domain.AdjustmentLevels:
+		for i := range a.Levels.Ranges {
+			if a.Levels.Ranges[i] == (domain.LevelRange{}) {
+				a.Levels.Ranges[i] = domain.IdentityLevelRange()
+			}
+		}
+	}
+}
+
+// normalizeAdjustment completes an adjustment payload right after
+// filterParams.normalized: the kind is authoritative from the request (the
+// Image menu sends only that), and two kinds need identity defaults because
+// their zero values are not the identity.
+//
+// Every entry point that can carry an "adjust:<Kind>" payload must call this —
+// BeginFilterEdit, UpdateFilterPreview, CommitFilter and ApplyFilter. Missing
+// one means that path falls back to the zero value: Levels normalizes to
+// black=0/white=1/gamma=0.1 (a blown-out image) and a Curves channel with
+// fewer than two anchors has no table at all. The dialog's own writers can
+// send partial payloads too (the Levels eyedropper builds a 3-element ranges
+// array; setCurvePoints sends one filled channel plus three empty ones), so
+// the preview and commit paths need the same completion as the open path.
+func normalizeAdjustment(kind string, p *filterParams) {
+	k, isAdjust := adjustmentKind(kind)
+	if !isAdjust {
+		return
+	}
+	if p.Adjustment == nil {
+		p.Adjustment = &domain.Adjustment{Kind: k}
+	}
+	if p.Adjustment.Kind == "" {
+		p.Adjustment.Kind = k
+	}
+	fillAdjustmentDefaults(p.Adjustment)
+}
+
+func isAdjustmentKind(kind domain.AdjustmentKind) bool {
+	for _, valid := range domain.AllAdjustmentKinds {
+		if kind == valid {
+			return true
+		}
+	}
+	return false
+}
+
+// adjustmentKind extracts "adjust:<AdjustmentKind>" payloads and rejects
+// unknown suffixes before they reach the renderer.
 func adjustmentKind(kind string) (domain.AdjustmentKind, bool) {
 	if len(kind) <= len(FilterAdjustPrefix) || kind[:len(FilterAdjustPrefix)] != FilterAdjustPrefix {
 		return "", false
 	}
-	return domain.AdjustmentKind(kind[len(FilterAdjustPrefix):]), true
+	k := domain.AdjustmentKind(kind[len(FilterAdjustPrefix):])
+	return k, isAdjustmentKind(k)
 }
 
 // selectionLayerMask rasterizes the doc-space selection into a layer-space
@@ -402,14 +494,31 @@ func selectionLayerMask(sel *filterSelection, workT domain.Transform, w, h int) 
 	return mask
 }
 
-// selectionLayerBounds maps the selection rect into layer pixel space
-// (bounding box of the mapped corners, exclusive max).
+// selectionLayerBounds maps the nonzero coverage bounds into layer pixel
+// space (bounding box of the mapped corners, exclusive max). The frontend
+// sends a document-sized mask; its zero padding is storage, not selection.
+// FilterEdit.growingTo uses the selection path's bounds in Swift. Growing
+// to the payload rect instead can even change ContentFill.c's patch radius
+// from 0 to 2 on small layers, incorrectly removing all valid donors.
 func selectionLayerBounds(sel *filterSelection, workT domain.Transform, w, h int) [4]int {
+	x0, y0, x1, y1 := sel.W, sel.H, 0, 0
+	for y := 0; y < sel.H; y++ {
+		for x := 0; x < sel.W; x++ {
+			if sel.Mask[y*sel.W+x] == 0 {
+				continue
+			}
+			x0, y0 = min(x0, x), min(y0, y)
+			x1, y1 = max(x1, x+1), max(y1, y+1)
+		}
+	}
+	if x1 <= x0 || y1 <= y0 {
+		return [4]int{} // empty coverage needs no growth
+	}
 	corners := [][2]float64{
-		{float64(sel.X), float64(sel.Y)},
-		{float64(sel.X + sel.W), float64(sel.Y)},
-		{float64(sel.X), float64(sel.Y + sel.H)},
-		{float64(sel.X + sel.W), float64(sel.Y + sel.H)},
+		{float64(sel.X + x0), float64(sel.Y + y0)},
+		{float64(sel.X + x1), float64(sel.Y + y0)},
+		{float64(sel.X + x0), float64(sel.Y + y1)},
+		{float64(sel.X + x1), float64(sel.Y + y1)},
 	}
 	minX, minY := math.Inf(1), math.Inf(1)
 	maxX, maxY := math.Inf(-1), math.Inf(-1)

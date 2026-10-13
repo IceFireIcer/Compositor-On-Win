@@ -102,7 +102,15 @@ func main() {
 		MinHeight:        640,
 		AssetServer:      &assetserver.Options{Assets: assets, Handler: service.RenderHandler()},
 		BackgroundColour: &options.RGBA{R: 30, G: 30, B: 32, A: 255},
+		OnBeforeClose:    service.OnBeforeClose,
 		OnStartup: func(ctx context.Context) {
+			// 运行时上下文必须显式交给 service：Wails 只会调用 options.OnStartup
+			// 这一个钩子，**不会**因为绑定结构体上有个方法叫 Startup 就自动调它
+			// （模板里的 app.startup 也是 main.go 手写 OnStartup: app.startup 接上
+			// 去的）。漏掉这一句的后果不是"某个功能降级"而是**所有原生对话框全废**：
+			// 保存/另存为/打开/导入图像/导出 PNG/JPEG 一律返回
+			// "运行时尚未就绪"（runtimeCtx() == nil → runtime.SaveFileDialog 拒绝）。
+			service.Startup(ctx)
 			// 内存压力采样（票 52）：压力上来时收缩历史与渲染缓存，并通知前端逐出纹理。
 			shellHooks.StartMemoryWatch()
 			if windowStore != nil {
