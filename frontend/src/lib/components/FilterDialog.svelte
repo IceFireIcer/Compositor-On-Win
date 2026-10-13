@@ -6,8 +6,12 @@
     cancelFilter,
     armedEyedropper,
     registerLevelsEyedropper,
+    sampleLevels,
+    autoLevels,
+    isCurrentFilterSession,
   } from "../state/filters";
   import * as BridgeService from "../../../wailsjs/go/bridge/Service";
+  import { untrack } from "svelte";
 
   /**
    * The unified filter/adjustment dialog (Filters.swift's sheet family): one
@@ -32,6 +36,9 @@
 
   interface AdjustmentShape {
     kind?: string;
+    blurRadius?: number;
+    motionAngle?: number;
+    motionDistance?: number;
     hue?: number;
     saturation?: number;
     lightness?: number;
@@ -73,28 +80,24 @@
   $effect(() => {
     if (!session || session.kind !== "adjust:Levels") return;
     return registerLevelsEyedropper((docX, docY, mode) => {
-      const settings = adj().levels ?? { ranges: defaultRanges() };
-      const modeIndex = mode === "black" ? 0 : mode === "gray" ? 1 : 2;
-      void BridgeService.ApplyLevelsSample(JSON.stringify(settings), docX, docY, modeIndex)
-        .then((raw: string) => {
-          const updated = JSON.parse(raw) as LevelRange;
-          const ranges = [...(adj().levels?.ranges ?? defaultRanges())];
-          ranges[levelsChannel] = updated;
-          setAdj({ levels: { ranges } });
-          armedEyedropper.set(null);
-        })
-        .catch((err: unknown) => console.warn("吸管取样失败", err));
+      void sampleLevels(docX, docY, mode);
     });
   });
 
   $effect(() => {
-    if (session && session.kind === "adjust:Levels" && histogramBins === null) {
+    const seed = session?.seed;
+    const current = untrack(() => session);
+    histogramBins = null;
+    if (seed !== undefined && current?.kind === "adjust:Levels") {
+      let stale = false;
       void BridgeService.LayerHistogram()
         .then((raw: string) => {
+          if (stale || !isCurrentFilterSession(current)) return;
           const parsed = JSON.parse(raw) as { bins: [number[], number[], number[], number[]] };
           histogramBins = parsed.bins;
         })
         .catch((err: unknown) => console.warn("直方图读取失败", err));
+      return () => { stale = true; };
     }
   });
 
@@ -158,19 +161,6 @@
     const ranges = [...(adj().levels?.ranges ?? defaultRanges())];
     ranges[levelsChannel] = { ...ranges[levelsChannel], ...patch };
     setAdj({ levels: { ranges } });
-  }
-
-  async function autoLevels(mode: number): Promise<void> {
-    try {
-      const raw = await BridgeService.LevelsAuto(mode);
-      const updated = JSON.parse(raw) as {
-        channel?: string;
-        ranges: LevelRange[];
-      };
-      setAdj({ levels: { ranges: updated.ranges } });
-    } catch (err: unknown) {
-      console.warn("自动色阶失败", err);
-    }
   }
 
   // ---- Curves -------------------------------------------------------------
@@ -280,7 +270,7 @@
         {/if}
       </header>
 
-      <div class="body">
+      <div class="body" inert={session.operation !== null}>
         {#if isFilterKind && s}
           {#if kind === "gaussianBlur"}
             <label class="row">
@@ -382,10 +372,10 @@
           {:else if kind === "tonalContrast"}
             <label class="row">
               <span>数量</span>
-              <input type="range" min="0" max="100" value={s.amount}
-                oninput={(e) => updateFilterSettings({ amount: +e.currentTarget.value })} />
-              <input type="number" min="0" max="100" value={s.amount}
-                onchange={(e) => updateFilterSettings({ amount: +e.currentTarget.value })} />
+              <input type="range" min="0" max="100" value={s.tonalAmount}
+                oninput={(e) => updateFilterSettings({ tonalAmount: +e.currentTarget.value })} />
+              <input type="number" min="0" max="100" value={s.tonalAmount}
+                onchange={(e) => updateFilterSettings({ tonalAmount: +e.currentTarget.value })} />
             </label>
             <label class="row">
               <span>半径</span>
@@ -541,8 +531,33 @@
               <input type="number" min="-10" max="10" value={s.shiftEdge}
                 onchange={(e) => updateFilterSettings({ shiftEdge: +e.currentTarget.value })} />
             </label>
-            <p class="hint">首次使用会下载 4.6 MB 分割模型（u2netp，Apache-2.0）。</p>
+            <p class="hint">安装版已包含 u2netp 分割模型（Apache-2.0）；开发版缺失时会下载。</p>
           {/if}
+        {:else if kind === "adjust:Gaussian Blur" && s}
+          <label class="row">
+            <span>半径 (σ)</span>
+            <input type="range" min="0.1" max="250" step="0.1" value={adj().blurRadius ?? 10}
+              oninput={(e) => setAdj({ blurRadius: +e.currentTarget.value })} />
+            <input type="number" min="0.1" max="250" step="0.1" value={adj().blurRadius ?? 10}
+              onchange={(e) => setAdj({ blurRadius: +e.currentTarget.value })} />
+          </label>
+        {:else if kind === "adjust:Motion Blur" && s}
+          <label class="row">
+            <span>角度 (°)</span>
+            <input type="range" min="-90" max="90" step="1" value={adj().motionAngle ?? 0}
+              oninput={(e) => setAdj({ motionAngle: +e.currentTarget.value })} />
+            <input type="number" min="-90" max="90" step="1" value={adj().motionAngle ?? 0}
+              onchange={(e) => setAdj({ motionAngle: +e.currentTarget.value })} />
+          </label>
+          <label class="row">
+            <span>距离 (px)</span>
+            <input type="range" min="1" max="2000" step="1" value={adj().motionDistance ?? 10}
+              oninput={(e) => setAdj({ motionDistance: +e.currentTarget.value })} />
+            <input type="number" min="1" max="2000" step="1" value={adj().motionDistance ?? 10}
+              onchange={(e) => setAdj({ motionDistance: +e.currentTarget.value })} />
+          </label>
+        {:else if kind === "adjust:Invert" && s}
+          <p class="hint">反相调整图层没有可调参数。</p>
         {:else if kind === "adjust:Levels" && s}
           <div class="hist-wrap">
             <canvas width="256" height="72" use:drawHistAction></canvas>
@@ -777,10 +792,17 @@
         {/if}
       </div>
 
+      {#if session.error}
+        <p class="operation-error" role="alert">{session.error}</p>
+      {/if}
       <footer>
         <span class="hint">预览为 ≤2048px 降采样；确定按全尺寸重算</span>
-        <button onclick={() => void cancelFilter()}>取消</button>
-        <button class="primary" onclick={() => void commitFilter()}>确定</button>
+        <button disabled={session.operation !== null} onclick={() => void cancelFilter()}>
+          {session.operation === "cancel" ? "取消中…" : "取消"}
+        </button>
+        <button class="primary" disabled={session.operation !== null} onclick={() => void commitFilter()}>
+          {session.operation === "commit" ? "提交中…" : "确定"}
+        </button>
       </footer>
     </div>
   </div>
@@ -875,6 +897,13 @@
     color: var(--text-dim);
     font-size: 11px;
     margin: 0;
+  }
+
+  .operation-error {
+    color: var(--error, #f28b82);
+    font-size: 12px;
+    margin: 8px 16px;
+    overflow-wrap: anywhere;
   }
 
   .group-label {

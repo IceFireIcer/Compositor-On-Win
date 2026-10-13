@@ -31,9 +31,9 @@
     void SelectTab(id).then(applySnapshot);
   }
 
-  async function doClose(doc: DocTab): Promise<void> {
+  async function doClose(doc: DocTab, discard = false): Promise<void> {
     // workspace.closeTab clears the document state when the last tab goes.
-    await closeTab(doc.id);
+    await closeTab(doc.id, discard);
   }
 
   // window.confirm is unsupported in Wails/WebView2 (review I1): dirty tabs
@@ -90,24 +90,40 @@
   .tabs {
     display: flex;
     align-items: center;
-    gap: 4px;
+    gap: 3px;
     min-width: 0;
     overflow-x: auto;
+    padding: 3px 0;
   }
 
   .tab {
     display: flex;
     align-items: center;
     gap: 6px;
-    padding: 3px 8px 3px 12px;
-    border-radius: 4px;
-    background: var(--bg-raised);
+    min-height: 28px;
+    padding: 2px 6px 2px 11px;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--text-dim);
     cursor: default;
     white-space: nowrap;
   }
 
   .tab.active {
-    background: var(--accent-dim);
+    border-color: var(--border);
+    background: var(--bg-raised);
+    color: var(--text-strong);
+  }
+
+  .tab:hover:not(.active) {
+    background: var(--bg-raised);
+    color: var(--text);
+  }
+
+  .tab:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
   }
 
   /* 图层拖到标签上时的落点提示。 */
@@ -126,7 +142,7 @@
     width: 6px;
     height: 6px;
     border-radius: 50%;
-    background: var(--text);
+    background: var(--warning);
   }
 
   .tab-close {
@@ -144,8 +160,11 @@
   }
 
   .tab-add {
-    width: 24px;
-    height: 24px;
+    width: 28px;
+    height: 28px;
     padding: 0;
+    border-color: transparent;
+    background: transparent;
+    color: var(--text-dim);
   }
 </style>

@@ -18,16 +18,21 @@
   import NewCanvasSheet from "./lib/components/NewCanvasSheet.svelte";
   import CanvasSurface from "./lib/components/CanvasSurface.svelte";
   import LayersPanel from "./lib/components/LayersPanel.svelte";
+  import TransformInspector from "./lib/components/TransformInspector.svelte";
   import MenuBar from "./lib/components/MenuBar.svelte";
+  import SelectionEditSheet from "./lib/components/SelectionEditSheet.svelte";
+  import GridSettingsSheet from "./lib/components/GridSettingsSheet.svelte";
+  import { selectionEdit } from "./lib/state/selectionEdit";
+  import { gridSettingsOpen } from "./lib/state/view";
+  import { watchSelectionTabs } from "./lib/state/selectionTabs";
   import FilterDialog from "./lib/components/FilterDialog.svelte";
   import CameraRawPanel from "./lib/components/CameraRawPanel.svelte";
   import { watchFilterPreviews, filterSession } from "./lib/state/filters";
   import { probeDevice, type RenderTrack } from "./lib/gpu/device";
-  import { healSettings, updateHealSettings } from "./lib/state/tools";
   import { exportDialog, exportNotice } from "./lib/state/export";
   import ExportDialog from "./lib/components/ExportDialog.svelte";
   import GeometrySheet from "./lib/components/GeometrySheet.svelte";
-  import TextOptionsBar from "./lib/components/TextOptionsBar.svelte";
+  import ToolOptionsBar from "./lib/components/ToolOptionsBar.svelte";
   import { geometrySheet } from "./lib/state/geometry";
   import RawDevelopSheet from "./lib/components/RawDevelopSheet.svelte";
   import { rawDevelop } from "./lib/state/rawdevelop";
@@ -56,7 +61,7 @@
     watchUpdateProgress,
   } from "./lib/state/update";
   import { OnFileDrop } from "../wailsjs/runtime/runtime";
-  import { importDroppedBlobs, importDroppedPaths } from "./lib/state/workspace";
+  import { importDroppedBlobs, routeDroppedPaths } from "./lib/state/workspace";
   import {
     DROP_SETTLE_MS,
     LAYER_DRAG_MIME,
@@ -68,6 +73,7 @@
   } from "./lib/state/dropimport";
 
   let version = $state("…");
+  let workspaceLoaded = $state(false);
   // 渲染轨（票 11 验收项："WebGPU 不可用时显式回退 CPU 轨且功能不缺失"）。
   // 探测结果必须**可见**：没有它，用户只能看到"画布有点慢"而不知道走的是哪条轨，
   // 也没法判断 WebGPU 到底有没有起来。reason 放在 title 里供排查。
@@ -115,7 +121,7 @@
     if (paths.length === 0) return;
     wailsPathsAt = Date.now();
     try {
-      const result = await importDroppedPaths(paths);
+      const result = await routeDroppedPaths(paths);
       await reportImportFailures(result.failures);
     } catch (err) {
       console.warn("拖放导入失败", err);
@@ -179,7 +185,9 @@
 
   // Welcome screen whenever the workspace empties (first launch or last tab closed).
   $effect(() => {
-    if (!hasDocument($workspace)) newCanvasSheet.set(true);
+    // The initial empty mirror precedes the asynchronous Go snapshot. On a
+    // frontend reload it must not open a welcome sheet over an existing tab.
+    if (workspaceLoaded && !hasDocument($workspace)) newCanvasSheet.set(true);
   });
 
   // Keep the document store (layers + render rev) in sync with the active
@@ -231,6 +239,7 @@
   // 输入框里不抢画布快捷键（BlendShortcutTests 语义）。动作表在
   // lib/shortcuts/actions.ts —— App 这里只负责装上/拆掉。
   onMount(() => {
+    const stopSelectionTabs = watchSelectionTabs();
     const teardownShortcuts = installAppShortcuts();
     // 窗口级文件拖放：Wails 给的是路径（无路径的内存图像走 DOM 的 drop）。
     OnFileDrop((_x, _y, paths) => {
@@ -280,6 +289,7 @@
       }
       applySnapshot(await GetSnapshot());
     })().finally(() => {
+      workspaceLoaded = true;
       // 界面可用（票 52 / P10）：**在 finally 里报**，这样连首次快照失败也能给出数字
       // （否则 launchbench 每次白等到超时）。等一个 DOM flush 再报：Svelte 还没把这一帧
       // 渲染出来之前不叫"界面可用"。
@@ -299,6 +309,7 @@
     };
     window.addEventListener("resize", onResize);
     return () => {
+      stopSelectionTabs();
       teardownShortcuts();
       stopShellPaths();
       stopUpdateProgress();
@@ -358,9 +369,7 @@
     </div>
   </header>
 
-  {#if $activeTool === "type"}
-    <TextOptionsBar />
-  {/if}
+  <ToolOptionsBar />
 
   <div class="body">
     <nav class="tool-rail" aria-label="工具">
@@ -374,38 +383,6 @@
           {tool.shortcut}
         </button>
       {/each}
-      {#if $activeTool === "spotHealing"}
-        <div class="heal-options">
-          <select
-            aria-label="修复模式"
-            title="修复模式"
-            value={$healSettings.mode}
-            onchange={(e) => updateHealSettings({ mode: +e.currentTarget.value })}
-          >
-            <option value={0}>内容感知</option>
-            <option value={1}>创建纹理</option>
-            <option value={2}>临近匹配</option>
-          </select>
-          <label title="画笔直径">
-            <input
-              type="range"
-              min="4"
-              max="200"
-              value={$healSettings.diameter}
-              onchange={(e) => updateHealSettings({ diameter: +e.currentTarget.value })}
-            />
-          </label>
-          <label title="不透明度">
-            <input
-              type="range"
-              min="1"
-              max="100"
-              value={Math.round($healSettings.opacity * 100)}
-              onchange={(e) => updateHealSettings({ opacity: +e.currentTarget.value / 100 })}
-            />
-          </label>
-        </div>
-      {/if}
     </nav>
 
     <main class="canvas-area">
@@ -430,7 +407,10 @@
         <div class="panel-resize" onmousedown={startPanelDrag}></div>
         <CameraRawPanel />
       {:else}
-        <LayersPanel />
+        <TransformInspector />
+        <div class="layers-pane">
+          <LayersPanel />
+        </div>
       {/if}
     </aside>
   </div>
@@ -486,6 +466,14 @@
   <GeometrySheet />
 {/if}
 
+{#if $selectionEdit}
+  <SelectionEditSheet />
+{/if}
+
+{#if $gridSettingsOpen}
+  <GridSettingsSheet />
+{/if}
+
 {#if psdReport}
   <PsdConversionSheet conversions={psdReport} onclose={() => pendingConversions.set(null)} />
 {/if}
@@ -509,22 +497,28 @@
 <style>
   .app {
     display: grid;
-    grid-template-rows: auto 1fr auto;
+    grid-template-rows: auto auto minmax(0, 1fr) auto;
     height: 100%;
   }
 
   .toolbar {
     display: flex;
     align-items: center;
-    gap: 12px;
-    height: 40px;
+    gap: 10px;
+    height: 44px;
     padding: 0 12px;
     background: var(--bg-panel);
     border-bottom: 1px solid var(--border);
   }
 
   .brand {
-    font-weight: 600;
+    flex: 0 0 auto;
+    padding-right: 12px;
+    border-right: 1px solid var(--border);
+    color: var(--text-strong);
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.02em;
   }
 
   .export-toast {
@@ -548,7 +542,11 @@
   .zoom-controls {
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: 3px;
+    padding: 2px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg-app);
   }
 
   .zoom-controls button {
@@ -584,50 +582,48 @@
   }
 
   .file-actions button {
-    height: 24px;
+    height: 28px;
     padding: 0 10px;
   }
 
   .body {
     display: grid;
-    grid-template-columns: auto 1fr 260px;
+    grid-template-columns: auto minmax(0, 1fr) auto;
     min-height: 0;
   }
 
   .tool-rail {
-    width: 44px;
-    padding: 6px 0;
+    width: 48px;
+    padding: 9px 0;
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 2px;
+    gap: 4px;
     background: var(--bg-panel);
     border-right: 1px solid var(--border);
     overflow-y: auto;
   }
 
   .tool {
-    width: 34px;
-    height: 34px;
+    width: 36px;
+    height: 36px;
     padding: 0;
+    border-color: transparent;
+    background: transparent;
+    color: var(--text-dim);
+    font-size: 12px;
+    font-weight: 600;
   }
 
-  .heal-options {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    padding: 8px 4px;
-    border-top: 1px solid var(--border);
-    width: 100%;
+  .tool:hover {
+    background: var(--bg-raised);
+    color: var(--text);
   }
 
-  .heal-options select {
-    width: 100%;
-    font-size: 11px;
-  }
-
-  .heal-options input[type="range"] {
-    width: 100%;
+  .tool.active {
+    border-color: var(--accent-border);
+    background: var(--accent-surface);
+    color: var(--accent);
   }
 
   .canvas-area {
@@ -647,8 +643,11 @@
   }
 
   .welcome-title {
-    font-size: 18px;
+    margin: 0;
+    color: var(--text-strong);
+    font-size: 20px;
     font-weight: 600;
+    letter-spacing: -0.02em;
   }
 
   .hint {
@@ -656,8 +655,15 @@
   }
 
   .welcome-new {
-    padding: 6px 18px;
+    padding: 8px 18px;
     margin-top: 8px;
+    border-color: var(--accent-action);
+    background: var(--accent-action);
+    color: #fff;
+  }
+
+  .welcome-new:hover {
+    background: #3d7cdd;
   }
 
   .right-panel {
@@ -666,6 +672,7 @@
     border-left: 1px solid var(--border);
     overflow: hidden;
     display: flex;
+    flex-direction: column;
     min-width: 0;
   }
 
@@ -683,9 +690,16 @@
     z-index: 10;
   }
 
-  .right-panel > :global(*) {
-    flex: 1;
+  .layers-pane {
+    flex: 1 1 auto;
     min-width: 0;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 12px;
+  }
+
+  .right-panel > :global(.inspector) {
+    flex: 0 0 auto;
   }
 
   .render-track {
@@ -698,7 +712,7 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    height: 24px;
+    height: 26px;
     padding: 0 10px;
     background: var(--bg-panel);
     border-top: 1px solid var(--border);
@@ -707,7 +721,7 @@
   }
 
   .unsaved {
-    color: var(--text);
+    color: var(--warning);
   }
 
   .sep {

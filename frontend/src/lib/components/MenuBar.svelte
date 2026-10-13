@@ -1,16 +1,20 @@
 <script lang="ts">
   import {
+    ADJUSTMENT_LAYER_KINDS,
     FILTER_KINDS,
     ADJUSTMENT_KINDS,
     beginFilter,
     filterSession,
   } from "../state/filters";
-  import { document } from "../state/document";
-  import { importImages } from "../state/workspace";
+  import { document, layerOps } from "../state/document";
+  import { importImages, saveProjectAs } from "../state/workspace";
   import { copyMerged, exportPNG, openExportJPEG } from "../state/export";
   import { geometrySheet } from "../state/geometry";
   import {
     clearAllGuides,
+    clearSelectionPixels,
+    flipCanvas,
+    flipLayer,
     layerMenuState,
     openGeometry,
     openProjectSafe,
@@ -23,7 +27,6 @@
     toggleLockGuides,
     toggleTransformControls,
     toggleView,
-    viewToggleState,
   } from "../shortcuts/actions";
   import {
     clearRecentProjects,
@@ -36,6 +39,19 @@
   import { chordLabel } from "../shortcuts/chords";
   import { registerCanvasModalGuard } from "../shortcuts/dispatch";
   import { textSession } from "../state/text";
+  import { currentSelection } from "../state/selection";
+  import { loadLayerSelection, openSelectionEdit, selectionEdit, type SelectionEditKind } from "../state/selectionEdit";
+  import {
+    gridSettingsOpen,
+    lockGuides,
+    showGrid,
+    showGuides,
+    showRulers,
+    showsPixelGrid,
+    snapEnabled,
+    snapToggles,
+  } from "../state/view";
+  import { showsTransformControls } from "../state/transform";
 
   /**
    * The menu bar (CompositorApp.swift's menus): 选择 / 文件 / 编辑 / 图像 /
@@ -66,15 +82,41 @@
 
   let open = $state<string | null>(null);
   const hasLayer = $derived(!!$document.activeLayerID);
-  const dialogOpen = $derived($filterSession !== null);
+  const hasPixelLayer = $derived(
+    !!$document.activeLayerID &&
+      $document.layers.some((layer) => layer.id === $document.activeLayerID && !layer.isGroup),
+  );
+  const dialogOpen = $derived($filterSession !== null || $selectionEdit !== null || $gridSettingsOpen);
+  const hasSelection = $derived($currentSelection?.active === true);
+  const hasMask = $derived(!!$document.layers.find((layer) => layer.id === $document.activeLayerID)?.maskFile);
   // 图层菜单的标题/可用性来自被测试钉住的纯函数（state/layerOps.ts），
   // 所以菜单、快捷键、Go 三处对"⌘E 现在合并什么"的看法一致。
   const layerMenu = $derived(layerMenuState($document));
   // 文字会话：剪贴板命令让位给行内文本框（菜单路径也要挡）。
   const editingText = $derived($textSession !== null);
-  // View 菜单的五个开关状态（勾）。动作与快捷键共用 toggleView，所以这里的
-  // 勾永远反映真实状态，不会和画布/快捷键分叉。
-  const viewState = $derived(viewToggleState());
+  // View 菜单的五个开关状态（勾）+"清除参考线"的可用性。动作与快捷键共用
+  // toggleView，所以这里的勾永远反映真实状态，不会和画布/快捷键分叉。
+  //
+  // 必须用 `$store` 前缀逐个读：旧的 `viewToggleState()` 内部是 `get(store)` 与
+  // 普通类字段（`guidesState.guides.length`），Svelte 5 不会把它们登记成
+  // $derived 的依赖 —— 结果是一份"挂载时算一次、之后永不更新"的冻结核对表：
+  // 画布上明明拖出了参考线，"清除参考线"仍然是灰的（真机验收实测）。
+  //
+  // hasGuides 读**文档真源**（Go 快照里的 `guides`）而不是渲染用的
+  // `visibleGuides`：后者是"含拖动中那条"的视图列表，将来任何一条漏掉
+  // refreshVisibleGuides 的新改动都会让菜单重新冻住 —— 正是这一轮修掉的
+  // 那类 bug。
+  const viewState = $derived({
+    grid: $showGrid,
+    pixelGrid: $showsPixelGrid,
+    guides: $showGuides,
+    rulers: $showRulers,
+    snap: $snapEnabled,
+    snapTo: $snapToggles,
+    lockGuides: $lockGuides,
+    transformControls: $showsTransformControls,
+    hasGuides: Array.isArray($document.guides) && $document.guides.length > 0,
+  });
 
   // 最近项目（票 49）：文件菜单里逐条列出，最后一条是"清除最近记录"。
   // 列表由 Go 过滤（移动/删除过的项目不出现），开菜单时重取一次。
@@ -127,6 +169,44 @@
     close();
   }
 
+  function editSelection(kind: SelectionEditKind): void {
+    close();
+    openSelectionEdit(kind);
+  }
+
+  async function loadSelection(kind: "pixels" | "mask"): Promise<void> {
+    close();
+    try { await loadLayerSelection(kind); }
+    catch (error) { window.alert(`载入选区失败：${error instanceof Error ? error.message : String(error)}`); }
+  }
+
+  /** Image adjustments are layers, not destructive pixel filters. Create the
+   * layer first, then open the same editor in metadata-only mode against the
+   * newly active layer so cancel leaves the new layer at its identity defaults.
+   */
+  async function runAdjustmentMenu(
+    kind: string,
+    label: string,
+    provisional = true,
+  ): Promise<void> {
+    close();
+    const rawKind = kind.startsWith("adjust:") ? kind.slice("adjust:".length) : kind;
+    if (!(await layerOps.addAdjustment(rawKind, provisional))) {
+      window.alert(`无法创建${label}调整图层`);
+      return;
+    }
+    // Invert has no parameters to edit: its adjustment layer is immediately
+    // usable and must not leave an unowned provisional creation marker.
+    if (!provisional) return;
+    const layerID = $document.activeLayerID;
+    const layer = layerID ? $document.layers.find((candidate) => candidate.id === layerID) : undefined;
+    if (!layerID || !layer?.adjustment) {
+      window.alert(`${label}调整图层创建成功，但无法打开编辑器`);
+      return;
+    }
+    await beginFilter(kind, label, false, layerID, layer.adjustment);
+  }
+
   function runAndClose(id: string): void {
     runShortcut(id);
     close();
@@ -162,6 +242,16 @@
     {
       label: "选择",
       items: [
+        { label: "全选", hint: hintFor("Menus:Select All"), disabled: !hasLayer || dialogOpen, run: () => runAndClose("Menus:Select All") },
+        { label: "取消选择", hint: hintFor("Menus:Deselect"), disabled: $currentSelection === null || dialogOpen, run: () => runAndClose("Menus:Deselect") },
+        { label: "反向选区", hint: hintFor("Menus:Inverse Selection"), disabled: $currentSelection === null || dialogOpen, run: () => runAndClose("Menus:Inverse Selection") },
+        { label: "载入图层像素", disabled: !hasLayer || dialogOpen, run: () => void loadSelection("pixels") },
+        { label: "载入蒙版黑色区域", disabled: !hasMask || dialogOpen, run: () => void loadSelection("mask") },
+        { label: "色彩范围…", disabled: !hasLayer || dialogOpen, run: () => editSelection("colorRange") },
+        { label: "扩展选区…", disabled: !hasSelection || dialogOpen, run: () => editSelection("expand") },
+        { label: "收缩选区…", disabled: !hasSelection || dialogOpen, run: () => editSelection("contract") },
+        { label: "羽化选区…", disabled: !hasSelection || dialogOpen, run: () => editSelection("feather") },
+        { label: "变换选区…", disabled: !hasSelection || dialogOpen, run: () => editSelection("transform") },
         {
           label: "选择主体",
           hint: hintFor("Menus:Select Subject"),
@@ -169,7 +259,7 @@
           run: () => void runSelectMenu("subject"),
         },
         {
-          label: "对象选择（画布中心）",
+          label: "对象选择",
           disabled: !hasLayer || dialogOpen,
           run: () => void runSelectMenu("object"),
         },
@@ -222,6 +312,7 @@
           },
         },
         { label: "导入图像…", disabled: dialogOpen, run: () => void runImportImages() },
+        { label: "另存为…", disabled: !hasLayer || dialogOpen, run: () => { close(); void saveProjectAs().catch((error) => window.alert(`另存为失败：${error instanceof Error ? error.message : String(error)}`)); } },
         {
           label: "导出 PNG…",
           hint: hintFor("Menus:Export PNG"),
@@ -291,6 +382,14 @@
           run: () => runAndClose("Menus:Fill with Background"),
         },
         {
+          label: "清除选区像素",
+          disabled: !hasLayer || !hasSelection || dialogOpen,
+          run: () => {
+            close();
+            void clearSelectionPixels();
+          },
+        },
+        {
           label: "键盘快捷键…",
           disabled: dialogOpen,
           run: () => {
@@ -309,10 +408,7 @@
             label: k.label,
             hint: definition ? hintFor(definition) : k.placeholder,
             disabled: !hasLayer || dialogOpen,
-            run: () => {
-              void beginFilter(k.id, k.label.replace(/…$/, ""), true);
-              close();
-            },
+            run: () => void runAdjustmentMenu(k.id, k.label.replace(/…$/, "")),
           };
         }),
         {
@@ -352,6 +448,22 @@
             close();
           },
         },
+        {
+          label: "水平翻转画布",
+          disabled: !hasLayer || dialogOpen,
+          run: () => {
+            close();
+            void flipCanvas("horizontal");
+          },
+        },
+        {
+          label: "垂直翻转画布",
+          disabled: !hasLayer || dialogOpen,
+          run: () => {
+            close();
+            void flipCanvas("vertical");
+          },
+        },
       ],
     },
     {
@@ -388,6 +500,22 @@
           run: () => runAndClose("Menus:Merge Layers"),
         },
         {
+          label: "水平翻转图层",
+          disabled: !hasPixelLayer || dialogOpen,
+          run: () => {
+            close();
+            void flipLayer("x");
+          },
+        },
+        {
+          label: "垂直翻转图层",
+          disabled: !hasPixelLayer || dialogOpen,
+          run: () => {
+            close();
+            void flipLayer("y");
+          },
+        },
+        {
           label: "新建空图层",
           hint: hintFor("Menus:New Blank Layer"),
           disabled: !hasLayer || dialogOpen,
@@ -411,6 +539,15 @@
           disabled: !hasLayer || dialogOpen,
           run: () => runAndClose("Canvas & Layers:Delete selection / layer / effect / lasso point"),
         },
+        ...ADJUSTMENT_LAYER_KINDS.map((k) => ({
+          label: `新建调整图层 · ${k.label.replace(/…$/, "")}`,
+          disabled: !hasLayer || dialogOpen,
+          run: () => void runAdjustmentMenu(
+            k.id,
+            k.label.replace(/…$/, ""),
+            k.id !== "adjust:Invert",
+          ),
+        })),
       ],
     },
     {
@@ -455,8 +592,8 @@
           run: () => runAndClose("Menus:Zoom Out"),
         },
         // --- 视图开关（票 14 / 47）：原先这五条只有快捷键、没有菜单入口，
-        // 用户除了背键位没有别的办法打开参考线/网格/标尺。勾来自
-        // viewToggleState，与实际状态同源（菜单与快捷键共用 toggleView）。
+        // 用户除了背键位没有别的办法打开参考线/网格/标尺。勾来自上面的
+        // viewState（$store 响应式读），与实际状态同源（菜单与快捷键共用 toggleView）。
         {
           label: "显示网格",
           hint: hintFor("Menus:Show Grid"),
@@ -465,6 +602,16 @@
             toggleView("grid");
             close();
           },
+        },
+        {
+          label: "网格设置…",
+          disabled: dialogOpen,
+          run: () => gridSettingsOpen.set(true),
+        },
+        {
+          label: "显示像素网格",
+          checked: viewState.pixelGrid,
+          run: () => showsPixelGrid.update((value) => !value),
         },
         {
           label: "显示参考线",
@@ -493,6 +640,16 @@
             close();
           },
         },
+        ...([
+          ["guides", "对齐到参考线"],
+          ["grid", "对齐到网格"],
+          ["layerBounds", "对齐到图层"],
+          ["docBounds", "对齐到文档边界"],
+        ] as const).map(([target, label]) => ({
+          label,
+          checked: viewState.snapTo[target],
+          run: () => snapToggles.update((current) => ({ ...current, [target]: !current[target] })),
+        })),
         {
           label: "锁定参考线",
           hint: hintFor("Menus:Lock Guides"),
@@ -524,7 +681,7 @@
         {
           label: "变换图层 / 选区",
           hint: hintFor("Menus:Transform Layer / Selection"),
-          disabled: !hasLayer || dialogOpen,
+          disabled: !(hasLayer || hasSelection) || dialogOpen,
           run: () => runAndClose("Menus:Transform Layer / Selection"),
         },
       ],
@@ -620,24 +777,26 @@
     padding: 0 10px;
     background: transparent;
     border: none;
+    border-radius: 5px;
     font-size: 12px;
   }
 
   .menu > button:hover,
   .menu > button.active {
-    background: var(--bg-canvas);
+    background: var(--bg-raised);
+    color: var(--text-strong);
   }
 
   .dropdown {
     position: absolute;
     top: 100%;
     left: 0;
-    min-width: 220px;
+    min-width: 244px;
     background: var(--bg-panel);
     border: 1px solid var(--border);
-    border-radius: 6px;
-    box-shadow: 0 10px 30px rgb(0 0 0 / 30%);
-    padding: 4px;
+    border-radius: 8px;
+    box-shadow: 0 14px 36px rgb(0 0 0 / 34%);
+    padding: 5px;
     z-index: 50;
     display: flex;
     flex-direction: column;
@@ -649,13 +808,16 @@
     gap: 18px;
     background: transparent;
     border: none;
-    padding: 5px 10px;
+    min-height: 28px;
+    padding: 5px 9px;
+    border-radius: 5px;
     font-size: 12px;
     text-align: left;
   }
 
   .item:hover:not(.disabled) {
-    background: var(--bg-canvas);
+    background: var(--accent-surface);
+    color: var(--text-strong);
   }
 
   .item.disabled {

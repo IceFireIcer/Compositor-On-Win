@@ -6,9 +6,10 @@
     cancelFilter,
     armedEyedropper,
     autoWhiteBalance,
+    readCameraRawScope,
   } from "../state/filters";
   import { document } from "../state/document";
-  import * as BridgeService from "../../../wailsjs/go/bridge/Service";
+  import { untrack } from "svelte";
   import CameraRawSlider from "./CameraRawSlider.svelte";
   import CurveEditor from "./CurveEditor.svelte";
 
@@ -200,21 +201,29 @@
   let scopeCells = $state<number[] | null>(null);
 
   $effect(() => {
+    void session?.seed;
+    void session?.activation;
+    scopeBins = null;
+    scopeCells = null;
+  });
+
+  $effect(() => {
     if (!active) return;
     // Refresh on every landed preview (document.filterRev) and on open.
     void $document.filterRev;
-    const sessionNow = session;
+    void session?.seed;
+    void session?.activation;
+    const sessionNow = untrack(() => session);
     if (!sessionNow) return;
-    BridgeService.CameraRawScope()
-      .then((raw: string) => {
-        const parsed = JSON.parse(raw) as {
-          histogram: [number[], number[], number[], number[]];
-          vectorscope: number[];
-        };
+    let stale = false;
+    void readCameraRawScope(sessionNow)
+      .then((parsed) => {
+        if (stale || !parsed) return;
         scopeBins = parsed.histogram;
         scopeCells = parsed.vectorscope;
       })
       .catch((err: unknown) => console.warn("示波器读取失败", err));
+    return () => { stale = true; };
   });
 
   function histPeak(bins: [number[], number[], number[], number[]]): number {
@@ -382,7 +391,15 @@
   const styleGlow = $derived((cr.glowStyle ?? 0) === 1 ? "bloom" : (cr.glowStyle ?? 0) === 2 ? "halation" : "diffusion");
 </script>
 
-<svelte:window onkeyup={onKeyUp} />
+<svelte:window onkeyup={onKeyUp} onblur={() => {
+  if (active) updateFilterSettings({ clipping: 0, sharpenMask: false });
+}} onkeydown={(event) => {
+  if (!active || !session) return;
+  if (event.key === "Escape") { event.preventDefault(); void cancelFilter(); }
+  else if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
+    event.preventDefault(); void commitFilter();
+  }
+}} />
 
 {#if active && session}
   <div class="panel" role="complementary" aria-label="Camera Raw">
@@ -395,7 +412,7 @@
     </header>
 
     <!-- Scope: histogram / vectorscope of the graded pixels -->
-    <div class="scope">
+    <div class="scope" inert={session.operation !== null}>
       <canvas bind:this={scopeCanvas} width="256" height="84"></canvas>
       <div class="scope-actions">
         <button
@@ -422,7 +439,7 @@
       </div>
     </div>
 
-    <div class="sections">
+    <div class="sections" inert={session.operation !== null}>
       {#each SECTIONS as section (section)}
         <div class="section">
           <div class="section-head">
@@ -782,10 +799,17 @@
       {/each}
     </div>
 
+    {#if session.error}
+      <p class="operation-error" role="alert">{session.error}</p>
+    {/if}
     <footer class="panel-footer">
       <span class="hint">预览 ≤2048px · 确定按全尺寸提交</span>
-      <button onclick={() => void cancelFilter()}>取消</button>
-      <button class="primary" onclick={() => void commitFilter()}>确定</button>
+      <button disabled={session.operation !== null} onclick={() => void cancelFilter()}>
+        {session.operation === "cancel" ? "取消中…" : "取消"}
+      </button>
+      <button class="primary" disabled={session.operation !== null} onclick={() => void commitFilter()}>
+        {session.operation === "commit" ? "提交中…" : "确定"}
+      </button>
     </footer>
   </div>
 {/if}
@@ -943,6 +967,13 @@
     color: var(--text-dim);
     font-size: 11px;
     margin: 0;
+  }
+
+  .operation-error {
+    color: var(--error, #f28b82);
+    font-size: 12px;
+    margin: 8px 12px;
+    overflow-wrap: anywhere;
   }
 
   .panel-footer {
