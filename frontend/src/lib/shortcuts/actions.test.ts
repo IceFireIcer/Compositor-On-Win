@@ -33,6 +33,7 @@ vi.mock("../../../wailsjs/go/bridge/Workspace", async () => {
 });
 
 import { clearSelectionPixels, flipCanvas, flipLayer, layerMenuState, runInvert, shortcutActions } from "./actions";
+import { commandPaletteOpen } from "../commands/session";
 import { get } from "svelte/store";
 import { dispatchShortcut, setShortcutActions } from "./dispatch";
 import { shortcutOverrides } from "./settings";
@@ -484,6 +485,52 @@ describe("selection and flip command wiring", () => {
 });
 
 /**
+ * 命令搜索面板的快捷键（票 54）：Ctrl+F 打开、再按一次收起（原版 ⌘F 的
+ * toggle 语义）；焦点在文本输入里时让位给输入，纯 F 不占用（留给票 55 的
+ * 纯画布模式）。
+ */
+describe("命令搜索面板的快捷键", () => {
+  beforeEach(() => {
+    shortcutOverrides.set({});
+    setShortcutActions(shortcutActions);
+    textSession.set(null);
+    commandPaletteOpen.set(false);
+  });
+  afterEach(() => {
+    commandPaletteOpen.set(false);
+    setShortcutActions({});
+  });
+
+  function ctrlF(target: EventTarget | null = null): KeyboardEvent {
+    return {
+      type: "keydown", key: "f", ctrlKey: true, metaKey: false,
+      altKey: false, shiftKey: false, isComposing: false, target,
+      preventDefault() {},
+    } as unknown as KeyboardEvent;
+  }
+
+  it("Ctrl+F 打开，再按一次收起", () => {
+    expect(dispatchShortcut(ctrlF(), "menu")).toBe(true);
+    expect(get(commandPaletteOpen)).toBe(true);
+    expect(dispatchShortcut(ctrlF(), "menu")).toBe(true);
+    expect(get(commandPaletteOpen)).toBe(false);
+  });
+
+  it("焦点在文本输入里时 Ctrl+F 让位给输入（不会在打字时弹出面板）", () => {
+    const field = { tagName: "INPUT", isContentEditable: false, getRootNode: () => ({}) } as unknown as EventTarget;
+    expect(dispatchShortcut(ctrlF(field), "menu")).toBe(false);
+    expect(get(commandPaletteOpen)).toBe(false);
+  });
+
+  it("纯 F 不占用（纯画布模式的 F 留给票 55）", () => {
+    const plainF = { ...ctrlF(), ctrlKey: false } as unknown as KeyboardEvent;
+    expect(dispatchShortcut(plainF, "menu")).toBe(false);
+    expect(dispatchShortcut(plainF, "canvas")).toBe(false);
+    expect(get(commandPaletteOpen)).toBe(false);
+  });
+});
+
+/**
  * 动作表接线测试（票 47 的"全部工具/命令挂接快捷键"）：
  *  - 每条动作的 id 都必须能在定义表里找到（防手抄 id 打错）；
  *  - 已接线的定义数量与被刻意留空的条目一起被钉住，改动时测试会提醒；
@@ -512,6 +559,7 @@ describe("shortcutActions 与定义表对齐", () => {
       "Menus:Export JPEG",
       "Menus:Close Project",
       "Menus:Fit Canvas",
+      "Menus:Search Commands",
       "Menus:Actual Pixels",
       "Menus:Zoom In",
       "Menus:Zoom Out",

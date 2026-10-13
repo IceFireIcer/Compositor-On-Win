@@ -8,10 +8,12 @@ import { problemIn } from "./settings";
  * 这里就会红。三元组：id、原版 key、原版 modifiers。
  *
  * Menus 46 条（Swift 75-98 行）、Canvas & Layers 58 条（100-117 + 125 行）、
- * Text Editing 9 条（119-124 行），共 113 条。
+ * Text Editing 9 条（119-124 行），共 113 条；票 54 依同一份 Swift 表补上
+ * Search Commands（"f" + Command，当前参考源码 KeyboardShortcuts.swift:92），
+ * 所以现在是 Menus 47 条、共 114 条。
  */
 const EXPECTED: readonly (readonly [string, string, number])[] = [
-  // --- Menus（46）---
+  // --- Menus（47）---
   ["Menus:Undo", "z", 1],
   ["Menus:Redo", "z", 9],
   ["Menus:New Canvas", "n", 1],
@@ -22,6 +24,7 @@ const EXPECTED: readonly (readonly [string, string, number])[] = [
   ["Menus:Export JPEG", "s", 11],
   ["Menus:Close Project", "w", 1],
   ["Menus:Fit Canvas", "0", 1],
+  ["Menus:Search Commands", "f", 1],
   ["Menus:Actual Pixels", "1", 1],
   ["Menus:Zoom In", "=", 1],
   ["Menus:Zoom Out", "-", 1],
@@ -132,11 +135,11 @@ const EXPECTED: readonly (readonly [string, string, number])[] = [
 ];
 
 describe("快捷键定义表与原版一一对应（票 47）", () => {
-  it("共 113 条，三个分组 46 / 58 / 9", () => {
-    expect(SHORTCUTS).toHaveLength(113);
-    expect(EXPECTED).toHaveLength(113);
+  it("共 114 条，三个分组 47 / 58 / 9", () => {
+    expect(SHORTCUTS).toHaveLength(114);
+    expect(EXPECTED).toHaveLength(114);
     const count = (group: string): number => SHORTCUTS.filter((d) => d.group === group).length;
-    expect(count("Menus")).toBe(46);
+    expect(count("Menus")).toBe(47);
     expect(count("Canvas & Layers")).toBe(58);
     expect(count("Text Editing")).toBe(9);
   });

@@ -57,6 +57,7 @@ import {
 } from "../state/layerOps";
 import { activeTool, cycleShapeKind, cycleToolMode, setBrushMode, updateToolModes } from "../state/tools";
 import { copySelection, cutSelection, layerViaCopy, paste } from "../state/clipboard";
+import { toggleCommandPalette } from "../commands/session";
 import { changeBrushHardness, changeBrushSize } from "../state/tools";
 import { palette, resetPaletteColors, swapPaletteColors } from "../state/palette";
 import { currentSelection, selectionPayload, setSelectionFromMaskData } from "../state/selection";
@@ -715,6 +716,9 @@ export const shortcutActions: ShortcutActions = {
   },
   "Menus:Close Project": () => closeActiveProject(),
   "Menus:Fit Canvas": () => fitCanvas(),
+  // 票 54：命令搜索面板（Ctrl+F）。开关与查询状态在 ../commands/session.ts，
+  // 面板本身就是同一份菜单 + 工具 + 图层蒙版命令的搜索面。
+  "Menus:Search Commands": () => toggleCommandPalette(),
   "Menus:Actual Pixels": () => actualPixels(),
   "Menus:Zoom In": () => zoomStep(1),
   "Menus:Zoom Out": () => zoomStep(-1),

@@ -37,6 +37,8 @@
   import RawDevelopSheet from "./lib/components/RawDevelopSheet.svelte";
   import { rawDevelop } from "./lib/state/rawdevelop";
   import KeyboardShortcutsSheet from "./lib/components/KeyboardShortcutsSheet.svelte";
+  import CommandPalette from "./lib/components/CommandPalette.svelte";
+  import { commandPaletteOpen } from "./lib/commands/session";
   import {
     installAppShortcuts,
     newCanvasSheet,
@@ -450,6 +452,11 @@
 
 {#if $shortcutsSheet}
   <KeyboardShortcutsSheet />
+{/if}
+
+<!-- 命令搜索面板（票 54）：Ctrl+F 或视图 ▸ 搜索命令… 打开。 -->
+{#if $commandPaletteOpen}
+  <CommandPalette />
 {/if}
 
 <!-- 检查更新（票 50）：菜单打开，或启动时的静默检查发现新版。 -->

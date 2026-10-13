@@ -52,6 +52,8 @@
     snapToggles,
   } from "../state/view";
   import { showsTransformControls } from "../state/transform";
+  import { SEARCH_COMMANDS_LABEL, menuModel, type MenuModel } from "../commands/menuModel";
+  import { toggleCommandPalette } from "../commands/session";
 
   /**
    * The menu bar (CompositorApp.swift's menus): 选择 / 文件 / 编辑 / 图像 /
@@ -66,19 +68,8 @@
    * behavior cannot drift apart.
    */
 
-  interface MenuItem {
-    label: string;
-    hint?: string;
-    disabled?: boolean;
-    placeholder?: string;
-    /** 开关型菜单项：为真时左侧画一个勾（View 菜单的五个开关用）。 */
-    checked?: boolean;
-    run?: () => void;
-  }
-  interface Menu {
-    label: string;
-    items: MenuItem[];
-  }
+  // 菜单的形状在 ../commands/menuModel.ts（命令搜索面板搜的是同一份）。
+  type Menu = MenuModel;
 
   let open = $state<string | null>(null);
   const hasLayer = $derived(!!$document.activeLayerID);
@@ -567,6 +558,16 @@
     {
       label: "视图",
       items: [
+        // 票 54：命令搜索面板。原版把这一条放在 View 组（CommandGroup(after: .toolbar)，
+        // ⌘F）；Windows 上是 Ctrl+F，纯画布模式的 F 留给票 55。
+        {
+          label: SEARCH_COMMANDS_LABEL,
+          hint: hintFor("Menus:Search Commands"),
+          run: () => {
+            close();
+            toggleCommandPalette();
+          },
+        },
         {
           label: "适应窗口",
           hint: hintFor("Menus:Fit Canvas"),
@@ -715,6 +716,12 @@
   $effect(() => {
     if (open === null) return;
     return registerCanvasModalGuard(() => open !== null);
+  });
+
+  // 把这份菜单发布给命令搜索面板（票 54）：菜单是前端数据，面板搜的就是这里
+  // 渲染的那份 —— 动态标题（向下合并 / 合并组）、最近项目、可用性与勾都一致。
+  $effect(() => {
+    menuModel.set(menus);
   });
 </script>
 

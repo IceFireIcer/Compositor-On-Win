@@ -1,6 +1,5 @@
 <script lang="ts">
   import { get } from "svelte/store";
-  import { SetLayerMask } from "../../../wailsjs/go/bridge/Service";
   import {
     BLEND_MODES,
     applyDocumentSnapshot,
@@ -20,6 +19,7 @@
   } from "../state/layerPanel";
   import { workspace } from "../state/workspace";
   import { canvasEditTarget, clearMaskTarget, selectMaskTarget } from "../state/layerTarget";
+  import { requestLayerMask, type LayerMaskOperation } from "../state/layerMask";
 
   /**
    * The layer panel (ticket 20 shell + bridge wiring). Rows render top→bottom
@@ -40,18 +40,6 @@
   let dragSourceId: string | null = $state(null);
   let dropIntent: LayerDropIntent | null = $state(null);
   const hasSelection = $derived(!!$currentSelection?.mask.some((value) => value > 0));
-
-  type MaskOperation =
-    | "createRevealAll"
-    | "createHideAll"
-    | "createRevealSelection"
-    | "createHideSelection"
-    | "enable"
-    | "disable"
-    | "link"
-    | "unlink"
-    | "invert"
-    | "delete";
 
   function findLayer(id: string): DocLayer | undefined {
     return docState.layers.find((l) => l.id === id);
@@ -124,7 +112,7 @@
     void placeLayer(get(workspace).activeId, intent).catch((err) => console.warn("移动图层失败", err));
   }
 
-  async function setMask(layerId: string, operation: MaskOperation): Promise<void> {
+  async function setMask(layerId: string, operation: LayerMaskOperation): Promise<void> {
     const tabId = get(workspace).activeId;
     if (!tabId || docState.docId !== tabId) return;
     const request = ++targetRequest;
@@ -142,17 +130,14 @@
       );
     }
 
-    try {
-      const raw = await SetLayerMask(tabId, layerId, operation, selectionJSON);
-      if (get(workspace).activeId !== tabId || get(documentState).docId !== tabId) return;
-      const unchangedSelection = get(documentState).activeLayerID === activeBefore;
-      applyDocumentSnapshot(raw, tabId);
-      if (request !== targetRequest || !unchangedSelection) return;
-      if (operation === "delete") clearMaskTarget(tabId);
-      else await selectMask(layerId);
-    } catch (err) {
-      console.warn(`图层蒙版操作 ${operation} 失败`, err);
-    }
+    // 跨标签守卫与失败告警在 requestLayerMask 里（与"添加图层蒙版"命令共用）。
+    const raw = await requestLayerMask(tabId, layerId, operation, selectionJSON);
+    if (raw === null) return;
+    const unchangedSelection = get(documentState).activeLayerID === activeBefore;
+    applyDocumentSnapshot(raw, tabId);
+    if (request !== targetRequest || !unchangedSelection) return;
+    if (operation === "delete") clearMaskTarget(tabId);
+    else await selectMask(layerId);
   }
 
   function chooseMaskAction(
@@ -162,7 +147,7 @@
   ): void {
     menu.value = "";
     if (!operation) return;
-    void setMask(layerId, operation as MaskOperation);
+    void setMask(layerId, operation as LayerMaskOperation);
   }
 
   async function selectMask(layerId: string): Promise<void> {

@@ -8,8 +8,8 @@
  *     Tab `\t`、Space `" "`、方向键 `\u{f700}`…`\u{f703}`）；
  *   - 修饰键位：Command/Primary=1、Option/Alt=2、Control=4、Shift=8。
  *
- * 分组与原版一致：46 条 Menus、58 条 Canvas & Layers、9 条 Text Editing
- * （共 113 条；对等矩阵写"~114 条"，差额来自原版表本身的计数）。
+ * 分组：47 条 Menus（46 条旧表 + 票 54 的 Search Commands）、58 条
+ * Canvas & Layers、9 条 Text Editing（共 114 条）。
  * 表驱动测试 `table.test.ts` 里的期望是照着 Swift 源码手工誊写的，
  * 不从这里生成——本表抄错一条，测试就会失败。
  */
@@ -60,6 +60,8 @@ const MENUS: readonly ShortcutDefinition[] = [
   menu("Export JPEG", "s", 11),
   menu("Close Project", "w", 1),
   menu("Fit Canvas", "0", 1),
+  // 票 54：命令搜索面板（原版 ⌘F，Windows 上 Ctrl+F；纯画布模式的 F 由票 55 加）。
+  menu("Search Commands", "f", 1),
   menu("Actual Pixels", "1", 1),
   menu("Zoom In", "=", 1),
   menu("Zoom Out", "-", 1),
@@ -178,7 +180,7 @@ const TEXT_EDITING: readonly ShortcutDefinition[] = [
   ]),
 ];
 
-/** 全部 113 条定义，顺序与原版 `ShortcutDefinition.all` 相同。 */
+/** 全部 114 条定义，顺序与原版 `ShortcutDefinition.all` 相同。 */
 export const SHORTCUTS: readonly ShortcutDefinition[] = [
   ...MENUS,
   ...CANVAS,
