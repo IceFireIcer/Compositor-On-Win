@@ -39,7 +39,17 @@ $LicenseNames = @("u2netp-Apache-2.0.txt", "onnxruntime-MIT.txt", "onnxruntime-g
 function Assert-Hash([string]$Path, [string]$Expected, [string]$Label) {
     $item = Get-Item -LiteralPath $Path
     if ($item.Length -lt 2MB) { throw "$Label is too small: $($item.Length) bytes" }
-    $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $Path).Hash.ToUpperInvariant()
+    # Wails can inherit PowerShell 7's PSModulePath when launching Windows
+    # PowerShell 5.1, making Get-FileHash unavailable. Use the shared .NET API.
+    $stream = [System.IO.File]::OpenRead($item.FullName)
+    $hasher = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $actual = [System.BitConverter]::ToString($hasher.ComputeHash($stream)).Replace("-", "")
+    }
+    finally {
+        $stream.Dispose()
+        $hasher.Dispose()
+    }
     if ($actual -ne $Expected) { throw "$Label SHA-256 mismatch: $actual" }
     Write-Host "[ ok ] $Label $($item.Length) bytes SHA-256 $actual" -ForegroundColor Green
 }
