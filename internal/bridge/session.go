@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"compositor-win/internal/domain"
 	"compositor-win/internal/history"
@@ -90,13 +91,64 @@ func newSession(path string, doc *domain.Document, bitmaps map[string]*render.Bi
 	}
 }
 
-// newDocumentModel builds the model behind 新建文档: a version-11 manifest
-// document with one opaque white 背景 layer at the full canvas. The layer
-// record follows the project-format contract — ImageFile derived from the
-// layer UUID, identity transform at Nearest sampling.
+// 新建画布的底色（票 57，对等矩阵 U04）。空串与 "transparent" 都是透明，
+// 与原版 NewCanvasBackground 的默认值一致。
+const (
+	canvasBackgroundTransparent = "transparent"
+	canvasBackgroundWhite       = "white"
+	canvasBackgroundBlack       = "black"
+)
+
+// parseCanvasBackground normalizes the background an RPC carried. Anything but
+// the accepted spellings is a request error: the original's enum makes an
+// unknown value unrepresentable, the wire makes it a string.
+func parseCanvasBackground(background string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(background)) {
+	case "", canvasBackgroundTransparent:
+		return canvasBackgroundTransparent, nil
+	case canvasBackgroundWhite:
+		return canvasBackgroundWhite, nil
+	case canvasBackgroundBlack:
+		return canvasBackgroundBlack, nil
+	}
+	return "", fmt.Errorf("无效的画布底色 %q（可用：transparent、white、black）", background)
+}
+
+// newDocumentModel builds the model behind 新建文档 with the pre-ticket-57
+// default: one opaque white 背景 layer at the full canvas. The 3-argument
+// entry is kept for its existing callers (document_test/export_test/fill_test/
+// text_test pin that fixture); the frontend creates documents through
+// newDocumentModelWithBackground with a transparent default.
 func newDocumentModel(width, height, resolution int) (*domain.Document, map[string]*render.Bitmap) {
+	return buildDocumentModel(width, height, resolution, "背景", uint8Ptr(255))
+}
+
+// newDocumentModelWithBackground builds the model behind 新建文档 for the
+// chosen background — it expects a value normalized by parseCanvasBackground.
+// White/black fill an opaque Background layer with that color at full-canvas
+// pixels (the original's firstLayer), transparent leaves a blank 图层 1. The original's transparent layer has no asset at all
+// (asset == nil); here every paint target requires one
+// (resolveRasterPaintTarget), so the blank layer carries a fully transparent
+// bitmap — the composite is identical.
+func newDocumentModelWithBackground(width, height, resolution int, background string) (*domain.Document, map[string]*render.Bitmap) {
+	switch background {
+	case canvasBackgroundWhite:
+		return buildDocumentModel(width, height, resolution, "Background", uint8Ptr(255))
+	case canvasBackgroundBlack:
+		return buildDocumentModel(width, height, resolution, "Background", uint8Ptr(0))
+	default: // transparent
+		return buildDocumentModel(width, height, resolution, "图层 1", nil)
+	}
+}
+
+// buildDocumentModel assembles a version-11 manifest document with one
+// full-canvas pixel layer. The layer record follows the project-format
+// contract — ImageFile derived from the layer UUID, identity transform at
+// Nearest sampling. fill is the opaque color every pixel takes; nil leaves the
+// bitmap fully transparent.
+func buildDocumentModel(width, height, resolution int, layerName string, fill *uint8) (*domain.Document, map[string]*render.Bitmap) {
 	res := resolution
-	bg := newPixelLayer("背景", width, height)
+	bg := newPixelLayer(layerName, width, height)
 	active := bg.ID
 	doc := &domain.Document{
 		Format:        domain.FormatID,
@@ -109,12 +161,17 @@ func newDocumentModel(width, height, resolution int) (*domain.Document, map[stri
 		ActiveLayerID: &active,
 		Layers:        []domain.Layer{bg},
 	}
-	white := render.NewBitmap(width, height)
-	for i := range white.Pix { // premultiplied white opaque: 255 on every channel
-		white.Pix[i] = 255
+	bmp := render.NewBitmap(width, height)
+	if fill != nil {
+		for i := 0; i < len(bmp.Pix); i += 4 { // premultiplied opaque fill: the color on RGB, 255 on alpha
+			bmp.Pix[i], bmp.Pix[i+1], bmp.Pix[i+2], bmp.Pix[i+3] = *fill, *fill, *fill, 255
+		}
 	}
-	return doc, map[string]*render.Bitmap{*bg.ImageFile: white}
+	return doc, map[string]*render.Bitmap{*bg.ImageFile: bmp}
 }
+
+// uint8Ptr returns a pointer to v (the fill color of a new canvas).
+func uint8Ptr(v uint8) *uint8 { return &v }
 
 // newPixelLayer builds a blank pixel layer: transparent bitmap asset named
 // <UUID>.png (project.imageName requires exactly that spelling), visible,

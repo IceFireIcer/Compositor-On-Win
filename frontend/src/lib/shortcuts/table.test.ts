@@ -10,7 +10,9 @@ import { problemIn } from "./settings";
  * Menus 46 条（Swift 75-98 行）、Canvas & Layers 58 条（100-117 + 125 行）、
  * Text Editing 9 条（119-124 行），共 113 条；票 54 依同一份 Swift 表补上
  * Search Commands（"f" + Command，当前参考源码 KeyboardShortcuts.swift:92），
- * 所以现在是 Menus 47 条、共 114 条。
+ * 票 55 又补上 Canvas & Layers 组开头的 Toggle Fullscreen（"f"，无修饰键，
+ * KeyboardShortcuts.swift:116），所以现在是 Menus 47 / Canvas 59 / Text 9，
+ * 共 115 条。
  */
 const EXPECTED: readonly (readonly [string, string, number])[] = [
   // --- Menus（47）---
@@ -62,7 +64,8 @@ const EXPECTED: readonly (readonly [string, string, number])[] = [
   ["Menus:Snap", ";", 9],
   ["Menus:Lock Guides", ";", 3],
 
-  // --- Canvas & Layers（58）---
+  // --- Canvas & Layers（59）---
+  ["Canvas & Layers:Toggle Fullscreen: the canvas alone on black (Esc also leaves)", "f", 0],
   ["Canvas & Layers:Select tool", "a", 0],
   ["Canvas & Layers:Move / Transform tool", "v", 0],
   ["Canvas & Layers:Hand tool", "h", 0],
@@ -135,13 +138,31 @@ const EXPECTED: readonly (readonly [string, string, number])[] = [
 ];
 
 describe("快捷键定义表与原版一一对应（票 47）", () => {
-  it("共 114 条，三个分组 47 / 58 / 9", () => {
-    expect(SHORTCUTS).toHaveLength(114);
-    expect(EXPECTED).toHaveLength(114);
+  it("共 115 条，三个分组 47 / 59 / 9", () => {
+    expect(SHORTCUTS).toHaveLength(115);
+    expect(EXPECTED).toHaveLength(115);
     const count = (group: string): number => SHORTCUTS.filter((d) => d.group === group).length;
     expect(count("Menus")).toBe(47);
-    expect(count("Canvas & Layers")).toBe(58);
+    expect(count("Canvas & Layers")).toBe(59);
     expect(count("Text Editing")).toBe(9);
+  });
+
+  it("票 55：Toggle Fullscreen 是画布池的裸 F，与菜单池的 Ctrl+F 不同弦", () => {
+    const toggle = definitionById(
+      "Canvas & Layers:Toggle Fullscreen: the canvas alone on black (Esc also leaves)",
+    );
+    expect(toggle).toBeDefined();
+    expect(toggle!.group).toBe("Canvas & Layers");
+    expect(toggle!.key).toBe("f");
+    expect(toggle!.modifiers).toBe(0);
+    // 命令搜索是 Menus 组的 Ctrl+F，两条和弦不同，表本身不冲突。
+    const search = definitionById("Menus:Search Commands");
+    expect(search!.key).toBe("f");
+    expect(search!.modifiers).toBe(1);
+    // 定义顺序与原版一致：这条排在 Select tool 之前。
+    const canvasTitles = SHORTCUTS.filter((d) => d.group === "Canvas & Layers").map((d) => d.title);
+    expect(canvasTitles[0]).toBe("Toggle Fullscreen: the canvas alone on black (Esc also leaves)");
+    expect(canvasTitles[1]).toBe("Select tool");
   });
 
   it("每一条的 id / key / modifiers 都与 Swift 源码誊写的期望一致", () => {

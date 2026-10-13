@@ -8,8 +8,9 @@
  *     Tab `\t`、Space `" "`、方向键 `\u{f700}`…`\u{f703}`）；
  *   - 修饰键位：Command/Primary=1、Option/Alt=2、Control=4、Shift=8。
  *
- * 分组：47 条 Menus（46 条旧表 + 票 54 的 Search Commands）、58 条
- * Canvas & Layers、9 条 Text Editing（共 114 条）。
+ * 分组：47 条 Menus（46 条旧表 + 票 54 的 Search Commands）、59 条
+ * Canvas & Layers（58 条旧表 + 票 55 的 Toggle Fullscreen）、9 条
+ * Text Editing（共 115 条）。
  * 表驱动测试 `table.test.ts` 里的期望是照着 Swift 源码手工誊写的，
  * 不从这里生成——本表抄错一条，测试就会失败。
  */
@@ -101,7 +102,7 @@ const MENUS: readonly ShortcutDefinition[] = [
 ];
 
 // ---------------------------------------------------------------------------
-// Canvas & Layers（58）——KeyboardShortcuts.swift:100-117 + 125
+// Canvas & Layers（59）——KeyboardShortcuts.swift:100-117 + 125
 // ---------------------------------------------------------------------------
 
 const TOOL_KEYS: readonly (readonly [string, string])[] = [
@@ -141,6 +142,9 @@ const DIRECTIONS: readonly (readonly [string, string])[] = [
 ];
 
 const CANVAS: readonly ShortcutDefinition[] = [
+  // 票 55：原版表里的第一条画布键——F 在常规工作区与黑底纯画布之间切换
+  // （KeyboardShortcuts.swift:116；菜单里的"视图 ▸ 纯画布"共用同一动作）。
+  canvas("Toggle Fullscreen: the canvas alone on black (Esc also leaves)", "f"),
   ...TOOL_KEYS.map(([title, key]) =>
     canvas(title, key, 0, title === "Temporary Hand tool (hold)"),
   ),
@@ -180,7 +184,7 @@ const TEXT_EDITING: readonly ShortcutDefinition[] = [
   ]),
 ];
 
-/** 全部 114 条定义，顺序与原版 `ShortcutDefinition.all` 相同。 */
+/** 全部 115 条定义，顺序与原版 `ShortcutDefinition.all` 相同。 */
 export const SHORTCUTS: readonly ShortcutDefinition[] = [
   ...MENUS,
   ...CANVAS,

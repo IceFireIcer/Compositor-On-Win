@@ -107,11 +107,11 @@ func TestLoadLayerSelectionUsesDocumentSpaceTransformForPixelsAndMask(t *testing
 func TestSelectionEditsAreReadOnlyAndPinnedToRequestedTab(t *testing.T) {
 	ws := NewWorkspace()
 	svc := NewService(ws)
-	first, err := ws.NewDocument(4, 2, 72)
+	first, err := ws.newDocumentWithWhiteBackground(4, 2, 72)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := ws.NewDocument(4, 2, 72)
+	second, err := ws.newDocumentWithWhiteBackground(4, 2, 72)
 	if err != nil {
 		t.Fatal(err)
 	}

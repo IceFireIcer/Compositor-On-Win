@@ -54,6 +54,9 @@
   import { showsTransformControls } from "../state/transform";
   import { SEARCH_COMMANDS_LABEL, menuModel, type MenuModel } from "../commands/menuModel";
   import { toggleCommandPalette } from "../commands/session";
+  // 票 55 / 56 的菜单入口：菜单栏是这两票唯一共用的文件，由 Lead 统一接线。
+  import { canvasOnly, canvasOnlyAllowed, toggleCanvasOnly } from "../state/canvasOnly";
+  import { rotateCanvas } from "../state/canvasRotate";
 
   /**
    * The menu bar (CompositorApp.swift's menus): 选择 / 文件 / 编辑 / 图像 /
@@ -85,6 +88,8 @@
   const layerMenu = $derived(layerMenuState($document));
   // 文字会话：剪贴板命令让位给行内文本框（菜单路径也要挡）。
   const editingText = $derived($textSession !== null);
+  // 纯画布的可进入性：与 F 的动作共用 canvasOnlyAllowed 一份规则（票 55）。
+  const canCanvasOnly = $derived(canvasOnlyAllowed(!!$document.docId, editingText));
   // View 菜单的五个开关状态（勾）+"清除参考线"的可用性。动作与快捷键共用
   // toggleView，所以这里的勾永远反映真实状态，不会和画布/快捷键分叉。
   //
@@ -439,6 +444,24 @@
             close();
           },
         },
+        // 票 56：画布旋转 90°（原版 Image 菜单，无快捷键）。顺序与原版一致：
+        // 旋转在翻转之前。
+        {
+          label: "顺时针旋转 90°",
+          disabled: !hasLayer || dialogOpen,
+          run: () => {
+            close();
+            void rotateCanvas("clockwise");
+          },
+        },
+        {
+          label: "逆时针旋转 90°",
+          disabled: !hasLayer || dialogOpen,
+          run: () => {
+            close();
+            void rotateCanvas("counterclockwise");
+          },
+        },
         {
           label: "水平翻转画布",
           disabled: !hasLayer || dialogOpen,
@@ -566,6 +589,19 @@
           run: () => {
             close();
             toggleCommandPalette();
+          },
+        },
+        // 票 55：纯画布（原版 View 组的 Toggle Fullscreen，F；Esc 也能离开）。
+        // 已经在纯画布里时永远可点（退出不受"可进入性"限制），对话框开着时让位
+        // ——与 F 走分发层时被 canvasModalOpen 静默的行为一致。
+        {
+          label: "纯画布",
+          hint: hintFor("Canvas & Layers:Toggle Fullscreen: the canvas alone on black (Esc also leaves)"),
+          checked: $canvasOnly,
+          disabled: dialogOpen || (!$canvasOnly && !canCanvasOnly),
+          run: () => {
+            close();
+            toggleCanvasOnly();
           },
         },
         {

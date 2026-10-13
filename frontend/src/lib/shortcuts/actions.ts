@@ -76,6 +76,7 @@ import {
   type PendingConversion,
 } from "../state/workspace";
 import { requestClose } from "../state/confirm";
+import { canvasOnly, canToggleCanvasOnly, exitCanvasOnly, toggleCanvasOnly } from "../state/canvasOnly";
 import { Modifier, pressModifier, releaseModifier } from "../state/modifiers";
 import {
   cancelTextSession,
@@ -495,14 +496,26 @@ function changeLeading(delta: number): void {
   updateTextStyle({ leading: clampOption(currentLineHeight() + delta, 1, 5000) });
 }
 
-/** Esc：文字会话开着就取消文字（原版 InlineTextEditor 的 Esc），否则留给画布操作。 */
+/**
+ * Esc：文字会话开着就取消文字（原版 InlineTextEditor 的 Esc），否则取消变换
+ * 会话——取消顺序不变。两者都没有时，纯画布模式下 Esc 退出纯画布
+ * （原版 `escapeHasNothingToCancel`：全屏里没有东西可取消，Esc 就离开全屏）；
+ * 不在纯画布时 Esc 不多做任何事。
+ */
 function cancelCanvasOperation(): void {
   // Esc 的取消顺序：先文字会话，再变换会话（两者不会同时开）。
   if (get(textSession)) {
     cancelTextSession();
     return;
   }
-  cancelTransform();
+  if (get(transformSession)) {
+    cancelTransform();
+    return;
+  }
+  // 选区编辑表单（票 16）是另一层会话，有自己的取消入口；Esc 不越过它
+  // 退出纯画布（原版此时 Esc 属于表单所在的窗口）。
+  if (get(selectionEdit)) return;
+  if (get(canvasOnly)) exitCanvasOnly();
 }
 
 // ---------------------------------------------------------------------------
@@ -760,6 +773,16 @@ export const shortcutActions: ShortcutActions = {
   // ⌘T 开会话；⌘H 只切控件可见性（见 toggleTransformControls 的注释）。
   "Menus:Transform Layer / Selection": () => startTransform(),
   "Menus:Show Transform Controls": () => toggleTransformControls(),
+
+  // --- Canvas & Layers：纯画布（票 55 / U02） ---
+  // F：黑底纯画布与常规工作区之间切换（原版 CompositorApp 的"Toggle Fullscreen"，
+  // 裸 F 走画布池，Ctrl+F 仍是菜单池的命令搜索）。进入前过可进入性守卫
+  // （原版 canToggleCanvasOnly）；已经在纯画布时总是允许退出 —— 文档被关掉后
+  // 不该被困在全屏里。Esc 的退出在 "Cancel current canvas operation" 里。
+  "Canvas & Layers:Toggle Fullscreen: the canvas alone on black (Esc also leaves)": () => {
+    if (!get(canvasOnly) && !canToggleCanvasOnly()) return;
+    toggleCanvasOnly();
+  },
 
   // --- Canvas & Layers：工具字母（原版 EditorCanvas / NativeLayerList 映射） ---
   "Canvas & Layers:Select tool": () => selectTool("idle"),

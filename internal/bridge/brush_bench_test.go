@@ -140,7 +140,7 @@ func BenchmarkBrushStroke4K(b *testing.B) {
 	}
 	ws := NewWorkspace()
 	svc := NewService(ws)
-	if _, err := ws.NewDocument(4000, 4000, 72); err != nil {
+	if _, err := ws.newDocumentWithWhiteBackground(4000, 4000, 72); err != nil {
 		b.Fatal(err)
 	}
 	b.ReportAllocs()

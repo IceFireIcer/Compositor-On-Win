@@ -442,7 +442,7 @@ func TestSetLayerMaskRejectsMalformedSelectionBusyAndStaleRequests(t *testing.T)
 
 func TestSetLayerMaskPinsTheRequestedBackgroundTab(t *testing.T) {
 	svc, firstTab := newTestService(t, 4, 4)
-	second, err := svc.ws.NewDocument(4, 4, 72)
+	second, err := svc.ws.newDocumentWithWhiteBackground(4, 4, 72)
 	if err != nil {
 		t.Fatal(err)
 	}

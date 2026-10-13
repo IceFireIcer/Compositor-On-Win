@@ -24,7 +24,7 @@ export function EditActiveRaster(arg1:string,arg2:any):Promise<string>;
 
 export function EndStroke():Promise<string>;
 
-export function NewDocument(arg1:number,arg2:number,arg3:number):Promise<bridge.Snapshot>;
+export function NewDocument(arg1:number,arg2:number,arg3:number,arg4:string):Promise<bridge.Snapshot>;
 
 export function OpenDocument(arg1:string,arg2:domain.Document,arg3:Record<string, render.Bitmap>):Promise<bridge.Snapshot>;
 

@@ -97,7 +97,7 @@ func TestSaveProjectDialogKeepsOriginalTabWhenSelectionChanges(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "original.comp")
 	var otherID string
 	svc.saveDialog = func(context.Context) (string, error) {
-		other, err := svc.ws.NewDocument(32, 24, 144)
+		other, err := svc.ws.newDocumentWithWhiteBackground(32, 24, 144)
 		if err != nil {
 			return "", err
 		}
@@ -126,7 +126,7 @@ func TestSaveProjectDialogRejectsPathOwnedByAnotherTab(t *testing.T) {
 	destination := filepath.Join(t.TempDir(), "destination.comp")
 
 	// Keep the first tab unnamed so SaveProjectDialog takes the picker path.
-	second, err := svc.ws.NewDocument(32, 24, 144)
+	second, err := svc.ws.newDocumentWithWhiteBackground(32, 24, 144)
 	if err != nil {
 		t.Fatal(err)
 	}

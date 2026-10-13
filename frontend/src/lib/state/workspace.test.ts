@@ -167,6 +167,17 @@ describe("workspace ↔ document glue (ticket 04 wiring)", () => {
     expect(get(document).rev).toBe(1);
   });
 
+  it("newDocument 把底色一并交给 Go，默认透明（票 57）", async () => {
+    mockedNewDocument.mockResolvedValue(snapshot([{ id: "doc-1" }], "doc-1"));
+    mockedDocSnapshot.mockResolvedValue(wireDoc("doc-1", 1));
+
+    await newDocument(2550, 3300, 300);
+    expect(mockedNewDocument).toHaveBeenLastCalledWith(2550, 3300, 300, "transparent");
+
+    await newDocument(40, 30, 72, "black");
+    expect(mockedNewDocument).toHaveBeenLastCalledWith(40, 30, 72, "black");
+  });
+
   it("closeTab clears the document state when the last tab closes", async () => {
     applySnapshot(snapshot([{ id: "doc-1" }], "doc-1"));
     applyDocumentSnapshot(wireDoc("doc-1", 2));

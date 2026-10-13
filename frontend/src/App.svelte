@@ -39,6 +39,7 @@
   import KeyboardShortcutsSheet from "./lib/components/KeyboardShortcutsSheet.svelte";
   import CommandPalette from "./lib/components/CommandPalette.svelte";
   import { commandPaletteOpen } from "./lib/commands/session";
+  import { canvasOnly } from "./lib/state/canvasOnly";
   import {
     installAppShortcuts,
     newCanvasSheet,
@@ -334,8 +335,10 @@
 
 <!-- 拖放处理器挂在应用根上；这里不需要 ARIA 角色（role="application" 会关掉读屏的
      虚拟光标导航），所以显式忽略静态元素交互的告警。 -->
+<!-- 纯画布（票 55）：只加一个类收起各栏，不卸载任何组件 —— CanvasSurface
+     的 WebGPU 上下文、缩放/平移/工具/面板状态因此原样保留。 -->
 <!-- svelte-ignore a11y_no_static_element_interactions -->
-<div class="app" ondragover={onDragOver} ondrop={onDrop}>
+<div class="app" class:canvas-only={$canvasOnly} ondragover={onDragOver} ondrop={onDrop}>
   <header class="toolbar">
     <div class="brand">Compositor</div>
     <MenuBar />
@@ -733,5 +736,40 @@
 
   .sep {
     opacity: 0.5;
+  }
+
+  /* 纯画布（票 55 / U02）：原版 ContentView.swift:82-133 在 canvasOnly 时收起
+     工具头、工具轨、标尺、导航器与状态栏，画布独占窗口。这里同样只切显示
+     （display: none 不卸载组件），画布区域铺满整窗、底色是纯黑，而不是
+     主题里的 --bg-canvas —— 原版要的是"黑底上的画布"，不该随主题变。
+     标尺是 CanvasSurface 内部的覆盖层（原版 ContentView.swift:89 同样收起），
+     组件作用域的选择器点不到它，用 :global；导航器（票 61）尚未实现，落地时
+     在这里一并收起。 */
+  .app.canvas-only {
+    grid-template-rows: minmax(0, 1fr);
+    background: #000;
+  }
+
+  .app.canvas-only > .toolbar,
+  .app.canvas-only > .status-bar,
+  .app.canvas-only > :global(.options) {
+    display: none;
+  }
+
+  .app.canvas-only > .body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .app.canvas-only > .body > .tool-rail,
+  .app.canvas-only > .body > .right-panel {
+    display: none;
+  }
+
+  .app.canvas-only > .body > .canvas-area {
+    background: #000;
+  }
+
+  .app.canvas-only :global(.ruler) {
+    display: none;
   }
 </style>

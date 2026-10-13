@@ -318,6 +318,10 @@ export function RetouchStrokePoint(arg1, arg2, arg3) {
   return window['go']['bridge']['Service']['RetouchStrokePoint'](arg1, arg2, arg3);
 }
 
+export function RotateCanvas(arg1, arg2) {
+  return window['go']['bridge']['Service']['RotateCanvas'](arg1, arg2);
+}
+
 export function SampleColorRange(arg1, arg2, arg3) {
   return window['go']['bridge']['Service']['SampleColorRange'](arg1, arg2, arg3);
 }

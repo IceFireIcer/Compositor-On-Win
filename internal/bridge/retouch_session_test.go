@@ -301,7 +301,7 @@ func TestRetouchStrokeRemainsPinnedToOriginatingTab(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	snapB, err := svc.ws.NewDocument(16, 8, 72)
+	snapB, err := svc.ws.newDocumentWithWhiteBackground(16, 8, 72)
 	if err != nil {
 		t.Fatal(err)
 	}

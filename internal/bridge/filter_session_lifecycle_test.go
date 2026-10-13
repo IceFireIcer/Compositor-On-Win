@@ -188,7 +188,7 @@ func TestFilterSessionRequestsRemainOwnedAcrossTabSwitch(t *testing.T) {
 	if _, err := svc.BeginFilterEdit(FilterGaussian, "", ownedFilterSettings(idA, 41, 1), 41, ""); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.ws.NewDocument(32, 32, 72); err != nil {
+	if _, err := svc.ws.newDocumentWithWhiteBackground(32, 32, 72); err != nil {
 		t.Fatal(err)
 	}
 	b := activeSessionOf(t, svc)
@@ -241,7 +241,7 @@ func TestFilterCancelTargetsOwnerAndRejectsReplacedSession(t *testing.T) {
 	if _, err := svc.BeginFilterEdit(FilterGaussian, "", `{}`, 1, ""); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.ws.NewDocument(16, 16, 72); err != nil {
+	if _, err := svc.ws.newDocumentWithWhiteBackground(16, 16, 72); err != nil {
 		t.Fatal(err)
 	}
 	b := activeSessionOf(t, svc)

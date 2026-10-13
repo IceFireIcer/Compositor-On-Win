@@ -476,7 +476,7 @@ func TestExternalReloadKeepsTheActiveTab(t *testing.T) {
 	fixture := newExternalTest(t, "背景")
 
 	// 再开一个文档并让它成为活动标签。
-	if _, err := fixture.svc.ws.NewDocument(16, 16, 72); err != nil {
+	if _, err := fixture.svc.ws.newDocumentWithWhiteBackground(16, 16, 72); err != nil {
 		t.Fatal(err)
 	}
 	active := fixture.svc.ws.Snapshot().ActiveID

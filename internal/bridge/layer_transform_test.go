@@ -149,7 +149,7 @@ func TestApplyLayerTransformToTabRejectsTabSwitch(t *testing.T) {
 	before := mustDocumentSnapshot(t, svc)
 	draft := before.Doc.Layers[0].Transform
 	draft.Origin = [2]float64{2, 3}
-	other, err := svc.ws.NewDocument(20, 10, 72)
+	other, err := svc.ws.newDocumentWithWhiteBackground(20, 10, 72)
 	if err != nil {
 		t.Fatal(err)
 	}

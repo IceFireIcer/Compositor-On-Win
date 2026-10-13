@@ -158,7 +158,7 @@ func TestOnBeforeCloseDoesNotHoldWorkspaceLockDuringDialog(t *testing.T) {
 	svc, _ := newTestService(t, 16, 16)
 	dialogReturned := make(chan struct{})
 	svc.messageDialog = func(context.Context, runtime.MessageDialogOptions) (string, error) {
-		if _, err := svc.ws.NewDocument(8, 8, 72); err != nil {
+		if _, err := svc.ws.newDocumentWithWhiteBackground(8, 8, 72); err != nil {
 			t.Errorf("workspace mutation while dialog is open failed: %v", err)
 		}
 		close(dialogReturned)

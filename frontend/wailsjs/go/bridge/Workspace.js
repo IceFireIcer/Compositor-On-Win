@@ -42,8 +42,8 @@ export function EndStroke() {
   return window['go']['bridge']['Workspace']['EndStroke']();
 }
 
-export function NewDocument(arg1, arg2, arg3) {
-  return window['go']['bridge']['Workspace']['NewDocument'](arg1, arg2, arg3);
+export function NewDocument(arg1, arg2, arg3, arg4) {
+  return window['go']['bridge']['Workspace']['NewDocument'](arg1, arg2, arg3, arg4);
 }
 
 export function OpenDocument(arg1, arg2, arg3) {

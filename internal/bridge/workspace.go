@@ -73,13 +73,48 @@ func NewWorkspace() *Workspace {
 	}
 }
 
-// NewDocument validates against the document limits, appends a tab backed
-// by a real document (one white 背景 layer) and activates it. Name is
-// 未命名, then 未命名 2, 未命名 3, …
-func (w *Workspace) NewDocument(width, height, resolution int) (Snapshot, error) {
+// NewDocument validates the request and appends a tab backed by a real
+// document. background is "" / "transparent" (a blank 图层 1), "white" or
+// "black" (an opaque Background layer filled with that color); anything else is
+// a request error. Name is 未命名, then 未命名 2, 未命名 3, …
+//
+// 这是新建画布唯一的公开入口（前端 wailsjs 的 Workspace.NewDocument 与它一一
+// 对应）。票 57 之前那个建白底「背景」的 3 参入口只剩测试在用，已挪进
+// workspace_test.go 的 newDocumentFixture —— 生产 RPC 面不留测试专用方法。
+func (w *Workspace) NewDocument(width, height, resolution int, background string) (Snapshot, error) {
 	if err := domain.ValidateNewDocument(width, height, resolution); err != nil {
 		return Snapshot{}, err
 	}
+	bg, err := parseCanvasBackground(background)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	doc, bitmaps := newDocumentModelWithBackground(width, height, resolution, bg)
+	layerSeq := 0
+	if bg == canvasBackgroundTransparent {
+		// 透明底的第一层占掉 图层 1（原版按"下一个没被用过的 Layer N"取名），
+		// 随后新建的图层因此是 图层 2 而不是重名。
+		layerSeq = 1
+	}
+	return w.appendDocument(width, height, resolution, doc, bitmaps, layerSeq)
+}
+
+// newDocumentWithWhiteBackground is the pre-ticket-57 shape: a document whose
+// first layer is the opaque white 背景. The bridge tests that predate ticket 57
+// pin that fixture, so it stays for them; it is unexported on purpose, keeping
+// the Wails binding surface to the one create entry the frontend actually calls.
+func (w *Workspace) newDocumentWithWhiteBackground(width, height, resolution int) (Snapshot, error) {
+	if err := domain.ValidateNewDocument(width, height, resolution); err != nil {
+		return Snapshot{}, err
+	}
+	doc, bitmaps := newDocumentModel(width, height, resolution)
+	return w.appendDocument(width, height, resolution, doc, bitmaps, 0)
+}
+
+// appendDocument is the path every create entry shares: number the tab, wrap
+// the model in a session and activate it. layerSeq seeds the session's 图层 N
+// counter when the first layer already took a number.
+func (w *Workspace) appendDocument(width, height, resolution int, doc *domain.Document, bitmaps map[string]*render.Bitmap, layerSeq int) (Snapshot, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.counter++
@@ -87,7 +122,6 @@ func (w *Workspace) NewDocument(width, height, resolution int) (Snapshot, error)
 	if w.counter > 1 {
 		name = fmt.Sprintf("未命名 %d", w.counter)
 	}
-	doc, bitmaps := newDocumentModel(width, height, resolution)
 	tab := Document{
 		// 标签 ID **就是**文档 ID。前端靠它把 /render/{id}.png 与当前文档对上
 		// （App.svelte 的 loadDocument(expectedDocId) 与 CanvasSurface 的
@@ -101,7 +135,9 @@ func (w *Workspace) NewDocument(width, height, resolution int) (Snapshot, error)
 		Dirty:      true,
 	}
 	w.tabs = append(w.tabs, tab)
-	w.sessions[tab.ID] = newSession("", doc, bitmaps)
+	sess := newSession("", doc, bitmaps)
+	sess.layerSeq = layerSeq
+	w.sessions[tab.ID] = sess
 	w.active = tab.ID
 	return w.snapshotLocked(), nil
 }

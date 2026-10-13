@@ -218,7 +218,7 @@ func TestFillLayerMaskPinnedTabAndLayer(t *testing.T) {
 	otherMask := sess.bitmaps[otherKey]
 	sess.hist.MarkSaved()
 	svc.ws.setTabDirtyLocked(tab, false)
-	other, err := svc.ws.NewDocument(16, 12, 72)
+	other, err := svc.ws.newDocumentWithWhiteBackground(16, 12, 72)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -65,7 +65,7 @@ func newTestService(t *testing.T, width, height int) (*Service, string) {
 	t.Helper()
 	ws := NewWorkspace()
 	svc := NewService(ws)
-	snap, err := ws.NewDocument(width, height, 72)
+	snap, err := ws.newDocumentWithWhiteBackground(width, height, 72)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -700,7 +700,7 @@ func TestSaveProjectDialogRoundTrip(t *testing.T) {
 
 	ws := NewWorkspace()
 	svc := NewService(ws)
-	if _, err := ws.NewDocument(32, 32, 72); err != nil {
+	if _, err := ws.newDocumentWithWhiteBackground(32, 32, 72); err != nil {
 		t.Fatal(err)
 	}
 	bgID := mustDocumentSnapshot(t, svc).Doc.Layers[0].ID

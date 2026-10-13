@@ -160,7 +160,7 @@ func TestPaintSessionRemainsPinnedToOriginatingTab(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	snap, err := svc.ws.NewDocument(16, 16, 72)
+	snap, err := svc.ws.newDocumentWithWhiteBackground(16, 16, 72)
 	if err != nil {
 		t.Fatal(err)
 	}

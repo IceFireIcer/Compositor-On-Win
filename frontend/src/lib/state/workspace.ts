@@ -21,6 +21,7 @@ import {
 } from "../../../wailsjs/go/bridge/Service";
 import { rasterizeSVG, uploadRaster } from "./svg";
 import { applyDocumentSnapshot, clearDocument, loadDocument } from "./document";
+import type { NewCanvasBackgroundId } from "./newCanvas";
 
 /**
  * Mirror of the Go Workspace (internal/bridge). Go is the source of truth:
@@ -62,9 +63,17 @@ export function hasDocument(s: Snapshot): boolean {
 /**
  * Create a document and load its (empty) document state — the tab strip and
  * the layer panel both light up from this single call.
+ *
+ * background（票 57）是新建画布的底色：transparent（默认）/ white / black。
+ * Go 侧据此决定第一个图层是空白图层还是白/黑 Background。
  */
-export async function newDocument(width: number, height: number, resolution: number): Promise<Snapshot> {
-  const s = await NewDocumentRPC(width, height, resolution);
+export async function newDocument(
+  width: number,
+  height: number,
+  resolution: number,
+  background: NewCanvasBackgroundId = "transparent",
+): Promise<Snapshot> {
+  const s = await NewDocumentRPC(width, height, resolution, background);
   applySnapshot(s);
   await loadDocument();
   return s;

@@ -502,12 +502,12 @@ func TestCopyLayersIntoRefusesOverTheLayerLimit(t *testing.T) {
 func TestTransferLayerSwitchesToDestinationTab(t *testing.T) {
 	ws := NewWorkspace()
 	svc := NewService(ws)
-	first, err := ws.NewDocument(64, 48, 72)
+	first, err := ws.newDocumentWithWhiteBackground(64, 48, 72)
 	if err != nil {
 		t.Fatal(err)
 	}
 	srcTab := first.ActiveID
-	second, err := ws.NewDocument(64, 48, 72)
+	second, err := ws.newDocumentWithWhiteBackground(64, 48, 72)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -588,12 +588,12 @@ func TestTransferLayerSwitchesToDestinationTab(t *testing.T) {
 func TestTransferLayerRejectsUnknownLayerTabAndSameTab(t *testing.T) {
 	ws := NewWorkspace()
 	svc := NewService(ws)
-	first, err := ws.NewDocument(32, 32, 72)
+	first, err := ws.newDocumentWithWhiteBackground(32, 32, 72)
 	if err != nil {
 		t.Fatal(err)
 	}
 	srcTab := first.ActiveID
-	second, err := ws.NewDocument(32, 32, 72)
+	second, err := ws.newDocumentWithWhiteBackground(32, 32, 72)
 	if err != nil {
 		t.Fatal(err)
 	}

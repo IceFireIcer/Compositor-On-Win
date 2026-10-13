@@ -40,14 +40,16 @@ import { shortcutOverrides } from "./settings";
 import * as tools from "../state/tools";
 import { SHORTCUTS, definitionById } from "./table";
 import type { DocLayer, DocumentState } from "../state/document";
+import { canvasOnly, canToggleCanvasOnly } from "../state/canvasOnly";
 import { document, EMPTY_DOCUMENT } from "../state/document";
+import { geometrySheet } from "../state/geometry";
 import { currentSelection, selectionFromMask } from "../state/selection";
 import { applySelectionTransform, selectionEdit } from "../state/selectionEdit";
 import { beginTransformSession, cancelTransformSession, transformDraft, transformSession } from "../state/transform";
 import { workspace } from "../state/workspace";
 import { palette, resetPaletteColors } from "../state/palette";
 import { clearMaskTarget, selectMaskTarget } from "../state/layerTarget";
-import { DEFAULT_TEXT_STYLE, textDefaults, textSession } from "../state/text";
+import { DEFAULT_TEXT_STYLE, textDefaults, textSession, type TextSession } from "../state/text";
 
 describe("tool shortcut behavior", () => {
   beforeEach(() => {
@@ -522,10 +524,11 @@ describe("命令搜索面板的快捷键", () => {
     expect(get(commandPaletteOpen)).toBe(false);
   });
 
-  it("纯 F 不占用（纯画布模式的 F 留给票 55）", () => {
+  it("纯 F 属于画布池（票 55 的纯画布开关），不会打开命令面板", () => {
     const plainF = { ...ctrlF(), ctrlKey: false } as unknown as KeyboardEvent;
     expect(dispatchShortcut(plainF, "menu")).toBe(false);
-    expect(dispatchShortcut(plainF, "canvas")).toBe(false);
+    // 画布池接住它（本组只验证归属；进入/退出的行为在"纯画布模式"里跑）。
+    expect(dispatchShortcut(plainF, "canvas")).toBe(true);
     expect(get(commandPaletteOpen)).toBe(false);
   });
 });
@@ -615,6 +618,8 @@ describe("shortcutActions 与定义表对齐", () => {
       "Canvas & Layers:Next blend mode",
       "Canvas & Layers:Cancel current canvas operation",
       "Canvas & Layers:Temporary Hand tool (hold)",
+      // 票 55：纯画布开关（画布池的裸 F）
+      "Canvas & Layers:Toggle Fullscreen: the canvas alone on black (Esc also leaves)",
       // 笔刷大小/硬度（原版 20% 步长与 25% 硬度档，见 tools.ts）
       "Canvas & Layers:Decrease brush size",
       "Canvas & Layers:Increase brush size",
@@ -702,8 +707,14 @@ describe("shortcutActions 与定义表对齐", () => {
     expect(empty.canClip).toBe(false);
   });
 
-  it("接线比例：17 条工具字母 + 9 条文本命令整组已接", () => {
-    const toolLetters = SHORTCUTS.filter((d) => d.group === "Canvas & Layers").slice(0, 17);
+  it("接线比例：票 55 的纯画布开关 + 17 条工具字母 + 9 条文本命令整组已接", () => {
+    const canvas = SHORTCUTS.filter((d) => d.group === "Canvas & Layers");
+    // 票 55 把 Toggle Fullscreen 插在工具字母之前（原版顺序），所以字母从下标 1 起。
+    expect(canvas[0]?.id).toBe(
+      "Canvas & Layers:Toggle Fullscreen: the canvas alone on black (Esc also leaves)",
+    );
+    expect(shortcutActions[canvas[0]!.id], "纯画布开关未接线").toBeTypeOf("function");
+    const toolLetters = canvas.slice(1, 18);
     expect(toolLetters).toHaveLength(17);
     for (const t of toolLetters) {
       expect(shortcutActions[t.id], `工具字母未接线：${t.title}`).toBeTypeOf("function");
@@ -713,5 +724,129 @@ describe("shortcutActions 与定义表对齐", () => {
     for (const t of text) {
       expect(shortcutActions[t.id], `文本条目未接线：${t.title}`).toBeTypeOf("function");
     }
+  });
+});
+
+/**
+ * 纯画布模式（票 55 / 对等矩阵 U02）：F 在画布池里进/出，Esc 在"确实没有
+ * 东西可取消"时退出（原版 escapeHasNothingToCancel），Ctrl+F（票 54）不受影响。
+ * 事件按 installShortcuts 的顺序依次尝三个池：菜单 → 画布 → 文字。
+ */
+describe("纯画布模式（票 55）", () => {
+  beforeEach(() => {
+    shortcutOverrides.set({});
+    setShortcutActions(shortcutActions);
+    canvasOnly.set(false);
+    textSession.set(null);
+    cancelTransformSession();
+    commandPaletteOpen.set(false);
+    geometrySheet.set(null);
+    document.set(doc([{ imageFile: "a.png" }], "l1"));
+    workspace.set({
+      tabs: [{ id: "d1", name: "Test", width: 100, height: 100, resolution: 72, dirty: false }],
+      activeId: "d1",
+    });
+  });
+
+  afterEach(() => {
+    canvasOnly.set(false);
+    textSession.set(null);
+    cancelTransformSession();
+    commandPaletteOpen.set(false);
+    geometrySheet.set(null);
+    document.set({ ...EMPTY_DOCUMENT });
+    workspace.set({ tabs: [], activeId: "" });
+    setShortcutActions({});
+  });
+
+  function key(k: string, overrides: Partial<KeyboardEvent> = {}): KeyboardEvent {
+    return {
+      type: "keydown", key: k, ctrlKey: false, metaKey: false, altKey: false,
+      shiftKey: false, isComposing: false, target: null, preventDefault() {},
+      ...overrides,
+    } as unknown as KeyboardEvent;
+  }
+
+  /** 与 installShortcuts 同序：菜单 → 画布 → 文字，返回是否被消费。 */
+  function press(k: string, overrides: Partial<KeyboardEvent> = {}): boolean {
+    const event = key(k, overrides);
+    if (dispatchShortcut(event, "menu")) return true;
+    if (dispatchShortcut(event, "canvas")) return true;
+    return dispatchShortcut(event, "text");
+  }
+
+  function textFixture(): TextSession {
+    return {
+      layerID: null,
+      anchor: { x: 0, y: 0 },
+      boxSize: null,
+      content: "draft",
+      style: { ...DEFAULT_TEXT_STYLE },
+      editorAt: { x: 0, y: 0 },
+      selection: null,
+    };
+  }
+
+  it("F 切换纯画布：进入，再按退出", () => {
+    expect(press("f")).toBe(true);
+    expect(get(canvasOnly)).toBe(true);
+    expect(press("f")).toBe(true);
+    expect(get(canvasOnly)).toBe(false);
+  });
+
+  it("焦点在输入框里时 F 不触发（typingWins：输入就是输入）", () => {
+    const field = { tagName: "INPUT", isContentEditable: false, getRootNode: () => ({}) } as unknown as EventTarget;
+    expect(press("f", { target: field })).toBe(false);
+    expect(get(canvasOnly)).toBe(false);
+  });
+
+  it("模态表单打开时画布池静默，F 不进入纯画布", () => {
+    geometrySheet.set("canvasSize");
+    expect(press("f")).toBe(false);
+    expect(get(canvasOnly)).toBe(false);
+  });
+
+  it("没有文档时 F 被守卫拦住（菜单 disabled 用同一份 canvasOnlyAllowed）", () => {
+    document.set({ ...EMPTY_DOCUMENT });
+    workspace.set({ tabs: [], activeId: "" });
+    expect(canToggleCanvasOnly()).toBe(false);
+    // 动作已注册所以事件仍被消费，但不该进入纯画布。
+    expect(press("f")).toBe(true);
+    expect(get(canvasOnly)).toBe(false);
+  });
+
+  it("Ctrl+F 仍然开命令面板，且不会顺带切纯画布（票 54 不冲突）", () => {
+    expect(press("f", { ctrlKey: true })).toBe(true);
+    expect(get(commandPaletteOpen)).toBe(true);
+    expect(get(canvasOnly)).toBe(false);
+  });
+
+  it("纯画布下 Esc 退出；没有纯画布时 Esc 不改任何状态", () => {
+    canvasOnly.set(true);
+    expect(press("Escape")).toBe(true);
+    expect(get(canvasOnly)).toBe(false);
+
+    // 第二次 Esc：没有纯画布也没有会话，画布池照旧消费（原版 Esc 定义），
+    // 但什么都不该发生。
+    expect(press("Escape")).toBe(true);
+    expect(get(canvasOnly)).toBe(false);
+    expect(get(transformSession)).toBeNull();
+    expect(get(textSession)).toBeNull();
+  });
+
+  it("文字会话开着时 Esc 只取消文字，留在纯画布", () => {
+    canvasOnly.set(true);
+    textSession.set(textFixture());
+    expect(press("Escape")).toBe(true);
+    expect(get(textSession)).toBeNull();
+    expect(get(canvasOnly)).toBe(true);
+  });
+
+  it("变换会话开着时 Esc 只取消变换，留在纯画布", () => {
+    canvasOnly.set(true);
+    expect(beginTransformSession()).toBe(true);
+    expect(press("Escape")).toBe(true);
+    expect(get(transformSession)).toBeNull();
+    expect(get(canvasOnly)).toBe(true);
   });
 });

@@ -161,6 +161,8 @@ export function ResolveExternalChange(arg1:string,arg2:boolean):Promise<string>;
 
 export function RetouchStrokePoint(arg1:string,arg2:number,arg3:number):Promise<void>;
 
+export function RotateCanvas(arg1:string,arg2:string):Promise<string>;
+
 export function SampleColorRange(arg1:string,arg2:number,arg3:number):Promise<string>;
 
 export function SampleCompositeColor(arg1:string,arg2:number,arg3:number):Promise<string>;

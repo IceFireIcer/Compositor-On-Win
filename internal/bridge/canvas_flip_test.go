@@ -268,7 +268,7 @@ func TestFlipCanvasRejectsSwitchedClosedAndBusyTabs(t *testing.T) {
 	t.Run("switched", func(t *testing.T) {
 		svc, tabID := newTestService(t, 20, 10)
 		before := mustDocumentSnapshot(t, svc)
-		other, err := svc.ws.NewDocument(12, 8, 72)
+		other, err := svc.ws.newDocumentWithWhiteBackground(12, 8, 72)
 		if err != nil {
 			t.Fatal(err)
 		}
