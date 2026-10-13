@@ -62,8 +62,13 @@ jobs:
 
       - name: Frontend checks (svelte-check + vitest)
         working-directory: frontend
+        env:
+          PLAYWRIGHT_ROOT: ${{ runner.temp }}/compositor-playwright-smoke
         run: |
+          set -euo pipefail
           npm ci
+          # Browser regressions use the runner's installed Edge in headless mode.
+          npm install --prefix "$PLAYWRIGHT_ROOT" --no-save playwright@1.58.2
           npm run check
           npm test
 
@@ -139,6 +144,7 @@ jobs:
       # makensis is missing, so NSIS must be installed explicitly.
       - name: Build app + NSIS installer
         run: |
+          set -euo pipefail
           choco install nsis -y --no-progress
           "$(go env GOPATH)/bin/wails" build -nsis
 
@@ -149,3 +155,7 @@ jobs:
           if-no-files-found: error
           path: |
             build/bin/*.exe
+            build/bin/onnxruntime.dll
+            build/bin/models/u2netp.onnx
+            build/bin/THIRD-PARTY-NOTICES.md
+            build/bin/licenses/*
