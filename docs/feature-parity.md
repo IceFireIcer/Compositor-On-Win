@@ -179,7 +179,7 @@
 | S04 | 扩展/收缩/羽化（蒙版域操作） | `SelectionEdits.swift` | 31 | M3 | ◐ 同 C31：扩展/收缩/羽化纯函数 + 测试齐备，无 UI 入口 |
 | S05 | 选区剪贴板/选区内移动复制/边缘自动滚动 | `FloatingSelection` | 30 | M3 | ◐ 票48+16：选区剪贴板（拷/切/粘贴/⌘J）完成；浮动选区搬运已接（方向键 → `MoveSelectedPixels`，`internal/bridge/selection_commands.go:186`、`pixel_move_test.go`、`actions.ts:758-765`）；边缘自动滚动仍是零消费者的纯函数（`state/selection.ts:322`），无拖拽浮层 |
 | S06 | 对象选择/主体/移除背景 + 引导滤波抠边 | Vision→ONNX（ADR-0005） | 28 | M6 | ☑ 票37 |
-| S07 | 内容感知填充（可延伸出画布） | `ContentFill.c` | 42 | M6 | ☑ 票35 |
+| S07 | 内容感知填充（可延伸出画布） | `PatchPixels.c` | 42 | M6 | ☑ 票35 |
 
 ## H. 文本（`TypeTool.swift`/`PSDText.swift`）
 
@@ -249,6 +249,14 @@
 
 ## 更新记录
 
+- **更新日期**：2026-10-14（第二轮）。票 63 / 64 / 65 / 66 / 67 落地，`U10`–`U14` ☐ → ☑；
+  该轮只改这五格，另把 `S07` 的原版锚点从 `ContentFill.c` 改成 `PatchPixels.c`（上游 1.4.10 删除了前者）。
+  实现细节见 [63](tickets/63-camera-raw-fidelity.md)、[64](tickets/64-raw-develop-quality.md)、
+  [65](tickets/65-patchmatch-healing.md)、[66](tickets/66-gaussian-preserve-alpha.md)、
+  [67](tickets/67-effect-text-preservation.md)。
+  黄金基准本轮新增 `patch-fill-{curve,texture,blend}`、`heal-texture`、`quantize16-ramp` 五个 case
+  （40 → 42 张参考图），`camera-raw` 与 `content-fill` 退役到 `tests/golden/legacy/`；
+  另修掉图像尺寸重采样后资产名不符 `.comp` 约定、导致无法保存的既有缺陷（票 67 的测试发现）。
 - **更新日期**：2026-10-14。票 58 / 59 / 60 / 61 / 62 落地，`U05`–`U09` ☐ → ☑；该轮只改这五格。
 - **更新日期**：2026-10-13（第二轮）。票 55 / 56 / 57 并行落地，`U02`、`U03`、`U04` ☐ → ☑；
   该轮只改这三格。实现细节见 [55](tickets/55-canvas-only.md)、[56](tickets/56-canvas-rotation.md)、
@@ -276,11 +284,11 @@
 | U07 | 独立 Scanlines 滤镜 | 60 | M5/M6 | ☑ |
 | U08 | Navigator 导航缩略图 | 61 | M3 | ☑ |
 | U09 | WebP 与相机 HEIF 导入 | 62 | M7 | ☑ |
-| U10 | Camera Raw 光影数值对齐 | 63 | M5 | ☐ |
-| U11 | RAW 显影降噪与高光修复 | 64 | M7 | ☐ |
-| U12 | PatchMatch 内容感知修复 | 65 | M6 | ☐ |
-| U13 | Gaussian Blur 保留透明度 | 66 | M5 | ☐ |
-| U14 | 图层特效与可编辑内容保留 | 67 | M5/M7/M8 | ☐ |
+| U10 | Camera Raw 光影数值对齐 | 63 | M5 | ☑ |
+| U11 | RAW 显影降噪与高光修复 | 64 | M7 | ☑ |
+| U12 | PatchMatch 内容感知修复 | 65 | M6 | ☑ |
+| U13 | Gaussian Blur 保留透明度 | 66 | M5 | ☑ |
+| U14 | 图层特效与可编辑内容保留 | 67 | M5/M7/M8 | ☑ |
 | U15 | .comp 16 位存取与版本门控 | 68 | M1/M7 | ☐ 决策门槛 |
 | U16 | 16 位转换与几何编辑 | 69 | M7 | ☐ 决策门槛 |
 | U17 | .comp HDR/EXR 存取与版本门控 | 70 | M1/M7 | ☐ 决策门槛 |

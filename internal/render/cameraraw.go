@@ -538,22 +538,39 @@ func writePremulD(p []uint8, r, g, b, alpha float64) {
 // adjust_camera_raw — the Light and Color groups
 // ---------------------------------------------------------------------------
 
-func camToneHighlights(y, amount float64) float64 {
-	t := cameraClamp((y - 0.5) / 0.5)
-	weight := t * t
-	if amount >= 0 {
-		return cameraClamp(y + amount*weight*(1.0-y))
+// camToneBump is tone_bump: a bump over a range of tones, 0 at both ends,
+// u(1 - 2u)², largest a sixth of the way in. Its slope runs from 1 down to
+// −1/3, so a curve adding up to three times it (or taking away up to once it)
+// keeps rising: tones never swap places.
+func camToneBump(u float64) float64 {
+	if u <= 0 || u >= 0.5 {
+		return 0
 	}
-	return cameraClamp(y + amount*weight*(y-0.5))
+	rest := 1.0 - 2.0*u
+	return u * rest * rest
 }
 
+// camToneShadows lifts (or deepens) the dark tones, most a third of the way up
+// to middle gray, leaving black at black and middle gray where it is. It once
+// lifted black itself to middle gray, above the tones just over it, so the
+// darkest, least certain pixels were the ones stretched furthest: a lifted dark
+// area broke into blotches of color.
 func camToneShadows(y, amount float64) float64 {
-	t := cameraClamp((0.5 - y) / 0.5)
-	weight := t * t
+	factor := 1.0
 	if amount >= 0 {
-		return cameraClamp(y + amount*weight*(0.5-y))
+		factor = 2.5
 	}
-	return cameraClamp(y + amount*weight*y)
+	return cameraClamp(y + amount*factor*camToneBump(y))
+}
+
+// camToneHighlights is the same in the light tones: white stays white, and
+// pulling them down no longer drops white below the tones under it.
+func camToneHighlights(y, amount float64) float64 {
+	factor := 2.5
+	if amount >= 0 {
+		factor = 1.0
+	}
+	return cameraClamp(y + amount*factor*camToneBump(1.0-y))
 }
 
 // camToneWhites: the top quarter is the white point — +1 maps 0.875 to 1,
@@ -1053,6 +1070,37 @@ func boxBlurPlane(src, dst []float32, width, height, radius int) bool {
 	return true
 }
 
+// guidedFilterPlane is guided_filter_plane: an edge-aware blur (He's guided
+// filter, the plane guiding itself) that smooths within regions and stops at
+// edges, so the detail taken against it has no halos. epsilon is the variance
+// an edge needs to be kept.
+//
+// The C checks every box_blur_plane call because malloc can fail there; Go's
+// make panics instead, so the failure branches are dropped rather than left in
+// as unreachable code that would silently hand back a zeroed plane.
+func guidedFilterPlane(src, dst []float32, width, height, radius int, epsilon float32) {
+	count := width * height
+	mean := make([]float32, count)
+	square := make([]float32, count)
+	a := make([]float32, count)
+	b := make([]float32, count)
+	boxBlurPlane(src, mean, width, height, radius)
+	for i := 0; i < count; i++ {
+		a[i] = src[i] * src[i]
+	}
+	boxBlurPlane(a, square, width, height, radius)
+	for i := 0; i < count; i++ {
+		variance := square[i] - mean[i]*mean[i]
+		a[i] = variance / (variance + epsilon)
+		b[i] = mean[i] - a[i]*mean[i]
+	}
+	boxBlurPlane(a, mean, width, height, radius)
+	boxBlurPlane(b, square, width, height, radius)
+	for i := 0; i < count; i++ {
+		dst[i] = mean[i]*src[i] + square[i]
+	}
+}
+
 // effectsRadius ports effects_radius: radii scale with the preview so a
 // full-size render and its preview match.
 func effectsRadius(base, scale float64) int {
@@ -1069,23 +1117,90 @@ func effectsRadius(base, scale float64) int {
 	return int(math.Round(radius))
 }
 
-func camEffectsDehaze(r, g, b *float64, amount float64) {
+// camEffectsDehaze is effects_dehaze, after Camera Raw's: haze is the
+// picture's haze color, its brightest one percent. Taking haze away (positive)
+// removes it where a pixel's darkest channel, against the haze, says it lies;
+// adding it (negative) veils the picture in it.
+func camEffectsDehaze(r, g, b *float64, amount float64, haze [3]float64) {
 	d := amount / 100.0
-	y := camRec709(*r, *g, *b)
-	contrast := 1.0 + 0.8*d
-	pivot := 0.45 - 0.1*math.Max(d, 0)
-	y2 := cameraClamp(pivot + (y-0.45)*contrast)
+	c := [3]float64{*r, *g, *b}
 	if d < 0 {
-		y2 = cameraClamp(y2 + (-d)*(1.0-y2)*0.45)
+		veil := 0.3 * math.Pow(-d, 1.3)
+		for k := 0; k < 3; k++ {
+			c[k] = c[k]*(1-veil) + haze[k]*veil
+		}
 	} else {
-		y2 = cameraClamp(y2 - d*math.Max(0.0, 0.4-y2))
+		dark := 1.0
+		for k := 0; k < 3; k++ {
+			dark = math.Min(dark, c[k]/math.Max(haze[k], 1e-3))
+		}
+		transmission := math.Max(0.5, 1-0.7*d*dark)
+		for k := 0; k < 3; k++ {
+			c[k] = (c[k]-haze[k])/transmission + haze[k]
+		}
 	}
-	camScaleLuminance(r, g, b, y2)
-	y2 = camRec709(*r, *g, *b)
-	sat := 1.0 + 0.7*d
-	*r = cameraClamp(y2 + (*r-y2)*sat)
-	*g = cameraClamp(y2 + (*g-y2)*sat)
-	*b = cameraClamp(y2 + (*b-y2)*sat)
+	*r = cameraClamp(c[0])
+	*g = cameraClamp(c[1])
+	*b = cameraClamp(c[2])
+}
+
+// camDehazeHaze is dehaze_haze: the picture's haze color for Dehaze, the mean
+// of its brightest one percent of pixels by luminance. A picture of one color
+// is all haze, so Dehaze leaves it be, as Photoshop's does.
+func camDehazeHaze(b *Bitmap) [3]float64 {
+	var histogram [256]float64
+	for y := 0; y < b.H; y++ {
+		for x := 0; x < b.W; x++ {
+			i := (y*b.W + x) * 4
+			alpha := b.Pix[i+3]
+			if alpha == 0 {
+				continue
+			}
+			level := int(math.Round(255 * camRec709(
+				math.Min(1.0, float64(b.Pix[i])/float64(alpha)),
+				math.Min(1.0, float64(b.Pix[i+1])/float64(alpha)),
+				math.Min(1.0, float64(b.Pix[i+2])/float64(alpha)))))
+			histogram[level] += float64(alpha) / 255.0
+		}
+	}
+	total := 0.0
+	for i := 0; i < 256; i++ {
+		total += histogram[i]
+	}
+	threshold := 255
+	for above := 0.0; threshold > 0 && above+histogram[threshold] < total*0.01; threshold-- {
+		above += histogram[threshold]
+	}
+	var sum [3]float64
+	weight := 0.0
+	for y := 0; y < b.H; y++ {
+		for x := 0; x < b.W; x++ {
+			i := (y*b.W + x) * 4
+			alpha := b.Pix[i+3]
+			if alpha == 0 {
+				continue
+			}
+			c := [3]float64{
+				math.Min(1.0, float64(b.Pix[i])/float64(alpha)),
+				math.Min(1.0, float64(b.Pix[i+1])/float64(alpha)),
+				math.Min(1.0, float64(b.Pix[i+2])/float64(alpha)),
+			}
+			if int(math.Round(255*camRec709(c[0], c[1], c[2]))) < threshold {
+				continue
+			}
+			for k := 0; k < 3; k++ {
+				sum[k] += c[k] * float64(alpha)
+			}
+			weight += float64(alpha)
+		}
+	}
+	haze := [3]float64{1, 1, 1}
+	if weight > 0 {
+		for k := 0; k < 3; k++ {
+			haze[k] = sum[k] / weight
+		}
+	}
+	return haze
 }
 
 // camVignetteMaskAt is the vignette's strength at a point of a frame
@@ -1111,13 +1226,36 @@ func camEffectsVignette(r, g, b *float64, x, y, width, height int,
 	if amount == 0 || width == 0 || height == 0 {
 		return
 	}
+	// Photoshop's is an ellipse fitted to the frame at Roundness 0, toward a
+	// rectangle below it, and starts a little further out than the Midpoint
+	// alone puts it.
 	mask := camVignetteMaskAt(float64(x)+0.5, float64(y)+0.5, float64(width), float64(height),
-		midpoint, roundness, feather)
+		midpoint+5.9, math.Min(100, 100+roundness), feather)
 	effect := (amount / 100.0) * mask
-	// Highlight Priority eases a darkening vignette off bright pixels.
-	if effect < 0 && style == 0 {
+	if style == 0 && mask > 0 {
+		// Highlight Priority, measured against Photoshop's, in linear light:
+		// darkening is a gain, to near black at −100 in the corners, eased off
+		// bright pixels (and more so with Highlights); lightening blends toward
+		// white, starting further out the gentler it is.
+		linear := [3]float64{srgbToLinear(*r), srgbToLinear(*g), srgbToLinear(*b)}
 		bright := cameraClamp((camRec709(*r, *g, *b) - 0.45) / 0.55)
-		effect *= 1.0 - (highlights/100.0)*bright
+		if amount < 0 {
+			ease := (1.0 - 0.3*bright) * (1.0 - (highlights/100.0)*bright)
+			gain := math.Exp(-5.8 * math.Pow(-amount/100.0, 1.43) * mask * ease)
+			for k := 0; k < 3; k++ {
+				linear[k] *= gain
+			}
+		} else {
+			a := amount / 100.0
+			toward := math.Pow(a, 0.85) * math.Pow(mask, 1+1.5*(1-a))
+			for k := 0; k < 3; k++ {
+				linear[k] += (1.0 - linear[k]) * toward
+			}
+		}
+		*r = linearToSrgb(linear[0])
+		*g = linearToSrgb(linear[1])
+		*b = linearToSrgb(linear[2])
+		return
 	}
 	if effect < 0 {
 		factor := 1.0 + effect
@@ -1173,13 +1311,22 @@ func ApplyCameraRawEffects(b *Bitmap, texture, clarity, dehaze float64,
 				luma[y*b.W+x] = float32(camRec709(r, g, bl))
 			}
 		}
+		// Radii in proportion to the picture, as fitted to Photoshop's on
+		// 1456-pixel-wide photos (8 and 32 there), so a downscaled preview
+		// matches the full-size result.
+		side := float64(b.W)
+		if b.H > b.W {
+			side = float64(b.H)
+		}
 		if texture != 0 {
 			fine = make([]float32, count)
-			boxBlurPlane(luma, fine, b.W, b.H, effectsRadius(1, scale))
+			radius := int(math.Max(1, math.Round(side*8/1456)))
+			guidedFilterPlane(luma, fine, b.W, b.H, radius, 0.01)
 		}
 		if clarity != 0 {
 			coarse = make([]float32, count)
-			boxBlurPlane(luma, coarse, b.W, b.H, effectsRadius(4, scale))
+			radius := int(math.Max(2, math.Round(side*32/1456)))
+			guidedFilterPlane(luma, coarse, b.W, b.H, radius, 0.01)
 		}
 		var glowRadius int
 		if glow > 0 {
@@ -1213,6 +1360,11 @@ func ApplyCameraRawEffects(b *Bitmap, texture, clarity, dehaze float64,
 			boxBlurPlane(source, glowPlane, b.W, b.H, glowRadius)
 		}
 	}
+	// Dehaze reads the picture's own haze color before any of it changes.
+	haze := [3]float64{1, 1, 1}
+	if dehaze != 0 {
+		haze = camDehazeHaze(b)
+	}
 	warmth := glowWarmth / 100.0
 	var glowRed, glowGreen, glowBlue, glowGain float64
 	if glowStyle == 2 {
@@ -1242,17 +1394,25 @@ func ApplyCameraRawEffects(b *Bitmap, texture, clarity, dehaze float64,
 				tone := camRec709(r, g, bl)
 				detail := 0.0
 				if fine != nil {
-					detail += (texture / 100.0) * (tone - float64(fine[index]))
+					weight := 0.5
+					if texture > 0 {
+						weight = 0.6
+					}
+					detail += (texture / 100.0) * weight * (tone - float64(fine[index]))
 				}
 				if coarse != nil {
-					detail += (clarity / 100.0) * (tone - float64(coarse[index]))
+					weight := 0.5
+					if clarity > 0 {
+						weight = 0.85
+					}
+					detail += (clarity / 100.0) * weight * (tone - float64(coarse[index]))
 				}
 				if detail != 0 {
 					camScaleLuminance(&r, &g, &bl, cameraClamp(tone+detail))
 				}
 			}
 			if dehaze != 0 {
-				camEffectsDehaze(&r, &g, &bl, dehaze)
+				camEffectsDehaze(&r, &g, &bl, dehaze, haze)
 			}
 			if glowPlane != nil && glow > 0 {
 				add := float64(glowPlane[index]) * (glow / 100.0) * glowGain
@@ -1384,27 +1544,63 @@ func ApplyCameraRawDetail(b *Bitmap, sharpenAmount, sharpenRadius, sharpenDetail
 		}
 	}
 	if noiseColor > 0 {
-		radius := effectsRadius(1.0+noiseColorSmoothness/40.0, scale)
-		chroma := make([]float32, count)
-		chromaBlur := make([]float32, count)
+		// Color noise is speckle of random hue over the picture's own color,
+		// in blotches a few pixels wide. Each pixel keeps its brightness and
+		// takes the color of the area around it: its two color differences
+		// from its brightness, red and blue, are blurred and put back over the
+		// brightness unchanged. Blurring saturation alone kept every speck's
+		// own hue, so the speckle stayed.
+		strength := noiseColor / 100.0
+		radius := effectsRadius(1.5+strength*4.0*(0.5+noiseColorSmoothness/100.0), scale)
+		red := make([]float32, count)
+		blue := make([]float32, count)
+		weight := make([]float32, count)
+		redBlur := make([]float32, count)
+		blueBlur := make([]float32, count)
+		weightBlur := make([]float32, count)
+		// Each pixel counts by its alpha, so clear pixels add no color of
+		// their own and don't pull the colors beside them toward gray.
 		for y := 0; y < b.H; y++ {
 			for x := 0; x < b.W; x++ {
 				i := (y*b.W + x) * 4
+				index := y*b.W + x
 				alpha := float64(b.Pix[i+3])
 				if alpha == 0 {
-					continue
+					continue // the planes start zeroed
 				}
 				r := math.Min(1.0, float64(b.Pix[i])/alpha)
 				g := math.Min(1.0, float64(b.Pix[i+1])/alpha)
 				bl := math.Min(1.0, float64(b.Pix[i+2])/alpha)
-				_, s, _ := camRgbToHsl(r, g, bl)
-				chroma[y*b.W+x] = float32(s)
+				luminance := camRec709(r, g, bl)
+				coverage := alpha / 255.0
+				red[index] = float32((r - luminance) * coverage)
+				blue[index] = float32((bl - luminance) * coverage)
+				weight[index] = float32(coverage)
 			}
 		}
-		boxBlurPlane(chroma, chromaBlur, b.W, b.H, radius)
-		strength := noiseColor / 100.0
+		boxBlurPlane(red, redBlur, b.W, b.H, radius)
+		boxBlurPlane(blue, blueBlur, b.W, b.H, radius)
+		boxBlurPlane(weight, weightBlur, b.W, b.H, radius)
+		for i := 0; i < count; i++ {
+			if weightBlur[i] > 1e-6 {
+				redBlur[i] /= weightBlur[i]
+				blueBlur[i] /= weightBlur[i]
+			}
+		}
+		// Color Detail keeps real color edges: where the smoothed color itself
+		// changes across a blur's width. Grain doesn't count, as it did when
+		// each pixel was compared with its own blur.
 		preserve := noiseColorDetail / 100.0
+		reach := radius
 		for y := 0; y < b.H; y++ {
+			up := y - reach
+			if up < 0 {
+				up = 0
+			}
+			down := y + reach
+			if down >= b.H {
+				down = b.H - 1
+			}
 			for x := 0; x < b.W; x++ {
 				i := (y*b.W + x) * 4
 				alpha := float64(b.Pix[i+3])
@@ -1412,18 +1608,31 @@ func ApplyCameraRawDetail(b *Bitmap, sharpenAmount, sharpenRadius, sharpenDetail
 					continue
 				}
 				index := y*b.W + x
-				edge := chroma[index] - chromaBlur[index]
-				if edge < 0 {
-					edge = -edge
+				left := x - reach
+				if left < 0 {
+					left = 0
 				}
-				local := strength * (1.0 - preserve*math.Min(1.0, float64(edge)*4.0))
-				sat := chroma[index]*(float32(1.0-local)) + chromaBlur[index]*float32(local)
+				right := x + reach
+				if right >= b.W {
+					right = b.W - 1
+				}
+				dx := math.Abs(float64(redBlur[y*b.W+right]-redBlur[y*b.W+left])) +
+					math.Abs(float64(blueBlur[y*b.W+right]-blueBlur[y*b.W+left]))
+				dy := math.Abs(float64(redBlur[down*b.W+x]-redBlur[up*b.W+x])) +
+					math.Abs(float64(blueBlur[down*b.W+x]-blueBlur[up*b.W+x]))
+				local := strength * (1.0 - preserve*math.Min(1.0, (dx+dy)*3.0))
 				r := math.Min(1.0, float64(b.Pix[i])/alpha)
 				g := math.Min(1.0, float64(b.Pix[i+1])/alpha)
 				bl := math.Min(1.0, float64(b.Pix[i+2])/alpha)
-				h, _, l := camRgbToHsl(r, g, bl)
-				r, g, bl = camHslToRgb(h, float64(sat), l)
-				writePremulD(b.Pix[i:i+4], r, g, bl, alpha)
+				luminance := camRec709(r, g, bl)
+				redDiff := (r - luminance) + (float64(redBlur[index])-(r-luminance))*local
+				blueDiff := (bl - luminance) + (float64(blueBlur[index])-(bl-luminance))*local
+				r = luminance + redDiff
+				bl = luminance + blueDiff
+				// Green follows from the brightness kept and the new red and blue.
+				g = (luminance - 0.2126*r - 0.0722*bl) / 0.7152
+				writePremulD(b.Pix[i:i+4], math.Min(1.0, math.Max(0.0, r)),
+					math.Min(1.0, math.Max(0.0, g)), math.Min(1.0, math.Max(0.0, bl)), alpha)
 			}
 		}
 	}
@@ -1443,10 +1652,17 @@ func ApplyCameraRawDetail(b *Bitmap, sharpenAmount, sharpenRadius, sharpenDetail
 				}
 				index := y*b.W + x
 				edge := sharpenEdgeAt(luma, b.W, b.H, x, y, radius)
-				mask := cameraClamp((float64(edge)*(0.5+detailMix) - threshold) /
-					math.Max(0.04, 0.35-threshold*0.5))
+				// Masking at 0 sharpens everywhere, as in Photoshop; raising
+				// it keeps the sharpening to edges.
+				mask := 1.0
+				if threshold > 0 {
+					mask = cameraClamp((float64(edge)*(0.5+detailMix) - threshold) /
+						math.Max(0.04, 0.35-threshold*0.5))
+				}
 				high := float64(luma[index] - work[index])
-				sharpened := cameraClamp(float64(luma[index]) + high*amount*mask*(0.5+detailMix))
+				// 1.9 × (0.5 + Detail) is Photoshop's strength: 1.4 at its
+				// default Detail of 25, measured on photos.
+				sharpened := cameraClamp(float64(luma[index]) + high*amount*mask*1.9*(0.5+detailMix))
 				r := math.Min(1.0, float64(b.Pix[i])/alpha)
 				g := math.Min(1.0, float64(b.Pix[i+1])/alpha)
 				bl := math.Min(1.0, float64(b.Pix[i+2])/alpha)

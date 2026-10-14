@@ -55,3 +55,57 @@ type GlowEffect struct {
 	Blue    float64 `json:"blue"`
 	Opacity float64 `json:"opacity"`
 }
+
+// Effect size ceilings, mirroring the ranges each effect's isValid accepts
+// (LayerEffects.swift: StrokeEffect.maxSize, ShadowEffect.isValid,
+// OuterGlowEffect.isValid). Scaled holds its results to them.
+const (
+	maxStrokeSize     = 500
+	maxShadowDistance = 5000
+	maxShadowBlur     = 500
+	maxGlowSize       = 500
+)
+
+// Scaled is LayerEffects.scaled(by:) (LayerEffects.swift:142): the effects for
+// an image resampled by factor, with every size, distance and blur in pixels
+// scaled with it and held to the ranges isValid accepts, as Photoshop's Scale
+// Styles does. A sub-effect that is absent stays absent; only a present one is
+// scaled, and its other fields are copied through unchanged. factor is the
+// mean of the two axis factors (sqrt(sx*sy)) when the image is stretched.
+func (e *Effects) Scaled(factor float64) *Effects {
+	if e == nil {
+		return nil
+	}
+	scale := func(value *float64, limit float64) {
+		*value = min(limit, *value*factor)
+	}
+	result := *e
+	if result.Stroke != nil {
+		stroke := *result.Stroke
+		scale(&stroke.Size, maxStrokeSize)
+		result.Stroke = &stroke
+	}
+	if result.Shadow != nil {
+		shadow := *result.Shadow
+		scale(&shadow.Distance, maxShadowDistance)
+		scale(&shadow.Blur, maxShadowBlur)
+		result.Shadow = &shadow
+	}
+	if result.InnerShadow != nil {
+		inner := *result.InnerShadow
+		scale(&inner.Distance, maxShadowDistance)
+		scale(&inner.Blur, maxShadowBlur)
+		result.InnerShadow = &inner
+	}
+	if result.OuterGlow != nil {
+		glow := *result.OuterGlow
+		scale(&glow.Size, maxGlowSize)
+		result.OuterGlow = &glow
+	}
+	if result.InnerGlow != nil {
+		glow := *result.InnerGlow
+		scale(&glow.Size, maxGlowSize)
+		result.InnerGlow = &glow
+	}
+	return &result
+}

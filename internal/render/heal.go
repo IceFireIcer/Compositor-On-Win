@@ -2,9 +2,12 @@ package render
 
 // SpotHeal — the Go port of HealPixels.c (spot_heal): the healing brush's
 // three modes (0 Content-Aware, 1 Create Texture, 2 Proximity Match) over a
-// coverage mask, coverage×opacity blended. Verbatim C in tests/golden/c is
-// the truth; the grain term crosses sqrt/log/cos, so its golden case runs
-// at ε=1.
+// coverage mask, coverage×opacity blended. Mode 0 rebuilds the spot with the
+// multi-scale PatchMatch fill (PatchFill, PatchPixels.c) and falls back to the
+// smooth fill when there is no image to rebuild from; modes 1 and 2 copy
+// nearby texture and lay it in through HealMembrane. Verbatim C in
+// tests/golden/c is the truth; the grain term crosses sqrt/log/cos, so its
+// golden case runs at ε=1.
 
 import "math"
 
@@ -96,10 +99,12 @@ func abs64(v int64) int64 {
 	return v
 }
 
-// healSolve relaxes smooth values over HOLE pixels, fixed to the RING values
-// around them. A coarser copy is solved first and used as the starting
-// point, so large spots settle in few passes.
-func healSolve(value []float32, role []byte, w, h int64, depth int) {
+// HealMembrane ports heal_membrane: it relaxes smooth values over the HOLE
+// pixels, fixed to the RING values around them. A coarser copy is solved
+// first and used as the starting point, so large spots settle in few passes.
+// PatchPixels.c shares it (adapt_color) to bring a filled hole to its
+// surroundings' tone.
+func HealMembrane(value []float32, role []byte, w, h int64, depth int) {
 	iterations := 300
 	if w > 32 && h > 32 && depth < 16 {
 		cw, ch := (w+1)/2, (h+1)/2
@@ -143,7 +148,7 @@ func healSolve(value []float32, role []byte, w, h int64, depth int) {
 				}
 			}
 		}
-		healSolve(coarse, coarseRole, cw, ch, depth+1)
+		HealMembrane(coarse, coarseRole, cw, ch, depth+1)
 		for y := int64(0); y < h; y++ {
 			for x := int64(0); x < w; x++ {
 				p := y*w + x
@@ -202,6 +207,38 @@ func SpotHeal(b *Bitmap, coverage []uint8, opacity float32, mode int, seed uint3
 		return false
 	}
 	bx0, by0, bx1, by1 := int64(bounds[0]), int64(bounds[1]), int64(bounds[2]), int64(bounds[3])
+	// Content-Aware rebuilds the spot pixel by pixel from the image around it
+	// (PatchPixels.c), so an edge or a pattern carries on through it, then
+	// lays that in by coverage × opacity. With no image around to rebuild
+	// from, it falls back to a smooth fill.
+	if mode == 0 {
+		filled := b.Clone()
+		if PatchFill(filled, coverage, seed) {
+			for y := by0; y < by1; y++ {
+				for x := bx0; x < bx1; x++ {
+					amount := float64(coverage[y*W+x]) / 255.0 * float64(opacity)
+					if amount <= 0 {
+						continue
+					}
+					t := rgba[y*stride+x*4:]
+					f := filled.Pix[y*stride+x*4:]
+					alpha := float64(t[3]) + (float64(f[3])-float64(t[3]))*amount
+					t[3] = uint8(round64(alpha))
+					for c := 0; c < 3; c++ {
+						v := float64(t[c]) + (float64(f[c])-float64(t[c]))*amount
+						if v < 0 {
+							v = 0
+						} else if v > float64(t[3]) {
+							v = float64(t[3])
+						}
+						t[c] = uint8(round64(v))
+					}
+				}
+			}
+			return true
+		}
+		mode = 1
+	}
 	bw, bh := bx1-bx0, by1-by0
 	size := bw
 	if bh > size {
@@ -373,7 +410,7 @@ func SpotHeal(b *Bitmap, coverage []uint8, opacity float32, mode int, seed uint3
 			}
 		}
 	}
-	healSolve(value, role, ww, wh, 0)
+	HealMembrane(value, role, ww, wh, 0)
 	for c := 0; c < 3; c++ {
 		detail[c] = math.Sqrt(detail[c]/float64(ringCount)) * 0.9
 	}
@@ -454,6 +491,13 @@ func round64(v float64) int64 {
 }
 
 func boolToInt64(v bool) int64 {
+	if v {
+		return 1
+	}
+	return 0
+}
+
+func boolByte(v bool) byte {
 	if v {
 		return 1
 	}

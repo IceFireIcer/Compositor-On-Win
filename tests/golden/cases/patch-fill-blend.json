@@ -1,0 +1,11 @@
+{
+  "kernel": "patch_fill",
+  "input": "blend",
+  "width": 48,
+  "height": 48,
+  "epsilon": 1,
+  "params": {
+    "seed": 3
+  },
+  "note": "patch_fill：中央 1/4 方块遮罩，从周边渐变补全（旧 content_fill 黄金样本的替代 case，旧样本存于 tests/golden/legacy）。expf 跨库 → ε=1。"
+}

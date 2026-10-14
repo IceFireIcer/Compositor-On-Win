@@ -17,15 +17,18 @@
 
 ## 2. 黄金基准 harness（像素内核的验收机制）
 
-**动机**：9 个 C 内核（约 2,528 行）是算法真值。Go 移植必须逐位（或规定 ε）复现，而不是"看起来差不多"。
+**动机**：C 内核是算法真值。Go 移植必须逐位（或规定 ε）复现，而不是"看起来差不多"。
 
 **机制**：
 1. `tests/golden/` 内放一份 C 内核**拷贝**（拷贝自 `reference/Swift/Compositor/Rendering/*.c`，注明来源提交哈希——reference 区保持只读）+ 一个极小的 C 驱动（读参数 JSON → 输出 PNG）。
 2. Windows 原生编译（mingw/MSVC 均可，内核是纯 C99）→ 生成**参考 PNG** 库（提交入库，参数 JSON 同存，可复现）。
-3. Go 测试对同一参数运行移植内核，与参考 PNG 逐像素比较；默认要求逐位一致，浮点敏感内核（如 Camera Raw 高光修复）允许 ≤1/255 的 ε，且须在测试名中显式标注。
+3. Go 测试对同一参数运行移植内核，与参考 PNG 逐像素比较；默认要求逐位一致，跨 C 库浮点边界的内核（`pow`/`hypot`/`expf`）允许 ≤1/255 的 ε，且须在 case 的 note 中显式说明。
 4. 新增内核移植 = 新增参数集夹具；参数集覆盖原版测试里出现过的典型值（对齐原版测试的输入）。
+5. 内核被上游改写/删除后，拷贝件**整体搬到子模块 pin**（票 63/64/65 起），逐 case 重新生成参考图；无法再驱动的旧样本退役到 `tests/golden/legacy/`，数值变化记录在 `legacy/README.md` 并由 `TestLegacyCameraRawBaselineDrift` 钉住。
 
-**产物**：`tests/golden/ref/*.png`（参考）、`tests/golden/cases/*.json`（参数）、Go 比较测试。
+**产物**：`tests/golden/ref/*.png`（参考）、`tests/golden/cases/*.json`（参数）、Go 比较测试、`tests/golden/legacy/`（历史基准）。
+
+**当前规模**：10 个内核拷贝件（`AdjustPixels`、`BrushPixels`、`DitherPixels`、`HealPixels`、`LensPixels`、`LevelsPixels`、`NoisePixels`、`PatchPixels`、`ScanlinesPixels`、`WandPixels`），42 个活 case；来源提交见 `tests/golden/c/README.md`。
 
 ## 3. 测试移植（517 个 Swift 测试）
 

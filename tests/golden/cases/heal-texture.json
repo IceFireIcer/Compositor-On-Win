@@ -1,0 +1,14 @@
+{
+  "kernel": "heal",
+  "input": "texture",
+  "width": 64,
+  "height": 64,
+  "epsilon": 1,
+  "params": {
+    "opacity": 1,
+    "mode": 0,
+    "seed": 5,
+    "maskShape": "disc"
+  },
+  "note": "spot_heal mode 0（Content-Aware）在繁忙纹理上：patch_fill 要把纹理续过圆盘，填充区不得塌成平坦色块。expf 跨库 → ε=1。"
+}

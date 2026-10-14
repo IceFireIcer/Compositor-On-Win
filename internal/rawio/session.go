@@ -36,6 +36,10 @@ type Session struct {
 	Height int
 	// CamMul is the camera's own white balance (R, G, B) — the asShot seed.
 	CamMul [3]float64
+	// Caps is what this file's camera allows the develop sheet to offer
+	// (LibRaw's own denoise and highlight recovery; never lens correction —
+	// see rawbridge.cpp).
+	Caps DevelopCaps
 }
 
 // Open opens and unpacks a RAW file. halfSize halves both sides for the
@@ -46,7 +50,8 @@ func Open(path string, halfSize bool) (*Session, error) {
 	var ptr *C.RB_Session
 	var w, h C.int
 	camMul := [3]C.double{}
-	rc := C.rb_open(cPath, cInt(halfSize), &ptr, &w, &h, &camMul[0])
+	var caps C.RB_Caps
+	rc := C.rb_open(cPath, cInt(halfSize), &ptr, &w, &h, &camMul[0], &caps)
 	if rc != 0 {
 		return nil, fmt.Errorf("%s", C.GoString(C.rb_last_error()))
 	}
@@ -55,6 +60,11 @@ func Open(path string, halfSize bool) (*Session, error) {
 		Width:  int(w),
 		Height: int(h),
 		CamMul: [3]float64{float64(camMul[0]), float64(camMul[1]), float64(camMul[2])},
+		Caps: DevelopCaps{
+			NoiseReduction:    caps.supports_noise_reduction != 0,
+			LensCorrection:    caps.supports_lens_correction != 0,
+			HighlightRecovery: caps.supports_highlight_recovery != 0,
+		},
 	}, nil
 }
 
@@ -71,7 +81,10 @@ func (s *Session) Close() {
 // ApplyDevelop spends exposure, further Kelvin/tint and the boost curve,
 // returning opaque 8-bit sRGB pixels. asShot flags the camera-WB path.
 func (s *Session) Develop(settings DevelopSettings) ([]uint8, int, int, error) {
-	useCameraWb := settings.IsAsShot()
+	// The camera's own multipliers are the asShot path; the engine controls
+	// (noise reduction, highlight recovery) don't affect which white balance
+	// LibRaw spends, so this asks about Kelvin/tint alone.
+	useCameraWb := settings.WhiteBalanceIsAsShot()
 	mul := [4]C.double{1, 1, 1, 1}
 	if !useCameraWb {
 		r, g, b := kelvinToGains(settings.Temperature, settings.Tint)
@@ -79,7 +92,8 @@ func (s *Session) Develop(settings DevelopSettings) ([]uint8, int, int, error) {
 	}
 	var rgb *C.ushort
 	var w, h C.int
-	rc := C.rb_develop(s.ptr, &mul[0], cInt(useCameraWb), &rgb, &w, &h)
+	rc := C.rb_develop(s.ptr, &mul[0], cInt(useCameraWb),
+		C.double(settings.NoiseReduction), cInt(settings.HighlightRecovery), &rgb, &w, &h)
 	if rc != 0 {
 		return nil, 0, 0, fmt.Errorf("%s", C.GoString(C.rb_last_error()))
 	}
@@ -92,6 +106,7 @@ func (s *Session) Develop(settings DevelopSettings) ([]uint8, int, int, error) {
 		planes[i*3+1] = uint16(r16[i*3+1])
 		planes[i*3+2] = uint16(r16[i*3+2])
 	}
-	pix := ApplyDevelop(planes[0:count:count], planes[count:count*2:count*2], planes[count*2:], settings)
+	// The frame's real shape: the dither hashes each pixel by its (x, y).
+	pix := ApplyDevelop(planes[0:count:count], planes[count:count*2:count*2], planes[count*2:], settings, int(w), int(h))
 	return pix, int(w), int(h), nil
 }

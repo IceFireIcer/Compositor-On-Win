@@ -356,19 +356,35 @@ func TestCameraVignetteMaskShape(t *testing.T) {
 }
 
 func TestApplyCameraRawEffectsDehazeDeepensContrast(t *testing.T) {
-	bmp := cameraRawTestBitmap()
-	clone := bmp.Clone()
-	ApplyCameraRawEffects(bmp, 0, 0, 40, 0, 0, 0, 0, 0, 0, 50, 0, 50, 0, 0, 1)
-	higher, lower := 0, 0
-	for i := 0; i < len(bmp.Pix); i += 4 {
-		if bmp.Pix[i] > clone.Pix[i] {
-			higher++
-		} else if bmp.Pix[i] < clone.Pix[i] {
-			lower++
+	// Dehaze reads the picture's own haze color (its brightest one percent)
+	// and removes it where a pixel lies below it, so the tones under the haze
+	// deepen and the picture opens up. The fixed curve this replaced pushed
+	// tones apart on both sides of a mid-gray pivot regardless of the picture.
+	deepen := func(amount float64) (darker, lighter, mean int) {
+		bmp := cameraRawTestBitmap()
+		clone := bmp.Clone()
+		ApplyCameraRawEffects(bmp, 0, 0, amount, 0, 0, 0, 0, 0, 0, 50, 0, 50, 0, 0, 1)
+		sum := 0
+		for i := 0; i < len(bmp.Pix); i += 4 {
+			sum += int(bmp.Pix[i])
+			switch {
+			case bmp.Pix[i] < clone.Pix[i]:
+				darker++
+			case bmp.Pix[i] > clone.Pix[i]:
+				lighter++
+			}
 		}
+		return darker, lighter, sum / (len(bmp.Pix) / 4)
 	}
-	if higher == 0 || lower == 0 {
-		t.Fatalf("dehaze must push tones apart (up %d, down %d)", higher, lower)
+	darker, lighter, mean := deepen(40)
+	if darker == 0 || lighter != 0 {
+		t.Fatalf("positive dehaze must deepen the tones below the haze (down %d, up %d)", darker, lighter)
+	}
+	if _, _, base := deepen(0); mean >= base {
+		t.Fatalf("positive dehaze must lower the mean: %d → %d", base, mean)
+	}
+	if _, lighter, lifted := deepen(-40); lighter == 0 || lifted <= mean {
+		t.Fatalf("negative dehaze must veil the picture and lift it: %d → %d (up %d)", mean, lifted, lighter)
 	}
 }
 
@@ -706,5 +722,267 @@ func TestApplyCameraRawOpticsDefringeDesaturatesPurple(t *testing.T) {
 		if maxc-minc >= 160 {
 			t.Fatalf("purple defringe must desaturate, chroma now %v", maxc-minc)
 		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// 票 63：Camera Raw 光影与细节的 1.4.9 数值
+// ---------------------------------------------------------------------------
+// 上游 0b4c56c / 42a559b / 75147a2 的 CameraRawTests 用例转成的 Go 断言。
+// 这些性质是「可复现的参考像素与容差」：每条都对应上游那三个提交里的一个
+// 具体回归（明暗顺序、色彩降噪只动色度、去雾读画面自身的雾色、Masking 0 全图锐化、
+// 纹理/清晰度用保边滤波不留光晕）。
+
+// TestCameraRawShadowsAndHighlightsKeepTonesInOrder is
+// CameraRawTests.shadowsAndHighlightsKeepTonesInOrder: a gray ramp from black
+// to white still rises after either slider at ±100, with black and white where
+// they were. Shadows +100 once lifted black to middle gray, above the tones
+// over it, and lifted dark areas broke into blotches of color.
+func TestCameraRawShadowsAndHighlightsKeepTonesInOrder(t *testing.T) {
+	ramp := func() *Bitmap {
+		b := NewBitmap(256, 1)
+		for x := 0; x < 256; x++ {
+			i := x * 4
+			v := uint8(x)
+			b.Pix[i], b.Pix[i+1], b.Pix[i+2], b.Pix[i+3] = v, v, v, 255
+		}
+		return b
+	}
+	levels := func(shadows, highlights float64) []int {
+		b := ramp()
+		ApplyCameraRaw(b, 1, 1, 1, 0, 0, highlights, shadows, 0, 0, 0, 0, 0)
+		out := make([]int, 256)
+		for x := 0; x < 256; x++ {
+			out[x] = int(b.Pix[x*4+1])
+		}
+		return out
+	}
+	for _, c := range [][2]float64{{100, 0}, {-100, 0}, {0, 100}, {0, -100}} {
+		out := levels(c[0], c[1])
+		for x := 1; x < 256; x++ {
+			if out[x] < out[x-1] {
+				t.Fatalf("shadows %v highlights %v: tones out of order at %d (%d → %d)",
+					c[0], c[1], x, out[x-1], out[x])
+			}
+		}
+		if out[0] > 2 || out[255] < 253 {
+			t.Fatalf("shadows %v highlights %v: black %d, white %d", c[0], c[1], out[0], out[255])
+		}
+	}
+	if lifted := levels(100, 0); lifted[45] < 45+20 {
+		t.Fatalf("shadows +100 must lift the dark tones: 45 → %d", lifted[45])
+	}
+}
+
+// TestCameraRawColorNoiseReductionRemovesColorGrainNotBrightness is
+// CameraRawTests.colorNoiseReductionRemovesColorGrainNotBrightness: speckle
+// of every hue over a gray goes most of the way back to the gray at 100, and
+// its brightness stays. Blurring saturation alone kept each speck's own hue,
+// so the speckle stayed.
+func TestCameraRawColorNoiseReductionRemovesColorGrainNotBrightness(t *testing.T) {
+	const side = 120
+	b := NewBitmap(side, side)
+	seed := uint32(12345)
+	for y := 0; y < side; y++ {
+		for x := 0; x < side; x++ {
+			i := (y*side + x) * 4
+			for c := 0; c < 3; c++ {
+				seed = seed*1664525 + 1013904223
+				b.Pix[i+c] = uint8(64 + int(seed>>25))
+			}
+			b.Pix[i+3] = 255
+		}
+	}
+	measure := func(b *Bitmap) (color, brightness float64) {
+		count := 0.0
+		for y := 10; y < 110; y++ {
+			for x := 10; x < 110; x++ {
+				i := (y*side + x) * 4
+				r, g, bl := float64(b.Pix[i]), float64(b.Pix[i+1]), float64(b.Pix[i+2])
+				color += math.Max(r, math.Max(g, bl)) - math.Min(r, math.Min(g, bl))
+				brightness += 0.2126*r + 0.7152*g + 0.0722*bl
+				count++
+			}
+		}
+		return color / count, brightness / count
+	}
+	beforeColor, beforeBrightness := measure(b)
+	ApplyCameraRawDetail(b, 0, 25, 50, 0, 0, 50, 0, 100, 50, 50, 1)
+	afterColor, afterBrightness := measure(b)
+	if afterColor >= beforeColor*0.25 {
+		t.Fatalf("color speckle must go: %v → %v", beforeColor, afterColor)
+	}
+	if math.Abs(afterBrightness-beforeBrightness) >= 1 {
+		t.Fatalf("brightness must stay: %v → %v", beforeBrightness, afterBrightness)
+	}
+}
+
+// TestCameraRawDehazeDeepensOrLiftsAndLeavesOneColor is
+// CameraRawTests.dehazeDeepensOrLiftsAndKeepsAlpha: dehaze takes away, or
+// adds, the haze of a picture's brightest part — a shadow under a pale sky
+// deepens or lifts — and a picture of one color has no haze to find.
+func TestCameraRawDehazeDeepensOrLiftsAndLeavesOneColor(t *testing.T) {
+	sky := NewBitmap(10, 10)
+	for y := 0; y < 10; y++ {
+		for x := 0; x < 10; x++ {
+			i := (y*10 + x) * 4
+			if y < 5 {
+				sky.Pix[i], sky.Pix[i+1], sky.Pix[i+2] = 200, 195, 190
+			} else {
+				sky.Pix[i], sky.Pix[i+1], sky.Pix[i+2] = 30, 30, 30
+			}
+			sky.Pix[i+3] = 255
+		}
+	}
+	shadow := func(amount float64) uint8 {
+		b := sky.Clone()
+		ApplyCameraRawEffects(b, 0, 0, amount, 0, 0, 0, 0, 0, 0, 50, 0, 50, 0, 0, 1)
+		return b.Pix[(7*10+5)*4]
+	}
+	if got := shadow(100); got >= 30 {
+		t.Fatalf("positive dehaze must deepen the shadow, got %d", got)
+	}
+	if got := shadow(-100); got <= 30 {
+		t.Fatalf("negative dehaze must lift the shadow, got %d", got)
+	}
+	pale := NewBitmap(4, 4)
+	for i := 0; i < len(pale.Pix); i += 4 {
+		pale.Pix[i], pale.Pix[i+1], pale.Pix[i+2], pale.Pix[i+3] = 180, 150, 150, 255
+	}
+	for _, amount := range []float64{100, -100} {
+		b := pale.Clone()
+		ApplyCameraRawEffects(b, 0, 0, amount, 0, 0, 0, 0, 0, 0, 50, 0, 50, 0, 0, 1)
+		for i := 0; i < len(b.Pix); i += 4 {
+			if b.Pix[i] != 180 || b.Pix[i+1] != 150 || b.Pix[i+2] != 150 || b.Pix[i+3] != 255 {
+				t.Fatalf("one color is all haze and must be left be at %v, got %d,%d,%d,%d",
+					amount, b.Pix[i], b.Pix[i+1], b.Pix[i+2], b.Pix[i+3])
+			}
+		}
+	}
+}
+
+// TestCameraRawDetailSharpensEverywhereAtMaskingZero: sharpening was gated by
+// an edge mask even with Masking at 0, so it barely did anything; it now
+// sharpens everywhere at Photoshop's strength unless Masking says otherwise.
+func TestCameraRawDetailSharpensEverywhereAtMaskingZero(t *testing.T) {
+	// A sine, so there is real detail for the unsharp to work on: a straight
+	// ramp survives a box blur unchanged and would prove nothing.
+	build := func() *Bitmap {
+		b := NewBitmap(32, 8)
+		for y := 0; y < 8; y++ {
+			for x := 0; x < 32; x++ {
+				i := (y*32 + x) * 4
+				v := uint8(128 + 100*math.Sin(2*math.Pi*float64(x)/32))
+				b.Pix[i], b.Pix[i+1], b.Pix[i+2], b.Pix[i+3] = v, v, v, 255
+			}
+		}
+		return b
+	}
+	peak := func(masking float64) int {
+		b := build()
+		ApplyCameraRawDetail(b, 100, 25, 50, masking, 0, 50, 0, 0, 50, 50, 1)
+		return int(b.Pix[8*4]) // the sine's crest, 228 in the source
+	}
+	const source = 228
+	if got := peak(100); got != source {
+		t.Fatalf("Masking 100 must leave a shallow edge alone, crest %d → %d", source, got)
+	}
+	// Masking 0 sharpens everywhere: the old edge-mask gate left this crest at
+	// exactly its source value (its edge reading is under a tenth of the
+	// threshold), while sharpening everywhere moves it.
+	if got := peak(0); got <= source {
+		t.Fatalf("Masking 0 must sharpen the crest: %d → %d", source, got)
+	}
+}
+
+// TestCameraRawEffectsClarityUsesGuidedFilterWithoutHalos: Texture and Clarity
+// use an edge-aware (guided) filter, so the detail taken against it leaves the
+// flat sides of a step exactly where they were instead of ringing.
+func TestCameraRawEffectsClarityUsesGuidedFilterWithoutHalos(t *testing.T) {
+	b := NewBitmap(64, 64)
+	for y := 0; y < 64; y++ {
+		for x := 0; x < 64; x++ {
+			i := (y*64 + x) * 4
+			v := uint8(60)
+			if x >= 32 {
+				v = 200
+			}
+			b.Pix[i], b.Pix[i+1], b.Pix[i+2], b.Pix[i+3] = v, v, v, 255
+		}
+	}
+	ApplyCameraRawEffects(b, 0, 100, 0, 0, 0, 0, 0, 0, 0, 50, 0, 50, 0, 0, 1)
+	changed := 0
+	for y := 0; y < 64; y++ {
+		for x := 0; x < 64; x++ {
+			i := (y*64 + x) * 4
+			v := b.Pix[i]
+			// No halo: the edge-aware blur keeps the local contrast inside the
+			// step's own levels, where the box blur this replaced rings 53
+			// levels past them on both sides (down to 7 and up to 253 on this
+			// step). Measured: guided stays within 60±7 and 200±7.
+			if v < 40 || v > 220 {
+				t.Fatalf("clarity must not ring past the step, (%d,%d) = %d", x, y, v)
+			}
+			switch {
+			case x <= 20 && v != 60:
+				t.Fatalf("guided clarity must leave the dark side flat, (%d,%d) = %d", x, y, v)
+			case x >= 43 && v != 200:
+				t.Fatalf("guided clarity must leave the bright side flat, (%d,%d) = %d", x, y, v)
+			case v != 60 && v != 200:
+				changed++
+			}
+		}
+	}
+	if changed == 0 {
+		t.Fatal("clarity must change the tones around the edge")
+	}
+}
+
+// TestCameraRawEffectsPreviewMatchesFullSize: Texture and Clarity take their
+// radii in proportion to the picture (8 and 32 px on a 1456-pixel-wide photo),
+// so a downscaled preview and the full-size render agree — the reason 75147a2
+// moved them off the fixed effects_radius. With the old fixed radii the
+// preview's blur would be twice as wide relative to its own pixels.
+func TestCameraRawEffectsPreviewMatchesFullSize(t *testing.T) {
+	const full = 400
+	src := NewBitmap(full, full)
+	for y := 0; y < full; y++ {
+		for x := 0; x < full; x++ {
+			i := (y*full + x) * 4
+			v := 110.0 + 70*math.Sin(float64(x)/23)*math.Cos(float64(y)/31)
+			if (x/17+y/13)%2 == 0 {
+				v += 25
+			}
+			c := uint8(math.Max(0, math.Min(255, v)))
+			src.Pix[i], src.Pix[i+1], src.Pix[i+2], src.Pix[i+3] = c, c, c, 255
+		}
+	}
+	preview := DownscaleBitmap(src, full/2, full/2)
+	for _, tc := range []struct {
+		name             string
+		texture, clarity float64
+	}{{"texture", 100, 0}, {"clarity", 0, 100}} {
+		t.Run(tc.name, func(t *testing.T) {
+			big := src.Clone()
+			ApplyCameraRawEffects(big, tc.texture, tc.clarity, 0, 0, 0, 0, 0, 0, 0, 50, 0, 50, 0, 0, 1)
+			small := preview.Clone()
+			ApplyCameraRawEffects(small, tc.texture, tc.clarity, 0, 0, 0, 0, 0, 0, 0, 50, 0, 50, 0, 0, 1)
+			back := DownscaleBitmap(big, full/2, full/2)
+			maxDelta, sum := 0, 0
+			for i := range back.Pix {
+				d := int(back.Pix[i]) - int(small.Pix[i])
+				if d < 0 {
+					d = -d
+				}
+				sum += d
+				if d > maxDelta {
+					maxDelta = d
+				}
+			}
+			mean := float64(sum) / float64(len(back.Pix))
+			if maxDelta > 4 || mean > 1 {
+				t.Fatalf("preview and full-size render diverge: max Δ%d, mean Δ%.2f", maxDelta, mean)
+			}
+		})
 	}
 }

@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"image"
 	"image/png"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -27,7 +28,7 @@ import (
 // Case is one golden-benchmark entry, loaded from cases/*.json.
 type Case struct {
 	Kernel   string         `json:"kernel"` // driver command name (one per kernel entry)
-	Input    string         `json:"input"`  // procedural input: ramp | patches | blend
+	Input    string         `json:"input"`  // procedural input: ramp | patches | blend | curve | texture
 	Width    int            `json:"width"`  // canvas, kept ≤512 for fast tests
 	Height   int            `json:"height"`
 	Epsilon  int            `json:"epsilon"` // per-channel byte tolerance; 0 = bit-exact
@@ -100,6 +101,26 @@ func BuildInput(c Case) []byte {
 				b = float64((x*x + y*y) % 256)
 				d := float64(x+y) / float64(w+h-2) // 0 top-left → 1 bottom-right
 				a = 255 * (1 - clamp01f((d-0.35)/0.3))
+			case "curve": // a curved hilltop: a pale sky over a darker ground, the
+				// boundary a full sine, so a fill has to carry the curve through
+				horizon := float64(h)/2 + 0.22*float64(h)*math.Sin(float64(x)/float64(w)*2*math.Pi)
+				if float64(y) < horizon {
+					r, g, b = 205, 215, 230
+				} else {
+					r, g, b = 70, 105, 60
+				}
+				a = 255
+			case "texture": // busy texture running to every edge: a fine checker
+				// crossed by diagonal bands, so a fill must not come out flat
+				v := 45.0
+				if (x/3+y/3)%2 == 0 {
+					v = 185
+				}
+				if (x+y)%7 < 2 {
+					v = 235
+				}
+				r, g, b = v, v*0.75+25, v*0.5+55
+				a = 255
 			default:
 				panic("golden: unknown input generator " + c.Input)
 			}
@@ -115,10 +136,24 @@ func BuildInput(c Case) []byte {
 }
 
 // BuildMask renders the procedural mask for kernels that take one
-// (content_fill, spot_heal): an opaque centered square to fill/heal.
+// (patch_fill, spot_heal): an opaque centered square, or — with
+// "maskShape": "disc" — a centered disc, which leaves a curved hole.
 func BuildMask(c Case) []byte {
 	w, h := c.Width, c.Height
 	mask := make([]uint8, w*h)
+	if shape, _ := c.Params["maskShape"].(string); shape == "disc" {
+		cx, cy := float64(w)/2, float64(h)/2
+		radius := math.Min(cx, cy) / 2
+		for y := 0; y < h; y++ {
+			for x := 0; x < w; x++ {
+				dx, dy := float64(x)+0.5-cx, float64(y)+0.5-cy
+				if dx*dx+dy*dy <= radius*radius {
+					mask[y*w+x] = 255
+				}
+			}
+		}
+		return mask
+	}
 	x0, x1 := w/4, w-w/4
 	y0, y1 := h/4, h-h/4
 	for y := y0; y < y1; y++ {
@@ -130,7 +165,7 @@ func BuildMask(c Case) []byte {
 }
 
 // NeedsMask reports whether the kernel takes a mask/coverage file argument.
-func (c Case) NeedsMask() bool { return c.Kernel == "content_fill" || c.Kernel == "heal" }
+func (c Case) NeedsMask() bool { return c.Kernel == "patch_fill" || c.Kernel == "heal" }
 
 // DriverArgs converts the case parameters into the driver's argv, in the
 // order documented in c/driver_main.c's header comment.
@@ -219,10 +254,15 @@ func (c Case) DriverArgs() ([]string, error) {
 		}
 		args = add(args, append(s, h...)...)
 		args = add(args, rev)
-	case "cube", "brush":
+	case "cube", "brush", "quantize16":
 		// no parameters
-	case "content_fill":
-		// the mask path is prepended by RunDriver
+	case "patch_fill":
+		// the mask path is prepended by RunDriver; only the seed is passed
+		f, e := num("seed")
+		if e != nil {
+			return nil, e
+		}
+		args = add(args, f)
 	case "heal":
 		keys := []string{"opacity", "mode", "seed"}
 		args = make([]string, 0, len(keys))
@@ -268,17 +308,6 @@ func (c Case) DriverArgs() ([]string, error) {
 			return nil, e
 		}
 		args = add(args, p)
-	case "camera_raw":
-		keys := []string{"redGain", "greenGain", "blueGain", "exposure", "contrast", "highlights",
-			"shadows", "whites", "blacks", "vibrance", "saturation", "clipping"}
-		args = make([]string, 0, len(keys))
-		for _, k := range keys {
-			f, e := num(k)
-			if e != nil {
-				return nil, e
-			}
-			args = add(args, f)
-		}
 	case "camera_raw_curve":
 		// Driver order: four point curves (count + x y each), the seven
 		// parametric sliders, refineSaturation, 24 mixer floats, the picked

@@ -16,7 +16,6 @@
 //   grain         amount size roughness seed originX originY unitsPerPixel
 //   black_white   r y g c b m tint tintHue tintSaturation
 //   color_balance 9 shifts then preserveLuminosity
-//   camera_raw    11 grade doubles then clipping
 //   camera_raw_curve  4 point curves (count + x y each), 7 parametric sliders,
 //                 refineSaturation, 24 mixer floats, pointCount + 9 floats per
 //                 point, 12 grade floats, blending, balance, visualize
@@ -38,7 +37,8 @@
 //   tonal_contrast  blurRadius amount shadows midtones highlights
 //                 (the blurred base is built here with box_blur_rgba,
 //                 mirrored in golden_test.go's buildTonalBase)
-//   content_fill  maskPath
+//   patch_fill    maskPath seed
+//   quantize16    — (the 8-bit input widened by 257, the exact 8→16 scale)
 //   dither        style levels diffusion density contrast cell angle lightOnDark
 //                 originalColors darkR darkG darkB lightR lightG lightB dots wobble
 //   scanlines     spacing thickness dots wobble displace threshold split density
@@ -67,7 +67,7 @@
 #include "LevelsPixels.h"
 #include "AdjustPixels.h"
 #include "BrushPixels.h"
-#include "ContentFill.h"
+#include "PatchPixels.h"
 #include "DitherPixels.h"
 #include "ScanlinesPixels.h"
 #include "HealPixels.h"
@@ -392,13 +392,6 @@ int main(int argc, char **argv) {
         for (int i = 0; i < 9; i++) shifts[i] = (float)arg_double(argv[argi + i]);
         adjust_color_balance(pixels, (size_t)width, (size_t)height, (size_t)width * 4,
                              shifts, shifts + 3, shifts + 6, (int)arg_long(argv[argi + 9]));
-    } else if (!strcmp(command, "camera_raw")) {
-        if (argc < argi + 12) die("camera_raw needs 11 grade doubles + clipping");
-        double p[11];
-        for (int i = 0; i < 11; i++) p[i] = arg_double(argv[argi + i]);
-        adjust_camera_raw(pixels, (size_t)width, (size_t)height, (size_t)width * 4,
-                          p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7], p[8], p[9], p[10],
-                          (int)arg_long(argv[argi + 11]));
     } else if (!strcmp(command, "camera_raw_curve")) {
         // argv: rgbN (x y)*, redN (x y)*, greenN (x y)*, blueN (x y)*, then
         // shadows darks lights highlights shadowSplit darkSplit lightSplit
@@ -441,10 +434,13 @@ int main(int argc, char **argv) {
             int visualize = (int)arg_long(argv[argi2++]);
             float tables[4 * 256];
             build_camera_raw_tables(par7, cx, cy, cn, tables);
+            // NULL mixer/grade tables: this case drives the formula path; the
+            // measured tables those arguments take are ticket 78's data.
             adjust_camera_raw_curve_color(pixels, (size_t)width, (size_t)height, (size_t)width * 4,
                                           tables, tables + 256, tables + 512, tables + 768,
                                           refineSaturation, mixer, pointCount, points,
-                                          grade, blending, balance, visualize);
+                                          grade, blending, balance, visualize,
+                                          NULL, NULL, 33);
             free(points);
         }
         for (int c = 0; c < 4; ++c) {
@@ -478,7 +474,11 @@ int main(int argc, char **argv) {
                                  arg_double(argv[argi + 6]), arg_double(argv[argi + 7]),
                                  arg_double(argv[argi + 8]), arg_double(argv[argi + 9]),
                                  arg_double(argv[argi + 10]), arg_double(argv[argi + 11]),
-                                 arg_double(argv[argi + 12]), arg_double(argv[argi + 13]));
+                                 arg_double(argv[argi + 12]), arg_double(argv[argi + 13]),
+                                 // No exposure tables: the lens-vignetting
+                                 // correction now reads them (ticket 78), so
+                                 // this case leaves the vignette slider at 0.
+                                 NULL, 0);
     } else if (!strcmp(command, "camera_raw_calibration")) {
         if (argc < argi + 8) die("camera_raw_calibration needs 7 doubles + processVersion");
         adjust_camera_raw_calibration(pixels, (size_t)width, (size_t)height, (size_t)width * 4,
@@ -503,14 +503,24 @@ int main(int argc, char **argv) {
         adjust_tonal_contrast(pixels, base, (size_t)width, (size_t)height,
                               (size_t)width * 4, (size_t)width * 4, t[1], t[2], t[3], t[4]);
         free(base);
-    } else if (!strcmp(command, "content_fill")) {
-        if (argc < argi + 1) die("content_fill needs a mask path");
+    } else if (!strcmp(command, "patch_fill")) {
+        if (argc < argi + 2) die("patch_fill needs a mask path and a seed");
         size_t mask_length;
         uint8_t *mask = read_file(argv[argi], &mask_length);
-        if (mask_length != count) die("mask raw is not width×height bytes");
-        if (content_fill(pixels, (size_t)width * 4, mask, (size_t)width, (int)width, (int)height) != 1)
-            die("content_fill failed");
+        if (mask_length != count) die("hole raw is not width×height bytes");
+        if (patch_fill(pixels, (size_t)width * 4, mask, (size_t)width, (int)width, (int)height,
+                       (uint32_t)arg_long(argv[argi + 1])) != 1)
+            die("patch_fill failed");
         free(mask);
+    } else if (!strcmp(command, "quantize16")) {
+        // The harness's input pipeline is 8-bit RGBA and dither_quantize16
+        // takes 16-bit, so widen every byte by 257 (the exact 8→16 scale) and
+        // run the case through the same procedural inputs as the others.
+        uint16_t *wide = malloc((size_t)count * 4 * sizeof(uint16_t));
+        if (!wide) die("out of memory");
+        for (size_t i = 0; i < (size_t)count * 4; ++i) wide[i] = (uint16_t)(pixels[i] * 257);
+        dither_quantize16(wide, pixels, (size_t)width, (size_t)height, (size_t)width * 4);
+        free(wide);
     } else if (!strcmp(command, "dither")) {
         if (argc < argi + 17) die("dither needs 17 parameters");
         DitherParams params;

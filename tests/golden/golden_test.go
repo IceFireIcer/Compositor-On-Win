@@ -108,12 +108,6 @@ func goPort(c Case, px []byte) error {
 		render.ApplyAddNoise(bmp, float32(p["amount"].(float64)),
 			p["gaussian"].(float64) != 0, p["monochromatic"].(float64) != 0,
 			uint32(p["seed"].(float64)))
-	case "camera_raw":
-		num := func(key string) float64 { return p[key].(float64) }
-		render.ApplyCameraRaw(bmp, num("redGain"), num("greenGain"), num("blueGain"),
-			num("exposure"), num("contrast"), num("highlights"), num("shadows"),
-			num("whites"), num("blacks"), num("vibrance"), num("saturation"),
-			int(num("clipping")))
 	case "camera_raw_curve":
 		num := func(key string) float64 { return p[key].(float64) }
 		f32s := func(key string, n int) []float32 {
@@ -193,9 +187,10 @@ func goPort(c Case, px []byte) error {
 		buildTonalBase(bmp, base, int(num("blurRadius")))
 		render.ApplyTonalContrast(bmp, base, num("amount"), num("shadows"),
 			num("midtones"), num("highlights"))
-	case "content_fill":
-		if !render.ContentFill(bmp, BuildMask(c)) {
-			return fmt.Errorf("content_fill: 没有可用供体")
+	case "patch_fill":
+		num := func(key string) float64 { return p[key].(float64) }
+		if !render.PatchFill(bmp, BuildMask(c), uint32(num("seed"))) {
+			return fmt.Errorf("patch_fill: 没有可用供体")
 		}
 	case "heal":
 		num := func(key string) float64 { return p[key].(float64) }
@@ -231,6 +226,14 @@ func goPort(c Case, px []byte) error {
 			Smoothness: num("smoothness"), OriginalColors: num("originalColors") != 0,
 			Dark: color("dark"), Light: color("light"),
 		})
+	case "quantize16":
+		// The driver widens the harness's 8-bit input by 257, the exact 8→16
+		// scale, so the case runs through the same procedural inputs.
+		wide := make([]uint16, len(bmp.Pix))
+		for i, v := range bmp.Pix {
+			wide[i] = uint16(v) * 257
+		}
+		copy(bmp.Pix, render.Quantize16(wide, c.Width, c.Height))
 	default:
 		return errNotPorted
 	}
@@ -365,7 +368,7 @@ func TestGoldenCasesHaveReferences(t *testing.T) {
 		}
 	}
 	for _, k := range []string{"levels", "gradient_map", "cube", "grain", "black_white",
-		"color_balance", "camera_raw", "content_fill", "dither", "scanlines", "heal", "lens", "noise", "wand", "brush"} {
+		"color_balance", "patch_fill", "quantize16", "dither", "scanlines", "heal", "lens", "noise", "wand", "brush"} {
 		if !kernels[k] {
 			t.Errorf("no case for kernel command %q", k)
 		}
@@ -444,9 +447,10 @@ func TestGoldenReferencesMatchGoPorts(t *testing.T) {
 	// Kernels with a live Go port must actually run a comparison, not skip —
 	// but only when their case was part of this run (go test -run may filter).
 	for _, k := range []string{"levels", "exposure", "gradient_map", "cube", "wand",
-		"grain", "black_white", "color_balance", "noise", "camera_raw", "camera_raw_curve",
+		"grain", "black_white", "color_balance", "noise", "camera_raw_curve",
 		"camera_raw_effects", "camera_raw_detail", "camera_raw_optics", "camera_raw_calibration",
-		"lens", "colored_vignette", "tonal_contrast", "content_fill", "heal", "dither", "scanlines"} {
+		"lens", "colored_vignette", "tonal_contrast", "patch_fill", "heal", "dither", "scanlines",
+		"quantize16"} {
 		if ran[k] && !compared[k] {
 			t.Errorf("kernel %q has a Go port in goPort but was not compared", k)
 		}

@@ -60,9 +60,12 @@ var filterNames = map[string]string{
 // filterParams is the union of every filter's sliders; each kind reads its
 // own and normalization clamps with the Filters.swift defaults.
 type filterParams struct {
-	Radius   float64 `json:"radius"`   // gaussian blur σ, 0.1–250
-	Angle    float64 `json:"angle"`    // motion blur direction, −90–90
-	Distance float64 `json:"distance"` // motion blur streak, 1–2000
+	Radius float64 `json:"radius"` // gaussian blur σ, 0.1–250
+	// 票 66：高斯模糊只模糊颜色、逐像素保留原透明度（Filters.swift
+	// FilterSettings.preserveTransparency）。
+	PreserveTransparency bool    `json:"preserveTransparency"`
+	Angle                float64 `json:"angle"`    // motion blur direction, −90–90
+	Distance             float64 `json:"distance"` // motion blur streak, 1–2000
 
 	Amount        float64 `json:"amount"`        // add noise strength 0.1–400
 	NoiseGaussian bool    `json:"gaussian"`      // noise distribution
@@ -117,7 +120,8 @@ func (p *filterParams) normalized(kind string) filterParams {
 	r := *p
 	switch kind {
 	case FilterGaussian:
-		r.Radius = clampF(p.Radius, 0.1, 250, 1)
+		// 票 66：上游 1.4.10 起高斯模糊默认 5 px（原版 FilterSettings.radius = 5）。
+		r.Radius = clampF(p.Radius, 0.1, 250, 5)
 	case FilterMotion:
 		r.Angle = clampF(p.Angle, -90, 90, 0)
 		r.Distance = clampF(p.Distance, 1, 2000, 10)
@@ -157,6 +161,11 @@ func blurMargin(kind string, p *filterParams) int {
 	var margin float64
 	switch kind {
 	case FilterGaussian:
+		// 票 66：保留透明度时只模糊颜色、图层留在自己的网格上，不需要留白
+		// （Filters.swift FilterEdit.blurMargin）。
+		if p.PreserveTransparency {
+			return 0
+		}
 		margin = p.Radius*3 + 2
 	case FilterMotion:
 		margin = p.Distance/2 + 2
@@ -166,6 +175,14 @@ func blurMargin(kind string, p *filterParams) int {
 		return 0
 	}
 	return int(math.Ceil(margin))
+}
+
+// keepsOutline reports whether the filter leaves the layer's outline and size
+// alone: Gaussian Blur with Preserve Transparency blurs the colors from the
+// layer's own pixels, so the result stays on the layer's own grid and is not
+// trimmed (Filters.swift commitFilter's keepsOutline).
+func keepsOutline(kind string, p *filterParams) bool {
+	return kind == FilterGaussian && p.PreserveTransparency
 }
 
 // filterSelection carries the active selection in document pixels; Mask is
@@ -250,21 +267,6 @@ func docToLayerIndex(t domain.Transform, gridW, gridH int, dx, dy float64) (floa
 	return ux * float64(gridW), uy * float64(gridH)
 }
 
-// expandTransform mirrors FilterEdit.grow's transform math: the padded grid
-// scales the size and re-centers the origin so the placed rect covers the
-// padded area.
-func expandTransform(t domain.Transform, oldW, oldH, newW, newH int) domain.Transform {
-	out := t
-	out.Size[0] = t.Size[0] * float64(newW) / float64(oldW)
-	out.Size[1] = t.Size[1] * float64(newH) / float64(oldH)
-	// The grid grew by the same margin on every side, so the OLD grid's
-	// center sits at the NEW grid's center; map it through the old placement.
-	cx, cy := layerIndexToDoc(t, oldW, oldH, float64(oldW)/2, float64(oldH)/2)
-	out.Origin[0] = cx - out.Size[0]/2
-	out.Origin[1] = cy - out.Size[1]/2
-	return out
-}
-
 // trimTransform mirrors PixelFilter.trimmed: the cropped grid shrinks the
 // size and moves the origin so the placed rect covers the crop.
 func trimTransform(t domain.Transform, oldW, oldH int, bounds [4]int) domain.Transform {
@@ -275,19 +277,6 @@ func trimTransform(t domain.Transform, oldW, oldH int, bounds [4]int) domain.Tra
 	mx, my := layerIndexToDoc(t, oldW, oldH, float64(bounds[0]+bounds[2])/2, float64(bounds[1]+bounds[3])/2)
 	out.Origin[0] = mx - out.Size[0]/2
 	out.Origin[1] = my - out.Size[1]/2
-	return out
-}
-
-// padBitmap copies src into a grid grown by margin transparent pixels on
-// every side.
-func padBitmap(src *render.Bitmap, margin int) *render.Bitmap {
-	if margin <= 0 {
-		return src.Clone()
-	}
-	out := render.NewBitmap(src.W+2*margin, src.H+2*margin)
-	for y := 0; y < src.H; y++ {
-		copy(out.Pix[((y+margin)*out.W+margin)*4:], src.Pix[y*src.W*4:(y*src.W+src.W)*4])
-	}
 	return out
 }
 
@@ -332,16 +321,25 @@ func vignetteFrameFor(work *render.Bitmap, workT domain.Transform, docW, docH in
 
 // runFilterJob applies one filter kind to work in place at the given scale
 // (PixelFilter.run). blur kernels receive the scaled slider so a
-// downscaled preview blurs proportionally less.
-func runFilterJob(kind string, work *render.Bitmap, p *filterParams, scale float64, seed uint32,
+// downscaled preview blurs proportionally less. clampSides names the working
+// grid's sides that sit at the canvas's edge: Gaussian and Motion Blur carry
+// the edge pixels on there instead of fading into the clear ones beyond
+// (Filters.swift FilterJob.canvasSides).
+func runFilterJob(kind string, work *render.Bitmap, p *filterParams, clampSides render.EdgeSides, scale float64, seed uint32,
 	docW, docH int, workT domain.Transform, emptyLayer bool, fillMask []uint8, subjectRaw *render.Bitmap) error {
 	switch kind {
 	case FilterGaussian:
-		render.ApplyGaussianBlur(work, p.Radius*scale)
+		if p.PreserveTransparency {
+			// 票 66：只模糊颜色，alpha 逐像素不变（Filters.swift gaussianBlur
+			// 的 preserveTransparency 分支）。
+			render.ApplyGaussianBlurPreservingAlpha(work, p.Radius*scale)
+			break
+		}
+		render.ApplyGaussianBlurSides(work, p.Radius*scale, clampSides)
 	case FilterMotion:
 		// CIMotionBlur's radius per streak pixel: an even streak of length d
 		// spreads d/√12, so this radius matches its spread.
-		render.ApplyMotionBlur(work, p.Angle, p.Distance*scale*render.MotionRadiusPerPixel)
+		render.ApplyMotionBlurSides(work, p.Angle, p.Distance*scale*render.MotionRadiusPerPixel, clampSides)
 	case FilterBloom:
 		render.ApplyBloom(work, p.BloomRadius*scale, p.BloomAmount/50)
 	case FilterAddNoise:
@@ -376,7 +374,9 @@ func runFilterJob(kind string, work *render.Bitmap, p *filterParams, scale float
 		if fillMask == nil {
 			return fmt.Errorf("内容感知填充需要选区")
 		}
-		if !render.ContentFill(work, fillMask) {
+		// 票 65：多尺度 PatchMatch（PatchPixels.c 的 patch_fill），
+		// 与污点修复的 Content-Aware 模式同一个引擎。
+		if !render.PatchFill(work, fillMask, seed) {
 			return fmt.Errorf("内容感知填充没有可用源像素")
 		}
 	case FilterDither:
@@ -483,7 +483,7 @@ func adjustmentKind(kind string) (domain.AdjustmentKind, bool) {
 }
 
 // selectionLayerMask rasterizes the doc-space selection into a layer-space
-// gray coverage (the mask content_fill fills through).
+// gray coverage (the hole PatchFill fills through).
 func selectionLayerMask(sel *filterSelection, workT domain.Transform, w, h int) []uint8 {
 	mask := make([]uint8, w*h)
 	if sel == nil {
@@ -507,8 +507,8 @@ func selectionLayerMask(sel *filterSelection, workT domain.Transform, w, h int) 
 // space (bounding box of the mapped corners, exclusive max). The frontend
 // sends a document-sized mask; its zero padding is storage, not selection.
 // FilterEdit.growingTo uses the selection path's bounds in Swift. Growing
-// to the payload rect instead can even change ContentFill.c's patch radius
-// from 0 to 2 on small layers, incorrectly removing all valid donors.
+// to the payload rect instead changes which 7 × 7 patches count as sources
+// on small layers, and can leave PatchFill without a single donor.
 func selectionLayerBounds(sel *filterSelection, workT domain.Transform, w, h int) [4]int {
 	x0, y0, x1, y1 := sel.W, sel.H, 0, 0
 	for y := 0; y < sel.H; y++ {

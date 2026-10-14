@@ -84,7 +84,10 @@ func (s *Service) RawBeginDevelop(path string) (string, error) {
 		s.releaseStagedURLs(s.rawSession.stage)
 	}
 	s.rawSession = &rawDevelopSession{session: sess, name: baseDisplayName(path), half: true}
-	asShot := rawio.CameraAsShot(sess.CamMul[0], sess.CamMul[1], sess.CamMul[2])
+	// The sheet opens where the camera's own engine starts: its white balance
+	// and its starting points for noise reduction, lens correction and
+	// highlight recovery (RawImporter.asShot).
+	asShot := rawio.CameraAsShot(sess.CamMul[0], sess.CamMul[1], sess.CamMul[2], sess.Caps)
 	reply := rawDevelopReply{
 		Name:    s.rawSession.name,
 		FullW:   sess.Width,

@@ -1,0 +1,12 @@
+{
+  "kernel": "patch_fill",
+  "input": "texture",
+  "width": 64,
+  "height": 64,
+  "epsilon": 1,
+  "params": {
+    "seed": 11,
+    "maskShape": "disc"
+  },
+  "note": "patch_fill：繁忙纹理填到边缘，填充区不得塌成平坦色块（纹理通道参与匹配）。expf 跨库 → ε=1。"
+}

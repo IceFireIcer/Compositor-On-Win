@@ -52,6 +52,12 @@ type filterSession struct {
 	grown  *render.Bitmap
 	grownT domain.Transform
 	margin int
+	// 票 66：图层压在画布边上的那些边 —— 高斯/运动模糊在那里把边缘像素向外
+	// 延伸而不是往透明里糊（Filters.swift FilterEdit.canvasSides）。
+	canvasSides render.EdgeSides
+	// 会话打开时图层自己的变换。保留透明度的高斯用它，不受打开面板时为初始
+	// 模糊预留的 grown 网格影响（Filters.swift commitFilter 的 keepsOutline）。
+	originalT domain.Transform
 
 	previewScale float64
 	previewSrc   *render.Bitmap
@@ -61,6 +67,38 @@ type filterSession struct {
 	// Remove Background caches the raw model mask for the session's frozen
 	// grid — moving a slider only redoes the refining (MaskCache semantics).
 	subjectRaw *render.Bitmap
+}
+
+// runFilterOnGrid runs one filter job over its source grid and returns the
+// pixels to store with the transform that places them. The kernels see `src`
+// (the padded grid, or the layer's own pixels for a blur that keeps its
+// outline) at `srcT`; the result is blended through the selection and, unless
+// the outline is kept, trimmed back to its alpha bounds (PixelFilter.trimmed)
+// — a fully empty result keeps the grown grid, as the Swift guard does.
+//
+// CommitFilter and ApplyFilter are the same run over different sources (the
+// open session's frozen grid, or a freshly prepared one), so both come here
+// rather than repeating the kernel, blend and trim sequence.
+func runFilterOnGrid(kind string, p *filterParams, src *render.Bitmap, srcT domain.Transform,
+	clampSides render.EdgeSides, seed uint32, docW, docH int, emptyLayer bool,
+	sel *filterSelection, fillMask []uint8, subjectRaw *render.Bitmap, keepOutline bool,
+) (*render.Bitmap, domain.Transform, error) {
+	work := src.Clone()
+	if err := runFilterJob(kind, work, p, clampSides, 1, seed, docW, docH, srcT, emptyLayer, fillMask, subjectRaw); err != nil {
+		return nil, srcT, err
+	}
+	blendThroughSelection(work, src, sel, srcT)
+	newT := srcT
+	result := work
+	if !keepOutline {
+		if bounds := render.AlphaBounds(work); bounds[2] > 0 {
+			if bounds[0] != 0 || bounds[1] != 0 || bounds[2] != work.W || bounds[3] != work.H {
+				result = cropBitmap(work, bounds)
+				newT = trimTransform(srcT, work.W, work.H, bounds)
+			}
+		}
+	}
+	return result, newT, nil
 }
 
 // filterRenderSource builds the temporary raster override without changing
@@ -189,20 +227,78 @@ func validFilterKind(kind string) bool {
 	return ok
 }
 
+// canvasEdgeSides names the layer's sides that sit at (or past) the canvas's
+// edge, in the layer's own pixels — the sides where a blur carries the edge
+// pixels on instead of spreading into clear ones. The canvas rect is mapped
+// back through the layer's placement and compared with the layer's extent
+// (Filters.swift FilterEdit.init); top is the image's row 0, and a rotated
+// layer's sides don't run along the canvas's, so it has none.
+func canvasEdgeSides(kind string, t domain.Transform, gridW, gridH, docW, docH int) render.EdgeSides {
+	if kind != FilterGaussian && kind != FilterMotion {
+		return 0
+	}
+	if t.Rotation != 0 {
+		return 0
+	}
+	minX, minY := math.Inf(1), math.Inf(1)
+	maxX, maxY := math.Inf(-1), math.Inf(-1)
+	for _, c := range [][2]float64{{0, 0}, {float64(docW), 0}, {0, float64(docH)}, {float64(docW), float64(docH)}} {
+		ix, iy := docToLayerIndex(t, gridW, gridH, c[0], c[1])
+		minX, minY = math.Min(minX, ix), math.Min(minY, iy)
+		maxX, maxY = math.Max(maxX, ix), math.Max(maxY, iy)
+	}
+	var sides render.EdgeSides
+	if minX >= -0.5 {
+		sides |= render.EdgeLeft
+	}
+	if maxX <= float64(gridW)+0.5 {
+		sides |= render.EdgeRight
+	}
+	if minY >= -0.5 {
+		sides |= render.EdgeTop
+	}
+	if maxY <= float64(gridH)+0.5 {
+		sides |= render.EdgeBottom
+	}
+	return sides
+}
+
 // prepareFilterGrid grows the layer grid for blur spread and builds the
 // preview source (Filters.swift growForBlur + prepared). Full-size preview
 // for the pattern kinds (noise / adjustments) keeps their grain density.
+//
+// The padding is asymmetric: a side sitting at the canvas's edge is given no
+// room, because the blur carries the layer's edge pixels on there instead of
+// spreading into clear ones (FilterEdit.growForBlur). The margin is the full
+// room on every side, so a side left unpadded is not padded again by a later
+// amount change (Swift's grownMargin = room).
 func prepareFilterGrid(kind string, base *render.Bitmap, baseT domain.Transform, p *filterParams,
-	sel *filterSelection) (*filterSession, error) {
+	sel *filterSelection, docW, docH int) (*filterSession, error) {
 	margin := blurMargin(kind, p)
-	grown := padBitmap(base, margin)
+	sides := canvasEdgeSides(kind, baseT, base.W, base.H, docW, docH)
+	grown := base.Clone()
 	grownT := baseT
 	if margin > 0 {
+		x0, y0, x1, y1 := 0, 0, base.W, base.H
+		if sides&render.EdgeLeft == 0 {
+			x0 = -margin
+		}
+		if sides&render.EdgeRight == 0 {
+			x1 = base.W + margin
+		}
+		if sides&render.EdgeTop == 0 {
+			y0 = -margin
+		}
+		if sides&render.EdgeBottom == 0 {
+			y1 = base.H + margin
+		}
+		var offX, offY int
+		grown, offX, offY = growBitmapTo(base, x0, y0, x1, y1)
 		if grown.W > domain.MaxSide || grown.H > domain.MaxSide ||
 			grown.W*grown.H > domain.MaxSurfacePixels {
 			return nil, fmt.Errorf("滤镜的扩展网格超出文档限制")
 		}
-		grownT = expandTransform(baseT, base.W, base.H, grown.W, grown.H)
+		grownT = expandTransformOffset(baseT, base.W, base.H, grown.W, grown.H, offX, offY)
 	}
 	// Content-aware fill grows the grid to the selection so a fill can
 	// reach past the layer's edge (FilterEdit.growingTo).
@@ -227,7 +323,7 @@ func prepareFilterGrid(kind string, base *render.Bitmap, baseT domain.Transform,
 	}
 	fs := &filterSession{
 		kind: kind, assetKey: "", grown: grown, grownT: grownT, margin: margin,
-		emptyLayer: emptyLayer,
+		canvasSides: sides, originalT: baseT, emptyLayer: emptyLayer,
 	}
 	factor := 1.0
 	if !fullSize {
@@ -354,7 +450,7 @@ func (s *Service) BeginFilterEdit(kind, layerID, settingsJSON string, seed uint3
 	if err != nil {
 		return "", err
 	}
-	fs, err := prepareFilterGrid(kind, base, l.Transform, &p, sel)
+	fs, err := prepareFilterGrid(kind, base, l.Transform, &p, sel, sess.doc.Width, sess.doc.Height)
 	if err != nil {
 		return "", err
 	}
@@ -422,6 +518,7 @@ func (s *Service) UpdateFilterPreview(settingsJSON string) (string, error) {
 	kind, scale, seed := f.kind, f.previewScale, f.seed
 	sel := f.sel
 	grownT := f.grownT
+	clampSides := f.canvasSides
 	emptyLayer := f.emptyLayer
 	var fillMask []uint8
 	if kind == FilterContentFill {
@@ -440,7 +537,7 @@ func (s *Service) UpdateFilterPreview(settingsJSON string) (string, error) {
 
 	go func() {
 		work := src.Clone()
-		err := runFilterJob(kind, work, &p, scale, seed, docW, docH, grownT, emptyLayer, fillMask, subjectRaw)
+		err := runFilterJob(kind, work, &p, clampSides, scale, seed, docW, docH, grownT, emptyLayer, fillMask, subjectRaw)
 		if err == nil {
 			blendThroughSelection(work, src, sel, grownT)
 		}
@@ -498,7 +595,14 @@ func (s *Service) CommitFilter(settingsJSON string) (string, error) {
 	if oldBitmap == nil {
 		return "", fmt.Errorf("内存位图库缺少资产 %s", f.assetKey)
 	}
-	work := f.grown.Clone()
+	// 票 66：保留透明度的高斯不做 grown —— 用打开会话时图层的原图与原变换，
+	// 连打开面板时为初始模糊预留的 padding 一起丢掉，结果尺寸不变
+	// （Filters.swift commitFilter 的 keepsOutline）。
+	keepOutline := keepsOutline(f.kind, &p)
+	src, srcT := f.grown, f.grownT
+	if keepOutline {
+		src, srcT = oldBitmap, f.originalT
+	}
 	var fillMask []uint8
 	if f.kind == FilterContentFill {
 		fillMask = selectionLayerMask(f.sel, f.grownT, f.grown.W, f.grown.H)
@@ -510,19 +614,10 @@ func (s *Service) CommitFilter(settingsJSON string) (string, error) {
 			return "", err
 		}
 	}
-	if err := runFilterJob(f.kind, work, &p, 1, f.seed, sess.doc.Width, sess.doc.Height, f.grownT, f.emptyLayer, fillMask, subjectRaw); err != nil {
+	result, newT, err := runFilterOnGrid(f.kind, &p, src, srcT, f.canvasSides, f.seed,
+		sess.doc.Width, sess.doc.Height, f.emptyLayer, f.sel, fillMask, subjectRaw, keepOutline)
+	if err != nil {
 		return "", err
-	}
-	blendThroughSelection(work, f.grown, f.sel, f.grownT)
-	// Trim back to alpha bounds (PixelFilter.trimmed); a fully empty result
-	// keeps the grown grid, as the Swift guard does.
-	newT := f.grownT
-	result := work
-	if bounds := render.AlphaBounds(work); bounds[2] > 0 {
-		if bounds[0] != 0 || bounds[1] != 0 || bounds[2] != work.W || bounds[3] != work.H {
-			result = cropBitmap(work, bounds)
-			newT = trimTransform(f.grownT, work.W, work.H, bounds)
-		}
 	}
 	name := "滤镜"
 	if n, ok := filterNames[f.kind]; ok {
@@ -701,11 +796,16 @@ func (s *Service) ApplyFilter(kind, layerID, settingsJSON string, seed uint32, s
 	if err != nil {
 		return "", err
 	}
-	fs, err := prepareFilterGrid(kind, base, l.Transform, &p, sel)
+	fs, err := prepareFilterGrid(kind, base, l.Transform, &p, sel, sess.doc.Width, sess.doc.Height)
 	if err != nil {
 		return "", err
 	}
-	work := fs.grown.Clone()
+	// 票 66：保留透明度的高斯不做 grown（与 CommitFilter 同一条规则）。
+	keepOutline := keepsOutline(kind, &p)
+	src, srcT := fs.grown, fs.grownT
+	if keepOutline {
+		src, srcT = base, l.Transform
+	}
 	var fillMask []uint8
 	if kind == FilterContentFill {
 		fillMask = selectionLayerMask(sel, fs.grownT, fs.grown.W, fs.grown.H)
@@ -717,17 +817,10 @@ func (s *Service) ApplyFilter(kind, layerID, settingsJSON string, seed uint32, s
 			return "", err
 		}
 	}
-	if err := runFilterJob(kind, work, &p, 1, seed, sess.doc.Width, sess.doc.Height, fs.grownT, fs.emptyLayer, fillMask, subjectRaw); err != nil {
+	result, newT, err := runFilterOnGrid(kind, &p, src, srcT, fs.canvasSides, seed,
+		sess.doc.Width, sess.doc.Height, fs.emptyLayer, sel, fillMask, subjectRaw, keepOutline)
+	if err != nil {
 		return "", err
-	}
-	blendThroughSelection(work, fs.grown, sel, fs.grownT)
-	newT := fs.grownT
-	result := work
-	if bounds := render.AlphaBounds(work); bounds[2] > 0 {
-		if bounds[0] != 0 || bounds[1] != 0 || bounds[2] != work.W || bounds[3] != work.H {
-			result = cropBitmap(work, bounds)
-			newT = trimTransform(fs.grownT, work.W, work.H, bounds)
-		}
 	}
 	name := "滤镜"
 	if n, ok := filterNames[kind]; ok {

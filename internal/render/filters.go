@@ -34,12 +34,36 @@ func gaussianWeights(sigma float64, radius int) []float64 {
 	return weights
 }
 
+// EdgeSides names the bitmap sides that sit at the canvas's edge, where a
+// blur carries the edge pixels on past the frame (clamp-to-edge) instead of
+// fading into the clear pixels beyond — Photoshop's behavior for a picture
+// filling the canvas (Filters.swift PixelFilter.extending / LayerSides). The
+// bits match LayerSides: left 1, right 2, top 4, bottom 8, and top is the
+// image's row 0.
+type EdgeSides int
+
+const (
+	EdgeLeft EdgeSides = 1 << iota
+	EdgeRight
+	EdgeTop
+	EdgeBottom
+)
+
 // ApplyGaussianBlur blurs premultiplied RGBA in place with a true separable
 // Gaussian, σ = sigma. Samples outside the frame are transparent, so a
 // caller that pads the layer first (Filters.blurMargin ≈ 3σ + 2) gets the
 // original's "spreads into the room made for it" behavior instead of a
 // clamped border smear.
 func ApplyGaussianBlur(b *Bitmap, sigma float64) {
+	ApplyGaussianBlurSides(b, sigma, 0)
+}
+
+// ApplyGaussianBlurSides is ApplyGaussianBlur with clamp-to-edge sampling on
+// the sides named in clamp: out-of-frame samples there repeat the edge pixel,
+// as Filters.swift's extending(past:of:) does at the canvas's edge. Sides not
+// named still sample transparent, so a stroke inside the canvas keeps
+// softening into the clear pixels around it.
+func ApplyGaussianBlurSides(b *Bitmap, sigma float64, clamp EdgeSides) {
 	if sigma <= 0 || b.W == 0 || b.H == 0 {
 		return
 	}
@@ -50,13 +74,48 @@ func ApplyGaussianBlur(b *Bitmap, sigma float64) {
 	weights := gaussianWeights(sigma, radius)
 	src := b.Clone()
 	tmp := NewBitmap(b.W, b.H)
-	blurPassAxis(src, tmp, weights, radius, b.W, b.H, true)
-	blurPassAxis(tmp, b, weights, radius, b.W, b.H, false)
+	blurPassAxis(src, tmp, weights, radius, b.W, b.H, true, clamp)
+	blurPassAxis(tmp, b, weights, radius, b.W, b.H, false, clamp)
+}
+
+// blurPreserveEps guards the unpremultiply of a blurred pixel whose alpha
+// rounded to zero.
+const blurPreserveEps = 1e-6
+
+// ApplyGaussianBlurPreservingAlpha blurs only the colors, from the image's
+// own pixels, and keeps every pixel's alpha — the Go port of Filters.swift's
+// blurred.unpremultiplyingAlpha().settingAlphaOne(in:)
+// .applyingFilter("CIBlendWithAlphaMask", background: empty, mask: edges).
+//
+// Dividing the blurred premultiplied color by the blurred alpha takes out the
+// pull of the clear pixels beside it, which would otherwise darken and thin
+// the colors near the outline; multiplying back by the original alpha puts
+// the outline back exactly where it was. A pixel that was clear stays clear.
+func ApplyGaussianBlurPreservingAlpha(b *Bitmap, sigma float64) {
+	if sigma <= 0 || b.W == 0 || b.H == 0 {
+		return
+	}
+	orig := b.Clone()
+	ApplyGaussianBlur(b, sigma)
+	for i := 0; i < len(b.Pix); i += 4 {
+		alpha := float64(orig.Pix[i+3])
+		if alpha == 0 {
+			b.Pix[i], b.Pix[i+1], b.Pix[i+2], b.Pix[i+3] = 0, 0, 0, 0
+			continue
+		}
+		blurred := math.Max(float64(b.Pix[i+3]), blurPreserveEps)
+		for c := 0; c < 3; c++ {
+			straight := math.Min(1, float64(b.Pix[i+c])/blurred)
+			b.Pix[i+c] = uint8(math.Round(straight * alpha))
+		}
+		b.Pix[i+3] = orig.Pix[i+3]
+	}
 }
 
 // blurPassAxis runs one separable-Gaussian direction: horizontal reads
-// neighbors along x, vertical along y; out-of-frame contributes nothing.
-func blurPassAxis(src, dst *Bitmap, weights []float64, radius int, w, h int, horizontal bool) {
+// neighbors along x, vertical along y; out-of-frame contributes nothing
+// unless clamp names that side, where the edge pixel is carried on instead.
+func blurPassAxis(src, dst *Bitmap, weights []float64, radius int, w, h int, horizontal bool, clamp EdgeSides) {
 	for y := 0; y < h; y++ {
 		for x := 0; x < w; x++ {
 			var acc [4]float64
@@ -71,8 +130,27 @@ func blurPassAxis(src, dst *Bitmap, weights []float64, radius int, w, h int, hor
 				} else {
 					sx, sy = x, y+k
 				}
-				if sx < 0 || sy < 0 || sx >= w || sy >= h {
-					continue // transparent outside
+				if sx < 0 {
+					if clamp&EdgeLeft == 0 {
+						continue // transparent outside
+					}
+					sx = 0
+				} else if sx >= w {
+					if clamp&EdgeRight == 0 {
+						continue
+					}
+					sx = w - 1
+				}
+				if sy < 0 {
+					if clamp&EdgeTop == 0 {
+						continue
+					}
+					sy = 0
+				} else if sy >= h {
+					if clamp&EdgeBottom == 0 {
+						continue
+					}
+					sy = h - 1
 				}
 				i := (sy*w + sx) * 4
 				acc[0] += wt * float64(src.Pix[i])
@@ -100,6 +178,13 @@ var MotionRadiusPerPixel = 1 / math.Sqrt(12.0)
 // linear (box) average of half-length radiusPx — the caller scales the
 // slider distance into it and pads the layer by distance/2 + 2.
 func ApplyMotionBlur(b *Bitmap, angleDeg, radiusPx float64) {
+	ApplyMotionBlurSides(b, angleDeg, radiusPx, 0)
+}
+
+// ApplyMotionBlurSides is ApplyMotionBlur with clamp-to-edge sampling on the
+// sides named in clamp, so a streak at the canvas's edge carries the layer's
+// edge pixels on rather than fading (Filters.swift extending(past:of:)).
+func ApplyMotionBlurSides(b *Bitmap, angleDeg, radiusPx float64, clamp EdgeSides) {
 	if radiusPx <= 0 || b.W == 0 || b.H == 0 {
 		return
 	}
@@ -133,17 +218,38 @@ func ApplyMotionBlur(b *Bitmap, angleDeg, radiusPx float64) {
 				sy := float64(y) + 0.5 + dy*t
 				ix := int(math.Floor(sx))
 				iy := int(math.Floor(sy))
-				if ix < 0 || iy < 0 || ix >= b.W || iy >= b.H {
-					continue // transparent outside
-				}
 				fx, fy := sx-float64(ix), sy-float64(iy)
+				// Past a clamped side the edge pixel repeats, so the sample
+				// lands on that pixel with no fraction across the boundary.
+				if ix < 0 {
+					if clamp&EdgeLeft == 0 {
+						continue // transparent outside
+					}
+					ix, fx = 0, 0
+				} else if ix >= b.W {
+					if clamp&EdgeRight == 0 {
+						continue
+					}
+					ix, fx = b.W-1, 0
+				}
+				if iy < 0 {
+					if clamp&EdgeTop == 0 {
+						continue
+					}
+					iy, fy = 0, 0
+				} else if iy >= b.H {
+					if clamp&EdgeBottom == 0 {
+						continue
+					}
+					iy, fy = b.H-1, 0
+				}
 				i := (iy*b.W + ix) * 4
 				for c := 0; c < 4; c++ {
 					var sample float64
 					if fx == 0 && fy == 0 {
 						sample = float64(src.Pix[i+c])
 					} else {
-						sample = bilinearSample(src.Pix, b.W, b.H, i, ix, iy, fx, fy, c)
+						sample = bilinearSample(src.Pix, b.W, b.H, i, ix, iy, fx, fy, c, clamp)
 					}
 					acc[c] += wt * sample
 				}
@@ -161,21 +267,37 @@ func ApplyMotionBlur(b *Bitmap, angleDeg, radiusPx float64) {
 }
 
 // bilinearSample interpolates one channel at (ix+fx, iy+fy) inside a
-// premultiplied RGBA byte grid whose base index of (ix,iy) is i.
-func bilinearSample(pix []uint8, w, h, i, ix, iy int, fx, fy float64, c int) float64 {
+// premultiplied RGBA byte grid whose base index of (ix,iy) is i. The
+// neighbor past the frame is transparent, unless clamp names that side, in
+// which case the edge pixel repeats there (so a streak at the canvas's edge
+// does not thin out against a pixel that isn't there).
+func bilinearSample(pix []uint8, w, h, i, ix, iy int, fx, fy float64, c int, clamp EdgeSides) float64 {
 	x1, y1 := ix+1, iy+1
 	inX := x1 < w
 	inY := y1 < h
 	v00 := float64(pix[i+c])
 	var v10, v01, v11 float64
-	if inX {
+	switch {
+	case inX:
 		v10 = float64(pix[i+4+c])
+	case clamp&EdgeRight != 0:
+		v10 = v00
 	}
-	if inY {
+	switch {
+	case inY:
 		v01 = float64(pix[i+w*4+c])
+	case clamp&EdgeBottom != 0:
+		v01 = v00
 	}
-	if inX && inY {
+	switch {
+	case inX && inY:
 		v11 = float64(pix[i+w*4+4+c])
+	case inX && clamp&EdgeBottom != 0:
+		v11 = v10
+	case inY && clamp&EdgeRight != 0:
+		v11 = v01
+	case clamp&EdgeRight != 0 && clamp&EdgeBottom != 0:
+		v11 = v00
 	}
 	top := v00*(1-fx) + v10*fx
 	bottom := v01*(1-fx) + v11*fx

@@ -280,6 +280,11 @@
               <input type="number" min="0.1" max="250" step="0.1" value={s.radius}
                 onchange={(e) => updateFilterSettings({ radius: +e.currentTarget.value })} />
             </label>
+            <label class="check" title="只模糊颜色，保留图层轮廓与透明度">
+              <input type="checkbox" checked={s.preserveTransparency}
+                onchange={(e) => updateFilterSettings({ preserveTransparency: e.currentTarget.checked })} />
+              保留透明度
+            </label>
           {:else if kind === "motionBlur"}
             <label class="row">
               <span>角度 (°)</span>

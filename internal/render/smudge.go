@@ -486,9 +486,9 @@ func applyWarpField(src *Bitmap, offsets []float32, out *Bitmap) {
 				o := (y*w + x) * 4
 				for k := 0; k < 4; k++ {
 					c00 := float64(src.Pix[i00+k])
-					 c10 := float64(src.Pix[(iy*w+ix1)*4+k])
-					 c01 := float64(src.Pix[(iy1*w+ix)*4+k])
-					 c11 := float64(src.Pix[(iy1*w+ix1)*4+k])
+					c10 := float64(src.Pix[(iy*w+ix1)*4+k])
+					c01 := float64(src.Pix[(iy1*w+ix)*4+k])
+					c11 := float64(src.Pix[(iy1*w+ix1)*4+k])
 					top := c00 + (c10-c00)*fx
 					bottom := c01 + (c11-c01)*fx
 					v := top + (bottom-top)*fy

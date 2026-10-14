@@ -22,7 +22,7 @@ static void set_error(const char* what, int code) {
 extern "C" {
 
 int rb_open(const char* path, int halfSize, RB_Session** out,
-            int* width, int* height, double* camMul) {
+            int* width, int* height, double* camMul, RB_Caps* caps) {
     *out = nullptr;
     g_error[0] = '\0';
     LibRaw* raw = new LibRaw();
@@ -52,11 +52,23 @@ int rb_open(const char* path, int halfSize, RB_Session** out,
     camMul[0] = raw->imgdata.color.cam_mul[0];
     camMul[1] = raw->imgdata.color.cam_mul[1];
     camMul[2] = raw->imgdata.color.cam_mul[2];
+    // What this camera allows. LibRaw always offers its own wavelet denoise
+    // (params.threshold, dcraw -n) and its highlight recovery (params.highlight,
+    // dcraw -H, 0-9), so both are supported for every file. Lens correction is
+    // not: the original's came from the lens profile Apple's RAW engine finds
+    // inside the file, and LibRaw carries no lens-profile data (it has EXIF
+    // lens names, which are not a distortion/vignetting model). The sheet
+    // therefore dims that control with the original's "This file has no lens
+    // profile" tooltip — a registered parity gap, not something to fake.
+    caps->supports_noise_reduction = 1;
+    caps->supports_lens_correction = 0;
+    caps->supports_highlight_recovery = 1;
     *out = new RB_Session{raw};
     return LIBRAW_SUCCESS;
 }
 
 int rb_develop(RB_Session* s, const double* mul4, int useCameraWb,
+               double noiseReduction, int highlightRecovery,
                unsigned short** rgb, int* width, int* height) {
     if (s == nullptr || s->raw == nullptr) {
         std::snprintf(g_error, sizeof(g_error), "会话未打开");
@@ -66,6 +78,17 @@ int rb_develop(RB_Session* s, const double* mul4, int useCameraWb,
     libraw_output_params_t& p = s->raw->imgdata.params;
     p.use_camera_wb = useCameraWb ? 1 : 0;
     p.use_auto_wb = 0;
+    // Noise Reduction: the engine's own wavelet denoise. The sheet's slider is
+    // 0-1; LibRaw's threshold is 0-1000 (0 off), so the slider scales to it.
+    double reduction = noiseReduction;
+    if (reduction < 0) reduction = 0;
+    if (reduction > 1) reduction = 1;
+    p.threshold = static_cast<float>(reduction * 1000.0);
+    // Highlight Recovery: 0-9, one or two blown channels brought back.
+    int recovery = highlightRecovery;
+    if (recovery < 0) recovery = 0;
+    if (recovery > 9) recovery = 9;
+    p.highlight = recovery;
     if (!useCameraWb) {
         p.user_mul[0] = mul4[0];
         p.user_mul[1] = mul4[1];

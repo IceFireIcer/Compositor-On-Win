@@ -1,3 +1,8 @@
+/* The dither_quantize16 prototype is copied verbatim from
+ * reference/Swift/Compositor/Rendering/DitherPixels.h at commit
+ * e8c9e29701528413cc0e608d61187c1c61790add (v1.5.1-8-ge8c9e29); the rest of this
+ * header is still the copy taken before 1.4.8 split Scanlines out (commit
+ * 865e467). See README.md for both provenances. AGENTS.md invariant #4. */
 #ifndef DitherPixels_h
 #define DitherPixels_h
 #include <stdint.h>
@@ -51,4 +56,8 @@ int dither_apply(uint8_t *rgba, size_t width, size_t height, size_t stride, cons
 void dither_dots(uint8_t *rgba, size_t width, size_t height, size_t stride, int block, const uint8_t *gap);
 // Adds `glow` (premultiplied RGBA, same layout) over the pixels at `amount`, never past their own alpha.
 void dither_glow(uint8_t *rgba, const uint8_t *glow, size_t width, size_t height, size_t stride, float amount);
+// Rounds 16-bit premultiplied RGBA (`width` × `height`, tightly packed) to 8 bits into `rgba` (`stride` bytes per
+// row), adding noise of about one 8-bit step first so smooth gradients don't come out in steps. The noise is fixed per
+// pixel, so the same input always gives the same output.
+void dither_quantize16(const uint16_t *wide, uint8_t *rgba, size_t width, size_t height, size_t stride);
 #endif

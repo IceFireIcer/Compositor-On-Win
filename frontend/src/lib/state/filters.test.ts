@@ -83,12 +83,19 @@ afterEach(() => {
 });
 
 describe("filter dialog session through the Wails boundary", () => {
-  it("bootstraps its synchronous workspace subscription on a fresh import", async () => {
-    vi.resetModules();
-    const fresh = await import("./filters");
-    expect(get(fresh.armedEyedropper)).toBeNull();
-    expect(get(fresh.filterSession)).toBeNull();
-  });
+  // A fresh import re-transforms this module's whole graph: under the full
+  // parallel run that measured 5.1s against Vitest's 5s default, so it gets an
+  // explicit budget rather than a flaky failure.
+  it(
+    "bootstraps its synchronous workspace subscription on a fresh import",
+    async () => {
+      vi.resetModules();
+      const fresh = await import("./filters");
+      expect(get(fresh.armedEyedropper)).toBeNull();
+      expect(get(fresh.filterSession)).toBeNull();
+    },
+    30000,
+  );
 
   it("waits for matching worker completion and never regresses a landed revision to the RPC reply", async () => {
     let listener!: (...args: unknown[]) => void;
@@ -426,6 +433,29 @@ describe("filter dialog session through the Wails boundary", () => {
     updateFilterSettings({ tonalAmount: 80 });
     await vi.advanceTimersByTimeAsync(60);
     expect(JSON.parse(bridge.UpdateFilterPreview.mock.calls[0][0]).tonalAmount).toBe(80);
+  });
+});
+
+describe("Gaussian Blur 保留透明度（票 66）", () => {
+  it("默认半径 5 px、默认不保留透明度（Filters.swift FilterSettings）", () => {
+    const settings = defaultFilterSettings("gaussianBlur");
+    expect(settings.radius).toBe(5);
+    expect(settings.preserveTransparency).toBe(false);
+  });
+
+  it("打开会话与每次预览都按小驼峰 wire 形状带上 preserveTransparency", async () => {
+    await beginFilter("gaussianBlur", "高斯模糊", false);
+    const opened = JSON.parse(bridge.BeginFilterEdit.mock.calls[0][2]);
+    expect(opened.radius).toBe(5);
+    expect(opened.preserveTransparency).toBe(false);
+
+    updateFilterSettings({ preserveTransparency: true, radius: 8 });
+    await vi.advanceTimersByTimeAsync(60);
+    const preview = JSON.parse(bridge.UpdateFilterPreview.mock.calls[0][0]);
+    expect(preview.preserveTransparency).toBe(true);
+    expect(preview.radius).toBe(8);
+    // Go 的 filterParams 只认小驼峰这一个键。
+    expect(preview).not.toHaveProperty("preserve_transparency");
   });
 });
 

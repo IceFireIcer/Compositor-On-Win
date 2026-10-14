@@ -1,0 +1,9 @@
+{
+  "kernel": "quantize16",
+  "input": "ramp",
+  "width": 64,
+  "height": 48,
+  "epsilon": 0,
+  "params": {},
+  "note": "dither_quantize16：把 8bit 输入按 ×257 精确展成 16bit 再量化回 8bit。ramp 输入的 alpha 阶梯（255/128/0）覆盖预乘夹取与全透明行；纯整数/浮点算术 → ε=0。"
+}

@@ -8,6 +8,7 @@ package bridge
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 
@@ -129,7 +130,10 @@ func applyCanvasSize(sess *session, req canvasSizeRequest) error {
 
 // ImageSize resamples the whole document: every layer re-rasterizes into its
 // scaled box with the chosen quality (rotation and flips bake into the
-// pixels), masks follow, and the resolution lands in the manifest.
+// pixels), masks follow, and the resolution lands in the manifest. Effects are
+// sized in pixels, so they scale with the pixels (Effects.Scaled, the mean of
+// the two axis factors); live text and shapes resample into plain pixels, as
+// ImageResizer.resize does.
 func (s *Service) ImageSize(payload string) (string, error) {
 	if s.ws == nil {
 		return "", errNoDocument
@@ -180,8 +184,16 @@ func applyImageSize(sess *session, req imageSizeRequest) error {
 	}
 	budget := domain.DocumentPixelBudget()
 	usedImages, usedMasks := 0, 0
+	// Effects are sized in pixels, so they scale with the pixels as
+	// Photoshop's Scale Styles does: by the mean of the two factors when the
+	// image is stretched (ImageResizer.swift:30). Live text and shapes are
+	// resampled into plain pixels, so their editable metadata goes
+	// (ImageResizer.swift:98-101 builds the record without text or shape).
+	effectScale := math.Sqrt(sx * sy)
 	for i := range old.Layers {
 		l := &old.Layers[i]
+		l.Effects = l.Effects.Scaled(effectScale)
+		l.Text, l.Shape = nil, nil
 		if l.ImageFile == nil {
 			l.Transform = scaledTransform(l.Transform, sx, sy)
 			continue
@@ -207,7 +219,10 @@ func applyImageSize(sess *session, req imageSizeRequest) error {
 		if !transformFinite(l.Transform) {
 			return fmt.Errorf("图层变换超出范围")
 		}
-		newName := newUUID() + ".png"
+		// The asset keeps the layer's own name: project.validate requires
+		// <LAYERID>.png, so a fresh UUID here would make the resampled
+		// document unsaveable (the .comp round trip rejects it on open).
+		newName := layerAssetName(l.ID)
 		if err := renameAsset(sess, *l.ImageFile, newName, dst); err != nil {
 			return err
 		}
@@ -222,7 +237,7 @@ func applyImageSize(sess *session, req imageSizeRequest) error {
 				}
 				usedMasks += w * h
 				mask := render.DrawMaskTransformed(gray, mw, mh, origTransform, sx, sy, w, h, left, top, sampling)
-				maskName := newUUID() + ".mask.png"
+				maskName := layerMaskName(l.ID)
 				if err := renameMaskAsset(sess, *l.MaskFile, maskName, mask, w, h); err != nil {
 					return err
 				}
@@ -315,8 +330,14 @@ func parseFillHex(hex string) (uint8, uint8, uint8, error) {
 	return uint8(value >> 16), uint8(value >> 8), uint8(value), nil
 }
 
-// renameAsset stores the resampled bitmap under a fresh name and drops the
-// old one, so the .comp round-trip writes exactly the live assets.
+// layerAssetName / layerMaskName are the .comp asset naming convention
+// (internal/project validate: the uppercase layer id), which a resampled layer
+// has to keep or the package it is saved into fails validation.
+func layerAssetName(layerID string) string { return strings.ToUpper(layerID) + ".png" }
+func layerMaskName(layerID string) string  { return strings.ToUpper(layerID) + ".mask.png" }
+
+// renameAsset stores the resampled bitmap under the layer's own name and drops
+// the old one, so the .comp round-trip writes exactly the live assets.
 func renameAsset(sess *session, oldName, newName string, bmp *render.Bitmap) error {
 	if _, ok := sess.bitmaps[oldName]; !ok {
 		return fmt.Errorf("缺少位图资产 %s", oldName)

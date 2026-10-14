@@ -80,6 +80,10 @@ export const ADJUSTMENT_LAYER_KINDS: readonly FilterKindDef[] = [
 /** Per-kind slider defaults — Filters.swift FilterSettings. */
 export interface FilterSettings {
   radius: number; // gaussian σ
+  /** Gaussian Blur only: blur the colors from the layer's own pixels and keep
+   * every pixel's alpha, so the outline stays put (Filters.swift
+   * FilterSettings.preserveTransparency). */
+  preserveTransparency: boolean;
   angle: number; // motion direction
   distance: number; // motion streak
   amount: number; // noise amount
@@ -117,7 +121,8 @@ export interface FilterSettings {
 
 export function defaultFilterSettings(kind: string): FilterSettings {
   return {
-    radius: 1,
+    radius: 5,
+    preserveTransparency: false,
     angle: 0,
     distance: 10,
     amount: kind === "adjust:Grain" ? 25 : 10,

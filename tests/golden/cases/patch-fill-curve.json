@@ -1,0 +1,12 @@
+{
+  "kernel": "patch_fill",
+  "input": "curve",
+  "width": 64,
+  "height": 64,
+  "epsilon": 1,
+  "params": {
+    "seed": 7,
+    "maskShape": "disc"
+  },
+  "note": "patch_fill 多尺度 PatchMatch：弯曲地平线 + 圆盘洞，补丁搜索要把曲线续过去（上游 SpotHealingTests 的弯曲山脊场景）。expf 跨库 → ε=1。"
+}

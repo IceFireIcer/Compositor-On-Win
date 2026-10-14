@@ -7,7 +7,7 @@
     "removeChromatic": 1, "lensProfile": 0, "profileDistortion": 100, "profileVignetting": 100,
     "distortionK": 0.25, "purpleAmount": 50, "purpleHueLow": 270, "purpleHueHigh": 310,
     "greenAmount": 0, "greenHueLow": 60, "greenHueHigh": 120,
-    "vignetteAmount": 30, "vignetteMidpoint": 50, "scale": 1
+    "vignetteAmount": 0, "vignetteMidpoint": 50, "scale": 1
   },
-  "note": "adjust_camera_raw_optics 全链：lens_distort 径向校正(双线性,视野外透明)+色差移除(径向二次移位)+紫边去饱和+镜头暗角校正；hypot 跨库 → ε=1。"
+  "note": "adjust_camera_raw_optics：lens_distort 径向校正(双线性,视野外透明)+色差移除(径向二次移位)+紫边去饱和；hypot 跨库 → ε=1。镜头暗角校正自 1.4.9 起改为读曝光查表（票 78 的数据），因此本 case 的暗角滑块保持 0。"
 }
