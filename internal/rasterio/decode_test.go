@@ -2,6 +2,7 @@ package rasterio
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/binary"
 	"errors"
 	"hash/crc32"
@@ -307,6 +308,112 @@ func TestDecodeTIFF(t *testing.T) {
 	}
 }
 
+// The original's two 64×32 WebP fixtures (ImageImportTests.swift:40-43):
+// opaque red on the left half, transparent on the right. Kept as base64
+// because golang.org/x/image/webp only decodes — it ships no encoder.
+const (
+	webPLosslessB64 = "UklGRiYAAABXRUJQVlA4TBkAAAAvP8AHEA8Q8x/zHwyxYDJ/6RB6I/ofVfANAA=="
+	webPLossyB64    = "UklGRoYAAABXRUJQVlA4WAoAAAAQAAAAPwAAHwAAQUxQSBQAAAABDzD/ERFCLJjMXzqE3oj+RxV8A1ZQOCBMAAAA8AMAnQEqQAAgAD4xFolDIiEhFgQAIAMEsYBmu0A/AD8AADKMNAliwAD+96KX/9eiUqpf3sP/+Fmfwsz+Fmf/Cc2fv90UD4A2eDkAAA=="
+)
+
+func webPFixture(t *testing.T, b64 string) []byte {
+	t.Helper()
+	data, err := base64.StdEncoding.DecodeString(b64)
+	if err != nil {
+		t.Fatalf("WebP 夹具不是合法 base64: %v", err)
+	}
+	return data
+}
+
+// webpWithEXIF appends a WebP "EXIF" chunk (TIFF payload) and repairs the
+// RIFF size — the place camera and phone writers keep the orientation tag.
+func webpWithEXIF(t *testing.T, data, payload []byte) []byte {
+	t.Helper()
+	chunk := append([]byte("EXIF"), 0, 0, 0, 0)
+	binary.LittleEndian.PutUint32(chunk[4:], uint32(len(payload)))
+	chunk = append(chunk, payload...)
+	if len(payload)%2 == 1 {
+		chunk = append(chunk, 0) // RIFF 块按偶数字节对齐
+	}
+	out := append(append([]byte{}, data...), chunk...)
+	binary.LittleEndian.PutUint32(out[4:], uint32(len(out)-8))
+	return out
+}
+
+// WebP 的 alpha 必须走既有约定：解码后是 8bit 预乘 sRGB RGBA。原版用例同时
+// 覆盖无损（VP8L）与有损+alpha（VP8 + ALPH）两条解码路径。
+func TestDecodeWebPPreservesTransparency(t *testing.T) {
+	for _, c := range []struct{ name, b64 string }{
+		{"lossless", webPLosslessB64},
+		{"lossy", webPLossyB64},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "sample.webp")
+			if err := os.WriteFile(path, webPFixture(t, c.b64), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			res, err := Decode(path, domainBudget())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if res.Width != 64 || res.Height != 32 || res.Name != "sample" {
+				t.Fatalf("得到 %d×%d %q，想要 64×32 sample", res.Width, res.Height, res.Name)
+			}
+			for y := 0; y < res.Height; y++ {
+				for x := 0; x < res.Width; x++ {
+					i := (y*res.Width + x) * 4
+					r, g, b, a := res.Bitmap.Pix[i], res.Bitmap.Pix[i+1], res.Bitmap.Pix[i+2], res.Bitmap.Pix[i+3]
+					if x < 32 {
+						// 左半不透明红：有损（VP8）的色度子采样允许几级偏差，
+						// 但 alpha 必须满值、颜色必须明显偏红。
+						if a != 255 || r < 200 || g > 80 || b > 80 {
+							t.Fatalf("(%d,%d) 应是预乘的不透明红：%v", x, y, res.Bitmap.Pix[i:i+4])
+						}
+						continue
+					}
+					// 右半全透明：预乘后四通道都必须为 0
+					//（原版断言 bytes[63*4+3] == 0）。
+					if a != 0 || r != 0 || g != 0 || b != 0 {
+						t.Fatalf("(%d,%d) 应完全透明：%v", x, y, res.Bitmap.Pix[i:i+4])
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestWebPEXIFOrientationParsing(t *testing.T) {
+	base := webPFixture(t, webPLosslessB64)
+	if got := webpEXIFOrientation(base); got != 1 {
+		t.Errorf("无 EXIF 块应为 1，得到 %d", got)
+	}
+	// 裸 TIFF 载荷与 "Exif\x00\x00" 前缀两种写法都要认。
+	for _, prefix := range []string{"", "Exif\x00\x00"} {
+		payload := append([]byte(prefix), handTIFF(6, true)...)
+		if got := webpEXIFOrientation(webpWithEXIF(t, base, payload)); got != 6 {
+			t.Errorf("前缀 %q：得到 %d，想要 6", prefix, got)
+		}
+	}
+	if got := webpEXIFOrientation([]byte("RIFFxxxxWEBP")); got != 1 {
+		t.Error("坏 RIFF 应为 1")
+	}
+}
+
+func TestDecodeWebPEndToEndWithOrientation(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "rotated.webp")
+	data := webpWithEXIF(t, webPFixture(t, webPLosslessB64), handTIFF(6, true))
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	res, err := Decode(path, domainBudget())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Width != 32 || res.Height != 64 {
+		t.Fatalf("方向 6 应交换边：得到 %d×%d", res.Width, res.Height)
+	}
+}
+
 func TestDecodeRefusesLimitsAndUnknownTypes(t *testing.T) {
 	dir := t.TempDir()
 	// IHDR-only PNG declaring a 30001-wide image: too large by side, before
@@ -342,6 +449,14 @@ func TestDecodeRefusesLimitsAndUnknownTypes(t *testing.T) {
 	}
 	if _, err := Decode(tinyPath, 3); err == nil || !isTooLarge(err) {
 		t.Errorf("超出像素预算应报 TooLarge，得到 %v", err)
+	}
+	// 原版 WebP 用例的 remainingPixels: 10 —— 预算在解码前就拒绝。
+	webpPath := filepath.Join(dir, "sample.webp")
+	if err := os.WriteFile(webpPath, webPFixture(t, webPLosslessB64), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Decode(webpPath, 10); err == nil || !isTooLarge(err) {
+		t.Errorf("超出像素预算的 WebP 应报 TooLarge，得到 %v", err)
 	}
 	gifPath := filepath.Join(dir, "anim.gif")
 	if err := os.WriteFile(gifPath, []byte("GIF89a"), 0o644); err != nil {

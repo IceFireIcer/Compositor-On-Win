@@ -11,11 +11,11 @@ import { problemIn } from "./settings";
  * Text Editing 9 条（119-124 行），共 113 条；票 54 依同一份 Swift 表补上
  * Search Commands（"f" + Command，当前参考源码 KeyboardShortcuts.swift:92），
  * 票 55 又补上 Canvas & Layers 组开头的 Toggle Fullscreen（"f"，无修饰键，
- * KeyboardShortcuts.swift:116），所以现在是 Menus 47 / Canvas 59 / Text 9，
- * 共 115 条。
+ * KeyboardShortcuts.swift:116）、票 58 的 Last Filter、票 59 的 Export As，
+ * 所以现在是 Menus 49 / Canvas 59 / Text 9，共 117 条。
  */
 const EXPECTED: readonly (readonly [string, string, number])[] = [
-  // --- Menus（47）---
+  // --- Menus（49）---
   ["Menus:Undo", "z", 1],
   ["Menus:Redo", "z", 9],
   ["Menus:New Canvas", "n", 1],
@@ -24,6 +24,8 @@ const EXPECTED: readonly (readonly [string, string, number])[] = [
   ["Menus:Save As", "s", 9],
   ["Menus:Export PNG", "e", 9],
   ["Menus:Export JPEG", "s", 11],
+  // 票 59：原版 ⌥⇧⌘W（11）。
+  ["Menus:Export As", "w", 11],
   ["Menus:Close Project", "w", 1],
   ["Menus:Fit Canvas", "0", 1],
   ["Menus:Search Commands", "f", 1],
@@ -43,6 +45,9 @@ const EXPECTED: readonly (readonly [string, string, number])[] = [
   ["Menus:Deselect", "d", 1],
   ["Menus:Inverse Selection", "i", 9],
   ["Menus:Select Subject", "a", 3],
+  // 票 58：原版 ⌃⌘F（5）在 Windows 上落成 Ctrl+Alt+F（3）——bit 4 与 bit 1 都
+  // 渲染成 Ctrl，折成同一个键会写出 "Ctrl+Ctrl+F"。见 table.ts 的注释。
+  ["Menus:Last Filter", "f", 3],
   ["Menus:Curves", "m", 1],
   ["Menus:Levels", "l", 1],
   ["Menus:Hue/Saturation", "u", 1],
@@ -138,11 +143,11 @@ const EXPECTED: readonly (readonly [string, string, number])[] = [
 ];
 
 describe("快捷键定义表与原版一一对应（票 47）", () => {
-  it("共 115 条，三个分组 47 / 59 / 9", () => {
-    expect(SHORTCUTS).toHaveLength(115);
-    expect(EXPECTED).toHaveLength(115);
+  it("共 117 条，三个分组 49 / 59 / 9", () => {
+    expect(SHORTCUTS).toHaveLength(117);
+    expect(EXPECTED).toHaveLength(117);
     const count = (group: string): number => SHORTCUTS.filter((d) => d.group === group).length;
-    expect(count("Menus")).toBe(47);
+    expect(count("Menus")).toBe(49);
     expect(count("Canvas & Layers")).toBe(59);
     expect(count("Text Editing")).toBe(9);
   });

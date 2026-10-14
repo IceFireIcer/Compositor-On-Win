@@ -441,6 +441,27 @@ func (c Case) DriverArgs() ([]string, error) {
 			return nil, e
 		}
 		args = add(args, dots, wobble)
+	case "scanlines":
+		keys := []string{"spacing", "thickness", "dots", "wobble", "displace", "threshold",
+			"split", "density", "contrast", "blackLevel", "smoothness", "originalColors"}
+		args = make([]string, 0, 18)
+		for _, k := range keys {
+			f, e := num(k)
+			if e != nil {
+				return nil, e
+			}
+			args = add(args, f)
+		}
+		dark, e := list("dark", 3)
+		if e != nil {
+			return nil, e
+		}
+		light, e := list("light", 3)
+		if e != nil {
+			return nil, e
+		}
+		args = add(args, dark...)
+		args = add(args, light...)
 	case "lens":
 		k, e := num("k")
 		if e != nil {

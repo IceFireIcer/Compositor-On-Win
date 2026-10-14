@@ -102,6 +102,7 @@
   import { gridLines, gridStep } from "../state/snap";
   import { commitGuides as commitGuidesAction } from "../shortcuts/actions";
   import CropOverlay from "./CropOverlay.svelte";
+  import Navigator from "./Navigator.svelte";
   import {
     beginTransformDrag,
     beginTransformSession,
@@ -418,6 +419,15 @@
     void renderSrc;
     renderBroken = false;
   });
+
+  // Navigator（票 61）的缩略图与画布是同一张合成图（同一个 URL，浏览器缓存
+  // 共用），只是不取变换预览——原版 navigatorImage 用"裸 session"画，进行中
+  // 的预览不进缩略图。
+  const navigatorSrc = $derived(
+    docState.docId === doc.id
+      ? `/render/${doc.id}.png?v=${docState.rev}-${docState.filterRev}`
+      : null,
+  );
 
   let gpuCanvas = $state<HTMLCanvasElement>();
   let compositor = $state.raw<WebGpuCompositor | null>(null);
@@ -1506,6 +1516,10 @@
       {/if}
     </div>
   {/if}
+
+  <!-- Navigator（票 61）：自己决定何时显示（视图 ▸ 导航器且缩放 ≥ 300%），
+       所以这里无条件挂载；它读同一个 viewport store 平移画布。 -->
+  <Navigator src={navigatorSrc} docWidth={doc.width} docHeight={doc.height} />
 
   {#if $showRulers}
     <!-- 标尺（票 14）：从标尺拖出参考线。刻度按文档坐标标号，主刻度随缩放

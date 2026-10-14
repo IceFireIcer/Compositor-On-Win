@@ -50,6 +50,32 @@ describe("拖放导入的前端判定（票 48）", () => {
     expect(isImageName("x.psd")).toBe(false);
   });
 
+  it("WebP 与相机 HEIF 都进名单：WebP 浏览器可解，HEIF 只能报错不能吞掉", () => {
+    const webpNoMime = { name: "图.WebP", type: "" } as File;
+    const webpMime = { name: "无名", type: "image/webp" } as File;
+    const hif = { name: "相机.HIF", type: "" } as File;
+    const heifMime = { name: "无名2", type: "image/heif" } as File;
+    const heicMime = { name: "无名3", type: "image/heic" } as File;
+    const psd = { name: "d.psd", type: "" } as File;
+    expect(
+      browserImageFiles([webpNoMime, webpMime, hif, heifMime, heicMime, psd]).map((f) => f.name),
+    ).toEqual(["图.WebP", "无名", "相机.HIF", "无名2", "无名3"]);
+    expect(isImageName("x.heic")).toBe(true);
+    expect(isImageName("x.heif")).toBe(true);
+    expect(isImageName("x.hif")).toBe(true);
+    expect(isImageName("x.psd")).toBe(false);
+  });
+
+  it("没有路径的相机 HEIF 进失败清单（带上文件名），不静默丢弃", async () => {
+    const hif = { name: "相机.hif", type: "image/heif" } as File;
+    const webp = { name: "a.webp", type: "image/webp" } as File;
+    const { ready, failed } = await prepareDroppedBlobs([hif, webp], async (blob) =>
+      (blob as File).name === "a.webp" ? new Blob(["png"]) : null,
+    );
+    expect(ready.map((r) => r.name)).toEqual(["a.webp"]);
+    expect(failed).toEqual(["相机.hif"]);
+  });
+
   it("名字取自文件名，空名有兜底", () => {
     expect(dropName({ name: "shot.png" }, 0)).toBe("shot.png");
     expect(dropName({ name: "   " }, 2)).toBe("拖入的图像 3");

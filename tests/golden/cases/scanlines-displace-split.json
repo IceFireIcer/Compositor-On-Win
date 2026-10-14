@@ -1,0 +1,13 @@
+{
+  "kernel": "scanlines",
+  "input": "blend",
+  "width": 48, "height": 48,
+  "epsilon": 1,
+  "params": {
+    "spacing": 16, "thickness": 0.7, "dots": 0, "wobble": 0, "displace": 24,
+    "threshold": 0, "split": 3, "density": 0, "contrast": 0, "blackLevel": 0,
+    "smoothness": 0.5, "originalColors": 1,
+    "dark": [0, 0, 0], "light": [255, 255, 255]
+  },
+  "note": "scanlines_apply：位移（平滑抬线、前后遮挡）+ 色彩分离 + 原始色；对齐 ScanlinesTests.displaceLiftsLinesWhereThePictureIsBright / aLiftedLineHidesTheLinesBehindIt。smoothness 的方框模糊与 sinf/fmodf 跨库 → ε=1。"
+}

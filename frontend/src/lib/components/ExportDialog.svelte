@@ -1,33 +1,118 @@
 <script lang="ts">
+  import { get } from "svelte/store";
   import {
-    JPEG_ZOOM_STEPS,
+    EXPORT_MAX_SIDE,
+    EXPORT_ZOOM_STEPS,
+    MORE_EXPORT_FORMATS,
+    PRIMARY_EXPORT_FORMATS,
     beginExportPreview,
-    commitExportJPEG,
+    commitExport,
     endExportPreview,
+    exportDialog,
+    exportFormatDef,
     exportPreview,
+    exportScalePercent,
+    exportSizeForScale,
     formatBytes,
+    linkedExportSize,
+    rememberedQuality,
     updateExportPreview,
+    type ExportKind,
+    type ExportPreviewRequest,
   } from "../state/export";
 
   /**
-   * Export JPEG…（ticket 42）：一次压平的光栅在质量滑杆之间复用，滑杆
-   * 移动只重编码（150ms 防抖）；预览显示真实 JPEG 压缩痕迹，可在预览
-   * 内缩放（fit ↔ 100% ↔ 放大档位）。
+   * 导出为…（ticket 59）：一个窗口覆盖 PNG/JPEG/TIFF/单页 PDF。PNG/JPEG 是
+   * 首要格式，TIFF/PDF 收在更多格式区；宽高等比联动（原版 setWidth/setHeight），
+   * 显示最终像素尺寸与缩放百分比。预览按格式显示真实产物：PNG/TIFF 保留透明
+   * （棋盘格衬底）、JPEG 显示压缩痕迹、PDF 显示按背景压平后的页面；可在预览
+   * 内缩放（适应 ↔ 100% ↔ 0.25×…8×）。旧预览请求由 export.ts 的序号守卫
+   * 丢弃，绝不覆盖新结果。
    */
 
-  let quality = $state(85);
-  // JPEGPreview.steps: Fit (null) and the 0.25×…8× ladder, plus a free
-  // "Fit ↔ 100%" toggle on double-click.
-  let zoom = $state<number | null>(null);
-  let exporting = $state(false);
-  let error = $state<string | null>(null);
   let { onClose }: { onClose?: () => void } = $props();
 
+  let format = $state<ExportKind>(get(exportDialog)?.kind ?? "png");
+  let width = $state(0);
+  let height = $state(0);
+  let quality = $state(rememberedQuality());
+  let background = $state("#ffffff");
+  let zoom = $state<number | null>(null);
+  let ready = $state(false);
+  let exporting = $state(false);
+  let error = $state<string | null>(null);
+
   const preview = $derived($exportPreview);
+  const original = $derived({ width: preview?.width ?? width, height: preview?.height ?? height });
+  const scalePercent = $derived(exportScalePercent(original, { width, height }));
+  const def = $derived(exportFormatDef(format));
+  // JPEG 与 PDF 没有透明通道：预览与导出都要落在选定背景上。
+  const flattened = $derived(format === "jpeg" || format === "pdf");
+
+  // 打开窗口：压平一次（Go 侧持有光栅），尺寸从压平后的原图起步。
+  $effect(() => {
+    let cancelled = false;
+    void beginExportPreview()
+      .then(() => {
+        if (cancelled) return;
+        const state = get(exportPreview);
+        if (state) {
+          width = state.width;
+          height = state.height;
+        }
+        ready = true;
+      })
+      .catch((err: unknown) => {
+        error = err instanceof Error ? err.message : String(err);
+      });
+    return () => {
+      cancelled = true;
+      endExportPreview();
+    };
+  });
+
+  // 设置变化 → 重编码预览（150ms 防抖，与滤镜/JPEG 预览一致）。
+  let debounce: ReturnType<typeof setTimeout> | null = null;
+  $effect(() => {
+    const request: ExportPreviewRequest = { format, width, height, quality, background };
+    if (!ready || width < 1 || height < 1) return;
+    if (debounce) clearTimeout(debounce);
+    debounce = setTimeout(() => {
+      error = null;
+      void updateExportPreview(request).catch((err: unknown) => {
+        error = err instanceof Error ? err.message : String(err);
+      });
+    }, 150);
+    return () => {
+      if (debounce) clearTimeout(debounce);
+    };
+  });
+
+  function setWidth(event: Event): void {
+    const next = linkedExportSize(original, "width", Number((event.target as HTMLInputElement).value));
+    width = next.width;
+    height = next.height;
+  }
+
+  function setHeight(event: Event): void {
+    const next = linkedExportSize(original, "height", Number((event.target as HTMLInputElement).value));
+    width = next.width;
+    height = next.height;
+  }
+
+  function applyScale(event: Event): void {
+    const select = event.currentTarget as HTMLSelectElement;
+    const percent = Number(select.value);
+    select.value = "";
+    if (!Number.isFinite(percent) || percent <= 0) return;
+    const next = exportSizeForScale(original, percent / 100);
+    width = next.width;
+    height = next.height;
+  }
 
   function stepZoom(direction: 1 | -1): void {
     const current = zoom ?? 1;
-    const ladder = JPEG_ZOOM_STEPS as readonly number[];
+    const ladder = EXPORT_ZOOM_STEPS as readonly number[];
     if (direction === 1) {
       const next = ladder.find((z) => z > current + 1e-9);
       if (next !== undefined) zoom = next;
@@ -41,38 +126,26 @@
     zoom = zoom === null ? 1 : null;
   }
 
-  function setBackground(event: Event): void {
-    const value = (event.target as HTMLInputElement).value;
-    preview && exportPreview.update((state) => (state ? { ...state, background: value } : state));
+  function inches(pixels: number, dpi: number): string {
+    const value = pixels / dpi;
+    return value >= 0.01 ? value.toFixed(2).replace(/\.?0+$/, "") : value.toFixed(4);
   }
 
-  $effect(() => {
-    void beginExportPreview();
-    return () => endExportPreview();
+  // PDF 页面：导出像素按文档分辨率换算成点（原版 pageSize）。
+  const pageSize = $derived.by(() => {
+    const dpi = preview?.resolution && preview.resolution > 0 ? preview.resolution : 72;
+    return inches(width, dpi) + " × " + inches(height, dpi) + " in @ " + Math.round(dpi) + " DPI";
   });
 
-  // Quality/background → re-encode (debounced like the filter previews).
-  let debounce: ReturnType<typeof setTimeout> | null = null;
-  $effect(() => {
-    const bg = preview?.background ?? "#ffffff";
-    void quality;
-    void bg;
-    if (debounce) clearTimeout(debounce);
-    debounce = setTimeout(() => {
-      void updateExportPreview(quality, bg).catch((err) => {
-        error = err instanceof Error ? err.message : String(err);
-      });
-    }, 150);
-    return () => {
-      if (debounce) clearTimeout(debounce);
-    };
-  });
+  const shownWidth = $derived(
+    zoom === null ? "100%" : Math.round((preview?.previewWidth || width) * zoom) + "px",
+  );
 
   async function doExport(): Promise<void> {
     exporting = true;
     error = null;
     try {
-      if (await commitExportJPEG(quality, preview?.background ?? "#ffffff")) close();
+      if (await commitExport({ format, width, height, quality, background })) close();
     } catch (err) {
       error = err instanceof Error ? err.message : String(err);
     } finally {
@@ -92,53 +165,134 @@
     if (e.target === e.currentTarget) close();
   }}
 >
-  <div class="dialog" role="dialog" aria-modal="true" aria-label="导出 JPEG">
-    <h2>导出 JPEG</h2>
+  <div class="dialog" role="dialog" aria-modal="true" aria-label="导出为">
+    <h2>导出为</h2>
     <div class="preview-area">
-      {#if preview?.jpegURL}
-        <div
-          class="preview-scroll"
-          role="presentation"
-          ondblclick={toggleFit}
-        >
+      {#if preview?.previewURL}
+        <div class="preview-scroll" role="presentation" ondblclick={toggleFit}>
           <img
-            src={preview.jpegURL}
-            alt="JPEG 导出预览"
-            style:width={zoom === null ? "100%" : "auto"}
+            src={preview.previewURL}
+            alt="导出预览"
+            class:checkerboard={def.keepsAlpha}
+            style:width={shownWidth}
             style:max-width={zoom === null ? "100%" : "none"}
             style:image-rendering={zoom !== null && zoom >= 2 ? "pixelated" : "auto"}
           />
         </div>
         <div class="preview-meta">
           <span>
-            {preview.width}×{preview.height}{#if preview.size}
-              · 预览约 {formatBytes(preview.size)}（导出按原始分辨率）{/if}
+            {preview.targetWidth}×{preview.targetHeight}px{#if preview.previewWidth && preview.previewWidth !== preview.targetWidth}
+              · 预览 {preview.previewWidth}×{preview.previewHeight}{/if}{#if preview.size}
+              · 约 {formatBytes(preview.size)}{/if}
           </span>
           <span class="zoom">
             <button type="button" disabled={zoom === null} onclick={() => (zoom = null)}>适应</button>
             <button type="button" onclick={() => stepZoom(-1)}>−</button>
-            {zoom === null ? "适应" : `${Math.round(zoom * 100)}%`}
+            {zoom === null ? "适应" : Math.round(zoom * 100) + "%"}
             <button type="button" onclick={() => stepZoom(1)}>＋</button>
           </span>
         </div>
       {:else}
-        <div class="placeholder">正在生成预览…</div>
+        <div class="placeholder">{ready ? "正在生成预览…" : "正在压平画布…"}</div>
       {/if}
     </div>
-    <label class="quality">
-      <span>质量：{quality}%</span>
-      <input type="range" min="1" max="100" bind:value={quality} />
-    </label>
-    <label class="background">
-      <span>透明区域背景色</span>
-      <input type="color" value={preview?.background ?? "#ffffff"} oninput={setBackground} />
-    </label>
+
+    <div class="row">
+      <span class="label">格式</span>
+      <div class="segmented" role="group" aria-label="格式">
+        {#each PRIMARY_EXPORT_FORMATS as kind}
+          <button
+            type="button"
+            aria-pressed={format === kind}
+            class:active={format === kind}
+            onclick={() => (format = kind)}
+          >
+            {exportFormatDef(kind).label}
+          </button>
+        {/each}
+      </div>
+      <div class="more" role="group" aria-label="更多格式">
+        <span class="more-label">更多格式</span>
+        {#each MORE_EXPORT_FORMATS as kind}
+          <button
+            type="button"
+            aria-pressed={format === kind}
+            class:active={format === kind}
+            onclick={() => (format = kind)}
+          >
+            {exportFormatDef(kind).label}
+          </button>
+        {/each}
+      </div>
+    </div>
+
+    <div class="row">
+      <span class="label">尺寸</span>
+      <input
+        class="size"
+        type="number"
+        min="1"
+        max={EXPORT_MAX_SIDE}
+        value={width}
+        oninput={setWidth}
+        aria-label="宽度（像素）"
+      />
+      <span class="times">×</span>
+      <input
+        class="size"
+        type="number"
+        min="1"
+        max={EXPORT_MAX_SIDE}
+        value={height}
+        oninput={setHeight}
+        aria-label="高度（像素）"
+      />
+      <span class="unit">px</span>
+      <select class="scale" value="" onchange={applyScale} aria-label="缩放百分比">
+        <option value="" disabled>缩放…</option>
+        {#each [25, 50, 75, 100, 200] as percent}
+          <option value={percent}>{percent}%</option>
+        {/each}
+      </select>
+      <span class="percent">{scalePercent}%</span>
+    </div>
+
+    {#if format === "jpeg"}
+      <label class="row">
+        <span class="label">质量</span>
+        <input class="quality" type="range" min="1" max="100" bind:value={quality} />
+        <span class="percent">{quality}%</span>
+      </label>
+    {/if}
+
+    {#if flattened}
+      <label class="row">
+        <span class="label">背景</span>
+        <input class="color" type="color" bind:value={background} />
+        <span class="hint">透明区域填充色（{def.label} 无透明通道）</span>
+      </label>
+    {/if}
+
+    {#if format === "pdf"}
+      <div class="row">
+        <span class="label">页面</span>
+        <span class="hint">{pageSize}</span>
+      </div>
+    {/if}
+
     {#if error}
       <p class="error">{error}</p>
     {/if}
+
     <div class="actions">
+      <span class="status">{def.keepsAlpha ? "保留透明度 · sRGB" : "sRGB"}</span>
       <button type="button" onclick={close}>取消</button>
-      <button type="button" class="primary" disabled={exporting || !preview} onclick={() => void doExport()}>
+      <button
+        type="button"
+        class="primary"
+        disabled={exporting || !ready || !preview?.previewURL}
+        onclick={() => void doExport()}
+      >
         {exporting ? "正在导出…" : "导出…"}
       </button>
     </div>
@@ -158,7 +312,7 @@
 
   .dialog {
     width: 560px;
-    max-height: 80vh;
+    max-height: 86vh;
     display: flex;
     flex-direction: column;
     padding: 16px;
@@ -183,9 +337,6 @@
     max-height: 300px;
     overflow: auto;
     display: flex;
-  }
-
-  .preview-scroll {
     cursor: zoom-in;
   }
 
@@ -194,20 +345,14 @@
     margin: 0 auto;
   }
 
-  .background {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin-bottom: 12px;
-    font-size: 13px;
-  }
-
-  .background input {
-    width: 42px;
-    height: 24px;
-    padding: 0;
-    border: 1px solid var(--border);
-    background: none;
+  /* 原版 JPEGPreview.checkerboard：10pt 方格，透明像素下透出。 */
+  .checkerboard {
+    background-color: #4d4d4d;
+    background-image:
+      linear-gradient(45deg, #595959 25%, transparent 25%, transparent 75%, #595959 75%),
+      linear-gradient(45deg, #595959 25%, transparent 25%, transparent 75%, #595959 75%);
+    background-size: 20px 20px;
+    background-position: 0 0, 10px 10px;
   }
 
   .placeholder {
@@ -239,12 +384,68 @@
     line-height: 1;
   }
 
-  .quality {
+  .row {
     display: flex;
-    flex-direction: column;
-    gap: 6px;
-    margin-bottom: 12px;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 10px;
     font-size: 13px;
+  }
+
+  .label {
+    width: 56px;
+    color: var(--text-dim);
+  }
+
+  .segmented,
+  .more {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .more-label {
+    color: var(--text-dim);
+    font-size: 12px;
+  }
+
+  .segmented button,
+  .more button {
+    padding: 4px 10px;
+  }
+
+  .active {
+    background: var(--accent, #3b82f6);
+    border-color: var(--accent, #3b82f6);
+    color: #fff;
+  }
+
+  .size {
+    width: 76px;
+    text-align: right;
+  }
+
+  .times,
+  .unit,
+  .percent,
+  .hint {
+    color: var(--text-dim);
+  }
+
+  .scale {
+    margin-left: auto;
+  }
+
+  .quality {
+    flex: 1;
+  }
+
+  .color {
+    width: 42px;
+    height: 24px;
+    padding: 0;
+    border: 1px solid var(--border);
+    background: none;
   }
 
   .error {
@@ -255,8 +456,15 @@
 
   .actions {
     display: flex;
+    align-items: center;
     justify-content: flex-end;
     gap: 8px;
+  }
+
+  .status {
+    margin-right: auto;
+    color: var(--text-dim);
+    font-size: 12px;
   }
 
   .actions button {

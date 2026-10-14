@@ -1,8 +1,9 @@
 // Package rasterio decodes raster image files into premultiplied 8-bit
 // sRGB bitmaps — the Go counterpart of the macOS ImageImporter (ticket 40).
-// JPEG/PNG/TIFF decode here; EXIF orientation applies exactly as
+// JPEG/PNG/TIFF/WebP decode here; EXIF orientation applies exactly as
 // CIImage.oriented(forExifOrientation:) did. SVG rasterizes in the
-// frontend and RAW/HEIC arrive with ticket 41, so neither is handled here.
+// frontend, RAW goes through the develop sheet and HEIC/HEIF through
+// libheif (ticket 41), so none of those is handled here.
 package rasterio
 
 import (
@@ -20,12 +21,14 @@ import (
 	"compositor-win/internal/render"
 
 	_ "golang.org/x/image/tiff" // registered for image.Decode
+	_ "golang.org/x/image/webp" // registered for image.Decode
 )
 
-// User-facing import failures, ported from ImageImportError.
+// User-facing import failures, ported from ImageImportError (WebP and HEIF
+// are offered by the original's importableImages list).
 var (
 	ErrUnreadable  = errors.New("无法读取该图像：文件可能已损坏或不可用")
-	ErrUnsupported = errors.New("请选择 JPEG、PNG、HEIC、TIFF 或 Photoshop（PSD）文件")
+	ErrUnsupported = errors.New("请选择 JPEG、PNG、HEIC、HEIF、TIFF、WebP 或 Photoshop（PSD）文件")
 )
 
 // TooLargeError reports the same refusal the original did: over the side
@@ -62,7 +65,7 @@ type Result struct {
 func Decode(path string, remainingPixels int) (*Result, error) {
 	ext := strings.ToLower(strings.TrimPrefix(filepath.Ext(path), "."))
 	switch ext {
-	case "jpg", "jpeg", "png", "tif", "tiff":
+	case "jpg", "jpeg", "png", "tif", "tiff", "webp":
 	default:
 		return nil, ErrUnsupported
 	}
@@ -95,8 +98,8 @@ func Decode(path string, remainingPixels int) (*Result, error) {
 }
 
 // exifOrientation reads the orientation where the container carries one:
-// JPEG from its APP1 EXIF segment, TIFF from IFD0, PNG from an eXIf chunk.
-// Anything unreadable stays 1 (upright).
+// JPEG from its APP1 EXIF segment, TIFF from IFD0, PNG from an eXIf chunk,
+// WebP from its EXIF RIFF chunk. Anything unreadable stays 1 (upright).
 func exifOrientation(format string, data []byte) int {
 	switch format {
 	case "jpeg":
@@ -105,6 +108,8 @@ func exifOrientation(format string, data []byte) int {
 		return tiffOrientation(data)
 	case "png":
 		return pngEXIFOrientation(data)
+	case "webp":
+		return webpEXIFOrientation(data)
 	}
 	return 1
 }

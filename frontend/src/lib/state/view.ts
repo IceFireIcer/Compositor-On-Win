@@ -12,7 +12,7 @@
  * 只镜像 `document` store 解析出来的列表，任何修改都经 `SetGuides` 回写 Go，
  * 不在前端自造文档数据。开关本身是**视图状态**，属于前端。
  */
-import { writable, get, derived } from "svelte/store";
+import { writable, get, derived, type Writable } from "svelte/store";
 import {
   GuidesState,
   fromManifestGuides,
@@ -49,6 +49,63 @@ export const snapToggles = writable<SnapToggles>({ ...DEFAULT_SNAP_TOGGLES });
 
 /** 布局网格参数；默认对齐原版 LayoutGrid（64 px，八等分）。 */
 export const layoutGrid = writable<LayoutGrid>(normalizeGrid(64, 8));
+
+// ---------------------------------------------------------------------------
+// Navigator（票 61 / 对等矩阵 U08）
+// ---------------------------------------------------------------------------
+
+/**
+ * localStorage 键。原版是 `@AppStorage("navigator.visible")`
+ * （CompositorApp.swift:8 / ContentView.swift:7）；Windows 侧按票面约定用
+ * ToolDefaults 风格的短键 `navigator`。
+ */
+const NAVIGATOR_KEY = "navigator";
+
+/** 读一个布尔偏好；没有存储（单测 / 无痕）或读失败时给默认值。 */
+function readStoredBool(key: string, fallback: boolean): boolean {
+  if (typeof localStorage === "undefined") return fallback;
+  try {
+    const raw = localStorage.getItem(key);
+    return raw === null ? fallback : raw === "true";
+  } catch {
+    return fallback; // 存储被禁用/被策略挡住：偏好退回默认，不影响视图
+  }
+}
+
+/** 写一个布尔偏好；写盘失败不算错误（原版 UserDefaults 也不会因此中断）。 */
+function storeBool(key: string, value: boolean): void {
+  if (typeof localStorage === "undefined") return;
+  try {
+    localStorage.setItem(key, value ? "true" : "false");
+  } catch {
+    // 同上：偏好是尽力而为，不能因为存储被禁用就把异常抛给 UI
+  }
+}
+
+/**
+ * 带持久化的开关：`set`/`update` 先改内存再写盘，所以菜单、快捷键、命令
+ * 面板任何一条路径拨动它都会落盘，不用各自记得调用保存。
+ */
+function persistedBool(key: string, fallback: boolean): Writable<boolean> {
+  const store = writable<boolean>(readStoredBool(key, fallback));
+  return {
+    subscribe: store.subscribe,
+    set(value: boolean): void {
+      store.set(value);
+      storeBool(key, value);
+    },
+    update(fn: (value: boolean) => boolean): void {
+      store.update((value) => {
+        const next = fn(value);
+        storeBool(key, next);
+        return next;
+      });
+    },
+  };
+}
+
+/** 视图 ▸ 导航器：从 300% 起在画布角落显示缩略图；默认关，偏好持久化。 */
+export const showsNavigator: Writable<boolean> = persistedBool(NAVIGATOR_KEY, false);
 
 // ---------------------------------------------------------------------------
 // 参考线（镜像 Go 的 domain.Document.guides）

@@ -215,6 +215,22 @@ func goPort(c Case, px []byte) error {
 			Dark: color("dark"), Light: color("light"),
 			Dots: num("dots"), Wobble: num("wobble"),
 		})
+	case "scanlines":
+		// 票 60：独立 Scanlines 内核（参数顺序与 driver_main.c 的 scanlines
+		// 分支一致，见 tests/golden/golden.go 的 DriverArgs）。
+		num := func(key string) float32 { return float32(p[key].(float64)) }
+		color := func(key string) [3]uint8 {
+			raw := p[key].([]any)
+			return [3]uint8{uint8(raw[0].(float64)), uint8(raw[1].(float64)), uint8(raw[2].(float64))}
+		}
+		render.ScanlinesApply(bmp, &render.ScanlinesParams{
+			Spacing: int(num("spacing")), Thickness: num("thickness"),
+			Dots: num("dots"), Wobble: num("wobble"), Displace: num("displace"),
+			Threshold: num("threshold"), Split: num("split"), Density: num("density"),
+			Contrast: num("contrast"), BlackLevel: num("blackLevel"),
+			Smoothness: num("smoothness"), OriginalColors: num("originalColors") != 0,
+			Dark: color("dark"), Light: color("light"),
+		})
 	default:
 		return errNotPorted
 	}
@@ -349,7 +365,7 @@ func TestGoldenCasesHaveReferences(t *testing.T) {
 		}
 	}
 	for _, k := range []string{"levels", "gradient_map", "cube", "grain", "black_white",
-		"color_balance", "camera_raw", "content_fill", "dither", "heal", "lens", "noise", "wand", "brush"} {
+		"color_balance", "camera_raw", "content_fill", "dither", "scanlines", "heal", "lens", "noise", "wand", "brush"} {
 		if !kernels[k] {
 			t.Errorf("no case for kernel command %q", k)
 		}
@@ -430,7 +446,7 @@ func TestGoldenReferencesMatchGoPorts(t *testing.T) {
 	for _, k := range []string{"levels", "exposure", "gradient_map", "cube", "wand",
 		"grain", "black_white", "color_balance", "noise", "camera_raw", "camera_raw_curve",
 		"camera_raw_effects", "camera_raw_detail", "camera_raw_optics", "camera_raw_calibration",
-		"lens", "colored_vignette", "tonal_contrast", "content_fill", "heal", "dither"} {
+		"lens", "colored_vignette", "tonal_contrast", "content_fill", "heal", "dither", "scanlines"} {
 		if ran[k] && !compared[k] {
 			t.Errorf("kernel %q has a Go port in goPort but was not compared", k)
 		}

@@ -21,10 +21,11 @@ import (
 )
 
 // imageFilter is the file-dialog filter for the import batch: the raster
-// formats decoded in Go plus SVG (rasterized by the frontend). RAW/HEIC
-// join with ticket 41.
+// formats decoded in Go (WebP among them, ticket 62) plus SVG (rasterized
+// by the frontend); RAW goes through the develop sheet and HEIC/HEIF
+// (.hif is what Canon, Sony and Fuji write) through libheif.
 var imageFilter = runtime.FileFilter{DisplayName: "图像文件",
-	Pattern: "*.jpg;*.jpeg;*.png;*.tif;*.tiff;*.svg;*.heic;*.heif;*.hif;" +
+	Pattern: "*.jpg;*.jpeg;*.png;*.tif;*.tiff;*.webp;*.svg;*.heic;*.heif;*.hif;" +
 		"*.cr2;*.cr3;*.crw;*.nef;*.nrw;*.arw;*.srf;*.sr2;*.dng;*.raf;*.orf;*.rw2;*.pef;*.srw;*.x3f;*.3fr;*.fff;*.iiq;*.kdc;*.dcr;*.mef;*.mos;*.mrw;*.ptx;*.rdc"}
 
 // importItem reports one picked file: decoded (ok), handed to the frontend

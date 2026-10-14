@@ -249,8 +249,9 @@
 
 ## 更新记录
 
+- **更新日期**：2026-10-14。票 58 / 59 / 60 / 61 / 62 落地，`U05`–`U09` ☐ → ☑；该轮只改这五格。
 - **更新日期**：2026-10-13（第二轮）。票 55 / 56 / 57 并行落地，`U02`、`U03`、`U04` ☐ → ☑；
-  本轮只改这三格。实现细节见 [55](tickets/55-canvas-only.md)、[56](tickets/56-canvas-rotation.md)、
+  该轮只改这三格。实现细节见 [55](tickets/55-canvas-only.md)、[56](tickets/56-canvas-rotation.md)、
   [57](tickets/57-new-canvas-units-background.md)。
 - **更新日期**：2026-10-13。票 54 实现命令搜索面板：**只把 `U01` 从 ☐ 改成 ☑**，其余单元格
   一格不动；实现细节见 [docs/tickets/54-command-palette.md](tickets/54-command-palette.md)。
@@ -270,11 +271,11 @@
 | U02 | 纯画布全屏模式 | 55 | M3/M9 | ☑ |
 | U03 | 画布旋转 90 度 | 56 | M3 | ☑ |
 | U04 | 新建画布物理单位与底色 | 57 | M0/M7 | ☑ |
-| U05 | 重做上一个滤镜 | 58 | M5 | ☐ |
-| U06 | Export As 与 PDF/TIFF | 59 | M7 | ☐ |
-| U07 | 独立 Scanlines 滤镜 | 60 | M5/M6 | ☐ |
-| U08 | Navigator 导航缩略图 | 61 | M3 | ☐ |
-| U09 | WebP 与相机 HEIF 导入 | 62 | M7 | ☐ |
+| U05 | 重做上一个滤镜 | 58 | M5 | ☑ |
+| U06 | Export As 与 PDF/TIFF | 59 | M7 | ☑ |
+| U07 | 独立 Scanlines 滤镜 | 60 | M5/M6 | ☑ |
+| U08 | Navigator 导航缩略图 | 61 | M3 | ☑ |
+| U09 | WebP 与相机 HEIF 导入 | 62 | M7 | ☑ |
 | U10 | Camera Raw 光影数值对齐 | 63 | M5 | ☐ |
 | U11 | RAW 显影降噪与高光修复 | 64 | M7 | ☐ |
 | U12 | PatchMatch 内容感知修复 | 65 | M6 | ☐ |

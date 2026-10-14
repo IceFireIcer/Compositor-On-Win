@@ -47,8 +47,8 @@ import {
   type DocLayer,
   type DocumentState,
 } from "../state/document";
-import { beginFilter } from "../state/filters";
-import { copyMerged, exportPNG, openExportJPEG } from "../state/export";
+import { beginFilter, repeatLastFilter } from "../state/filters";
+import { copyMerged, exportPNG, openExportAs, openExportJPEG } from "../state/export";
 import { geometrySheet } from "../state/geometry";
 import {
   canUngroupLayers,
@@ -727,6 +727,10 @@ export const shortcutActions: ShortcutActions = {
   "Menus:Export JPEG": () => {
     if (currentTab()) void openExportJPEG();
   },
+  // 票 59：统一的导出窗口（格式/等比缩放/质量/预览）。
+  "Menus:Export As": () => {
+    if (currentTab()) openExportAs();
+  },
   "Menus:Close Project": () => closeActiveProject(),
   "Menus:Fit Canvas": () => fitCanvas(),
   // 票 54：命令搜索面板（Ctrl+F）。开关与查询状态在 ../commands/session.ts，
@@ -761,6 +765,9 @@ export const shortcutActions: ShortcutActions = {
   "Menus:Toggle Clipping Mask": () => void toggleClippingMask(),
   "Menus:Merge Layers": () => void mergeActiveLayers(),
   "Menus:Content-Aware Fill": () => void contentAwareFill(),
+  // 票 58：Filter ▸ Last Filter（Ctrl+Alt+F）。参数原样重跑、不弹面板；
+  // 不可用时（没有上次滤镜 / 图层不可编辑 / 会话冲突）repeatLastFilter 直接返回 false。
+  "Menus:Last Filter": () => void repeatLastFilter(),
   "Menus:Fill with Foreground": () => void fill("foreground"),
   "Menus:Fill with Background": () => void fill("background"),
   // --- 视图开关（票 14）：状态在 ../state/view.ts，画布在 CanvasSurface ---

@@ -491,6 +491,126 @@
             </label>
             <label class="check"><input type="checkbox" checked={Boolean(d.lightOnDark)}
               onchange={(e) => updateFilterSettings({ dither: { ...d, lightOnDark: e.currentTarget.checked } })} /> 亮标记（暗底亮纹）</label>
+          {:else if kind === "scanlines" && s}
+            {@const sl = s.scanlines as Record<string, number | (number[])>}
+            <label class="row">
+              <span>行间距 px</span>
+              <input type="range" min="2" max="32" value={Number(sl.lineSpacing)}
+                oninput={(e) => updateFilterSettings({ scanlines: { ...sl, lineSpacing: +e.currentTarget.value } })} />
+              <input type="number" min="2" max="32" value={Number(sl.lineSpacing)}
+                onchange={(e) => updateFilterSettings({ scanlines: { ...sl, lineSpacing: +e.currentTarget.value } })} />
+            </label>
+            <label class="row">
+              <span>厚度 %</span>
+              <input type="range" min="5" max="100" value={Number(sl.thickness)}
+                oninput={(e) => updateFilterSettings({ scanlines: { ...sl, thickness: +e.currentTarget.value } })} />
+              <input type="number" min="5" max="100" value={Number(sl.thickness)}
+                onchange={(e) => updateFilterSettings({ scanlines: { ...sl, thickness: +e.currentTarget.value } })} />
+            </label>
+            <label class="row">
+              <span>辉光 %</span>
+              <input type="range" min="0" max="100" value={Number(sl.glow)}
+                oninput={(e) => updateFilterSettings({ scanlines: { ...sl, glow: +e.currentTarget.value } })} />
+              <input type="number" min="0" max="100" value={Number(sl.glow)}
+                onchange={(e) => updateFilterSettings({ scanlines: { ...sl, glow: +e.currentTarget.value } })} />
+            </label>
+            <label class="row">
+              <span>珠点 %</span>
+              <input type="range" min="0" max="100" value={Number(sl.dots)}
+                oninput={(e) => updateFilterSettings({ scanlines: { ...sl, dots: +e.currentTarget.value } })} />
+              <input type="number" min="0" max="100" value={Number(sl.dots)}
+                onchange={(e) => updateFilterSettings({ scanlines: { ...sl, dots: +e.currentTarget.value } })} />
+            </label>
+            <label class="row">
+              <span>波动 px</span>
+              <input type="range" min="0" max="64" value={Number(sl.wobble)}
+                oninput={(e) => updateFilterSettings({ scanlines: { ...sl, wobble: +e.currentTarget.value } })} />
+              <input type="number" min="0" max="64" value={Number(sl.wobble)}
+                onchange={(e) => updateFilterSettings({ scanlines: { ...sl, wobble: +e.currentTarget.value } })} />
+            </label>
+            <label class="row">
+              <span>位移 px</span>
+              <input type="range" min="-100" max="100" value={Number(sl.displace)}
+                oninput={(e) => updateFilterSettings({ scanlines: { ...sl, displace: +e.currentTarget.value } })} />
+              <input type="number" min="-100" max="100" value={Number(sl.displace)}
+                onchange={(e) => updateFilterSettings({ scanlines: { ...sl, displace: +e.currentTarget.value } })} />
+            </label>
+            <label class="row">
+              <span>平滑 %</span>
+              <input type="range" min="0" max="100" value={Number(sl.smoothness)}
+                oninput={(e) => updateFilterSettings({ scanlines: { ...sl, smoothness: +e.currentTarget.value } })} />
+              <input type="number" min="0" max="100" value={Number(sl.smoothness)}
+                onchange={(e) => updateFilterSettings({ scanlines: { ...sl, smoothness: +e.currentTarget.value } })} />
+            </label>
+            <label class="row">
+              <span>阈值 %</span>
+              <input type="range" min="0" max="100" value={Number(sl.threshold)}
+                oninput={(e) => updateFilterSettings({ scanlines: { ...sl, threshold: +e.currentTarget.value } })} />
+              <input type="number" min="0" max="100" value={Number(sl.threshold)}
+                onchange={(e) => updateFilterSettings({ scanlines: { ...sl, threshold: +e.currentTarget.value } })} />
+            </label>
+            <label class="row">
+              <span>色彩分离 px</span>
+              <input type="range" min="0" max="16" value={Number(sl.split)}
+                oninput={(e) => updateFilterSettings({ scanlines: { ...sl, split: +e.currentTarget.value } })} />
+              <input type="number" min="0" max="16" value={Number(sl.split)}
+                onchange={(e) => updateFilterSettings({ scanlines: { ...sl, split: +e.currentTarget.value } })} />
+            </label>
+            <label class="row">
+              <span>密度</span>
+              <input type="range" min="-100" max="100" value={Number(sl.density)}
+                oninput={(e) => updateFilterSettings({ scanlines: { ...sl, density: +e.currentTarget.value } })} />
+              <input type="number" min="-100" max="100" value={Number(sl.density)}
+                onchange={(e) => updateFilterSettings({ scanlines: { ...sl, density: +e.currentTarget.value } })} />
+            </label>
+            <label class="row">
+              <span>对比度</span>
+              <input type="range" min="-100" max="100" value={Number(sl.contrast)}
+                oninput={(e) => updateFilterSettings({ scanlines: { ...sl, contrast: +e.currentTarget.value } })} />
+              <input type="number" min="-100" max="100" value={Number(sl.contrast)}
+                onchange={(e) => updateFilterSettings({ scanlines: { ...sl, contrast: +e.currentTarget.value } })} />
+            </label>
+            <label class="row">
+              <span>黑位 %</span>
+              <input type="range" min="0" max="100" value={Number(sl.blackLevel)}
+                oninput={(e) => updateFilterSettings({ scanlines: { ...sl, blackLevel: +e.currentTarget.value } })} />
+              <input type="number" min="0" max="100" value={Number(sl.blackLevel)}
+                onchange={(e) => updateFilterSettings({ scanlines: { ...sl, blackLevel: +e.currentTarget.value } })} />
+            </label>
+            <label class="row">
+              <span>颜色</span>
+              <select value={String(sl.colors)} onchange={(e) => updateFilterSettings({ scanlines: { ...sl, colors: +e.currentTarget.value } })}>
+                <option value="0">黑白</option>
+                <option value="1">双色调</option>
+                <option value="2">原始色</option>
+              </select>
+            </label>
+            {#if Number(sl.colors) === 1}
+              <div class="row">
+                <span>屏色</span>
+                {#each [0, 1, 2] as ch (ch)}
+                  <input class="tiny" type="number" min="0" max="255"
+                    value={Math.round((sl.dark as number[])[ch] * 255)}
+                    onchange={(e) => {
+                      const dark = [...(sl.dark as number[])];
+                      dark[ch] = +e.currentTarget.value / 255;
+                      updateFilterSettings({ scanlines: { ...sl, dark } });
+                    }} />
+                {/each}
+              </div>
+              <div class="row">
+                <span>线色</span>
+                {#each [0, 1, 2] as ch (ch)}
+                  <input class="tiny" type="number" min="0" max="255"
+                    value={Math.round((sl.light as number[])[ch] * 255)}
+                    onchange={(e) => {
+                      const light = [...(sl.light as number[])];
+                      light[ch] = +e.currentTarget.value / 255;
+                      updateFilterSettings({ scanlines: { ...sl, light } });
+                    }} />
+                {/each}
+              </div>
+            {/if}
           {:else if kind === "lensCorrection"}
             <label class="row">
               <span>移除扭曲</span>

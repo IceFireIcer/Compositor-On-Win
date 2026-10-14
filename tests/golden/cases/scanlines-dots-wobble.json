@@ -1,0 +1,13 @@
+{
+  "kernel": "scanlines",
+  "input": "ramp",
+  "width": 48, "height": 48,
+  "epsilon": 1,
+  "params": {
+    "spacing": 8, "thickness": 0.8, "dots": 0.6, "wobble": 3, "displace": 0,
+    "threshold": 0.1, "split": 0, "density": 0, "contrast": 0, "blackLevel": 0,
+    "smoothness": 0.5, "originalColors": 0,
+    "dark": [0, 0, 0], "light": [255, 255, 255]
+  },
+  "note": "scanlines_apply：珠点 + 摇摆 + 阈值，ramp 输入带整行透明（透明像素原样保留）；对齐 ScanlinesTests.dotsBeadTheLinesBelowTheirLevel / wobbleMovesLinesSideways / thresholdDarkensWhatsBelowIt。sinf/fmodf/powf 跨库 → ε=1。"
+}

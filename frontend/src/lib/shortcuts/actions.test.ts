@@ -531,6 +531,16 @@ describe("命令搜索面板的快捷键", () => {
     expect(dispatchShortcut(plainF, "canvas")).toBe(true);
     expect(get(commandPaletteOpen)).toBe(false);
   });
+
+  it("Ctrl+Alt+F 是票 58 的 Last Filter，与 Ctrl+F 搜索互不遮蔽", () => {
+    const lastFilterKey = { ...ctrlF(), altKey: true } as unknown as KeyboardEvent;
+    expect(dispatchShortcut(lastFilterKey, "menu")).toBe(true);
+    expect(get(commandPaletteOpen)).toBe(false);
+    expect(get(canvasOnly)).toBe(false);
+    // Ctrl+F 仍然是搜索（两条和弦不同）。
+    expect(dispatchShortcut(ctrlF(), "menu")).toBe(true);
+    expect(get(commandPaletteOpen)).toBe(true);
+  });
 });
 
 /**
@@ -560,6 +570,8 @@ describe("shortcutActions 与定义表对齐", () => {
       "Menus:Save As",
       "Menus:Export PNG",
       "Menus:Export JPEG",
+      // 票 59：统一导出窗口
+      "Menus:Export As",
       "Menus:Close Project",
       "Menus:Fit Canvas",
       "Menus:Search Commands",
@@ -591,6 +603,8 @@ describe("shortcutActions 与定义表对齐", () => {
       "Menus:Toggle Clipping Mask",
       "Menus:Merge Layers",
       "Menus:Content-Aware Fill",
+      // 票 58：Filter ▸ Last Filter（Ctrl+Alt+F）
+      "Menus:Last Filter",
       // Canvas & Layers（工具字母）
       "Canvas & Layers:Select tool",
       "Canvas & Layers:Move / Transform tool",

@@ -41,6 +41,9 @@
 //   content_fill  maskPath
 //   dither        style levels diffusion density contrast cell angle lightOnDark
 //                 originalColors darkR darkG darkB lightR lightG lightB dots wobble
+//   scanlines     spacing thickness dots wobble displace threshold split density
+//                 contrast blackLevel smoothness originalColors
+//                 darkR darkG darkB lightR lightG lightB
 //   heal          maskPath opacity mode seed
 //   lens          k
 //   noise         amount gaussian monochromatic seed
@@ -66,6 +69,7 @@
 #include "BrushPixels.h"
 #include "ContentFill.h"
 #include "DitherPixels.h"
+#include "ScanlinesPixels.h"
 #include "HealPixels.h"
 #include "LensPixels.h"
 #include "NoisePixels.h"
@@ -530,6 +534,30 @@ int main(int argc, char **argv) {
         params.wobble = (float)arg_double(argv[argi + 16]);
         if (dither_apply(pixels, (size_t)width, (size_t)height, (size_t)width * 4, &params) != 1)
             die("dither_apply failed");
+    } else if (!strcmp(command, "scanlines")) {
+        if (argc < argi + 18) die("scanlines needs 18 parameters");
+        ScanlinesParams params;
+        memset(&params, 0, sizeof(params));
+        params.spacing = (int)arg_long(argv[argi]);
+        params.thickness = (float)arg_double(argv[argi + 1]);
+        params.dots = (float)arg_double(argv[argi + 2]);
+        params.wobble = (float)arg_double(argv[argi + 3]);
+        params.displace = (float)arg_double(argv[argi + 4]);
+        params.threshold = (float)arg_double(argv[argi + 5]);
+        params.split = (float)arg_double(argv[argi + 6]);
+        params.density = (float)arg_double(argv[argi + 7]);
+        params.contrast = (float)arg_double(argv[argi + 8]);
+        params.blackLevel = (float)arg_double(argv[argi + 9]);
+        params.smoothness = (float)arg_double(argv[argi + 10]);
+        params.originalColors = (int)arg_long(argv[argi + 11]);
+        params.dark[0] = (uint8_t)arg_long(argv[argi + 12]);
+        params.dark[1] = (uint8_t)arg_long(argv[argi + 13]);
+        params.dark[2] = (uint8_t)arg_long(argv[argi + 14]);
+        params.light[0] = (uint8_t)arg_long(argv[argi + 15]);
+        params.light[1] = (uint8_t)arg_long(argv[argi + 16]);
+        params.light[2] = (uint8_t)arg_long(argv[argi + 17]);
+        if (scanlines_apply(pixels, (size_t)width, (size_t)height, (size_t)width * 4, &params) != 1)
+            die("scanlines_apply failed");
     } else if (!strcmp(command, "heal")) {
         if (argc < argi + 4) die("heal needs maskPath opacity mode seed");
         size_t mask_length;

@@ -6,6 +6,8 @@ package bridge
 
 import (
 	"bytes"
+	"context"
+	"encoding/base64"
 	"image"
 	"image/color"
 	"image/png"
@@ -13,6 +15,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -217,6 +220,126 @@ func TestFloorOrigin(t *testing.T) {
 	// 比画布大的图允许负偏移（原版不裁剪落点）
 	if x, y := floorOrigin(100, 80, 140, 90); x != -20 || y != -5 {
 		t.Fatalf("floorOrigin 负偏移 = %v,%v", x, y)
+	}
+}
+
+// webPFixtureBytes is the original test's lossless 64×32 WebP fixture
+// (ImageImportTests.swift:41): opaque red on the left half, transparent on
+// the right. Copied as base64 because golang.org/x/image/webp only decodes.
+const webPFixtureB64 = "UklGRiYAAABXRUJQVlA4TBkAAAAvP8AHEA8Q8x/zHwyxYDJ/6RB6I/ofVfANAA=="
+
+func webPFixtureBytes(t *testing.T) []byte {
+	t.Helper()
+	data, err := base64.StdEncoding.DecodeString(webPFixtureB64)
+	if err != nil {
+		t.Fatalf("WebP 夹具不是合法 base64: %v", err)
+	}
+	return data
+}
+
+// 文件对话框的 pattern 必须和 Go 的解码路由同进同退：WebP 与相机的
+// .hif/.heif（原版 UTType.importableImages 里的 .webP 与 .heif）。
+func TestImageFilterOffersWebPAndCameraHEIF(t *testing.T) {
+	for _, ext := range []string{"*.webp", "*.heic", "*.heif", "*.hif"} {
+		if !strings.Contains(imageFilter.Pattern, ext) {
+			t.Errorf("导入对话框 pattern 缺少 %s：%s", ext, imageFilter.Pattern)
+		}
+	}
+}
+
+// 三条入口的扩展名路由：WebP 走 rasterio 解码，.hif/.heif 与 .heic 一样走
+// libheif，绝不落到 rasterio 的「不支持的类型」分支。
+func TestImportRoutesWebPAndCameraHEIF(t *testing.T) {
+	svc := NewService(NewWorkspace())
+	webp := writeTemp(t, "照片.webp", webPFixtureBytes(t))
+	// 假容器：路由对了才会报 libheif 的「无法读取」，路由错了会报
+	// rasterio 的「请选择 JPEG、PNG…」。
+	hif := writeTemp(t, "相机.hif", []byte("not a heif container"))
+	heif := writeTemp(t, "相机.heif", []byte("not a heif container"))
+	begin := parseJSON[importBegin](t, mustBegin(t, svc, webp, hif, heif))
+	if it := begin.Items[0]; it.Status != "ok" || it.Name != "照片" {
+		t.Fatalf("WebP 应解码成功：%+v", it)
+	}
+	for _, it := range begin.Items[1:] {
+		if it.Status != "error" {
+			t.Fatalf("%s 应报错：%+v", filepath.Base(it.Path), it)
+		}
+		if !strings.Contains(it.Error, "无法读取") {
+			t.Errorf("%s 应走 libheif 并报无法读取：%q", filepath.Base(it.Path), it.Error)
+		}
+		if strings.Contains(it.Error, "请选择") {
+			t.Errorf("%s 被误判成不支持的类型：%q", filepath.Base(it.Path), it.Error)
+		}
+	}
+	env := parseJSON[envelope](t, mustFinish(t, svc))
+	if env.Doc == nil || env.Doc.Width != 64 || env.Doc.Height != 32 || len(env.Doc.Layers) != 1 {
+		t.Fatalf("WebP 应成为 64×32 的文档：%+v", env.Doc)
+	}
+}
+
+// 导入 → 保存 → 重开 → 导出：像素与尺寸一路保持（票 62 的往返要求）。
+func TestWebPImportSaveReopenExportRoundTrip(t *testing.T) {
+	svc := NewService(NewWorkspace())
+	path := writeTemp(t, "照片.webp", webPFixtureBytes(t))
+	mustBegin(t, svc, path)
+	env := parseJSON[envelope](t, mustFinish(t, svc))
+	if env.Doc.Width != 64 || env.Doc.Height != 32 {
+		t.Fatalf("文档尺寸 %d×%d", env.Doc.Width, env.Doc.Height)
+	}
+	asset := *env.Doc.Layers[0].ImageFile
+	sessPix := activeSessionOf(t, svc).bitmaps[asset].Pix
+
+	savePath := filepath.Join(t.TempDir(), "webp.comp")
+	svc.saveDialog = func(context.Context) (string, error) { return savePath, nil }
+	if _, err := svc.SaveProjectDialog(); err != nil {
+		t.Fatal(err)
+	}
+
+	ws2 := NewWorkspace()
+	svc2 := NewService(ws2)
+	svc2.openDialog = func(context.Context) (string, error) { return savePath, nil }
+	out, err := svc2.OpenProjectDialog()
+	if err != nil {
+		t.Fatal(err)
+	}
+	e2 := parseEnvelope(t, out)
+	if e2.Doc.Width != 64 || e2.Doc.Height != 32 || len(e2.Doc.Layers) != 1 {
+		t.Fatalf("重开的文档不符：%d×%d，%d 层", e2.Doc.Width, e2.Doc.Height, len(e2.Doc.Layers))
+	}
+	reopened := ws2.Snapshot()
+	ws2.mu.Lock()
+	sess2 := ws2.sessions[reopened.ActiveID]
+	ws2.mu.Unlock()
+	reBmp := sess2.bitmaps[asset]
+	if reBmp == nil {
+		t.Fatal("重开后位图库缺少 WebP 资产")
+	}
+	if !reflect.DeepEqual(reBmp.Pix, sessPix) {
+		t.Fatal("保存 → 重开后 WebP 位图不一致")
+	}
+
+	exportPath := filepath.Join(t.TempDir(), "导出.png")
+	stubExportSaveDialog(t, exportPath)
+	if _, err := svc2.ExportPNG("导出.png"); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(exportPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	img, err := png.Decode(bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b := img.Bounds(); b.Dx() != 64 || b.Dy() != 32 {
+		t.Fatalf("导出尺寸 %v", b)
+	}
+	// 左半不透明红、右半仍然透明：透明度没有被压平丢掉。
+	if r, _, _, a := img.At(0, 0).RGBA(); r < 250*257 || a != 0xffff {
+		t.Errorf("导出左上应是不透明红：%v", img.At(0, 0))
+	}
+	if _, _, _, a := img.At(63, 0).RGBA(); a != 0 {
+		t.Errorf("导出右上应保持透明：%v", img.At(63, 0))
 	}
 }
 

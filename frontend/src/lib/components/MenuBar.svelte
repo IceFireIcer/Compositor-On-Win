@@ -8,7 +8,7 @@
   } from "../state/filters";
   import { document, layerOps } from "../state/document";
   import { importImages, saveProjectAs } from "../state/workspace";
-  import { copyMerged, exportPNG, openExportJPEG } from "../state/export";
+  import { copyMerged, exportPNG, openExportAs, openExportJPEG } from "../state/export";
   import { geometrySheet } from "../state/geometry";
   import {
     clearAllGuides,
@@ -47,6 +47,7 @@
     showGrid,
     showGuides,
     showRulers,
+    showsNavigator,
     showsPixelGrid,
     snapEnabled,
     snapToggles,
@@ -57,6 +58,7 @@
   // 票 55 / 56 的菜单入口：菜单栏是这两票唯一共用的文件，由 Lead 统一接线。
   import { canvasOnly, canvasOnlyAllowed, toggleCanvasOnly } from "../state/canvasOnly";
   import { rotateCanvas } from "../state/canvasRotate";
+  import { lastFilter, lastFilterLabel, repeatAllowed } from "../state/lastFilter";
 
   /**
    * The menu bar (CompositorApp.swift's menus): 选择 / 文件 / 编辑 / 图像 /
@@ -320,6 +322,17 @@
           hint: hintFor("Menus:Export JPEG"),
           disabled: !hasLayer || dialogOpen,
           run: () => openExportJPEG(),
+        },
+        // 票 59：统一的导出窗口（PNG/JPEG/TIFF/单页 PDF、等比缩放、质量、预览）。
+        // 原版放在同一组的 PNG/JPEG 之后（⌥⇧⌘W → Ctrl+Alt+Shift+W）。
+        {
+          label: "导出为…",
+          hint: hintFor("Menus:Export As"),
+          disabled: !hasLayer || dialogOpen,
+          run: () => {
+            close();
+            openExportAs();
+          },
         },
         {
           label: "拷贝合并",
@@ -628,6 +641,16 @@
           disabled: !hasLayer,
           run: () => runAndClose("Menus:Zoom Out"),
         },
+        // 票 61：导航器（原版 View ▸ Navigator (300% and above)）。默认关，偏好
+        // 持久化在 state/view.ts 的 showsNavigator 里；组件自己判断 300% 与纯画布。
+        {
+          label: "导航器（300% 及以上）",
+          checked: $showsNavigator,
+          run: () => {
+            showsNavigator.update((value) => !value);
+            close();
+          },
+        },
         // --- 视图开关（票 14 / 47）：原先这五条只有快捷键、没有菜单入口，
         // 用户除了背键位没有别的办法打开参考线/网格/标尺。勾来自上面的
         // viewState（$store 响应式读），与实际状态同源（菜单与快捷键共用 toggleView）。
@@ -726,6 +749,14 @@
     {
       label: "滤镜",
       items: [
+        // 票 58：重做上一个滤镜（原版 Filter ▸ Last Filter，⌃⌘F → Windows Ctrl+Alt+F）。
+        // 标题跟着上次滤镜改名；可用性判据与快捷键动作共用 repeatAllowed 一份规则。
+        {
+          label: lastFilterLabel($lastFilter),
+          hint: hintFor("Menus:Last Filter"),
+          disabled: dialogOpen || !repeatAllowed($lastFilter, hasLayer, $filterSession !== null),
+          run: () => runAndClose("Menus:Last Filter"),
+        },
         ...FILTER_KINDS.map((k) => ({
           label: k.label,
           disabled: !hasLayer || dialogOpen,

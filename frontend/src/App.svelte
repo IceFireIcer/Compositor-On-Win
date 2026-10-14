@@ -743,8 +743,8 @@
      （display: none 不卸载组件），画布区域铺满整窗、底色是纯黑，而不是
      主题里的 --bg-canvas —— 原版要的是"黑底上的画布"，不该随主题变。
      标尺是 CanvasSurface 内部的覆盖层（原版 ContentView.swift:89 同样收起），
-     组件作用域的选择器点不到它，用 :global；导航器（票 61）尚未实现，落地时
-     在这里一并收起。 */
+     组件作用域的选择器点不到它，用 :global；导航器（票 61）自己读 $canvasOnly
+     收起（对位 ContentView.swift:114 的 !session.canvasOnly），所以不在这里点。 */
   .app.canvas-only {
     grid-template-rows: minmax(0, 1fr);
     background: #000;

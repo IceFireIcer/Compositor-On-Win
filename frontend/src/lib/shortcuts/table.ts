@@ -8,9 +8,10 @@
  *     Tab `\t`、Space `" "`、方向键 `\u{f700}`…`\u{f703}`）；
  *   - 修饰键位：Command/Primary=1、Option/Alt=2、Control=4、Shift=8。
  *
- * 分组：47 条 Menus（46 条旧表 + 票 54 的 Search Commands）、59 条
+ * 分组：49 条 Menus（46 条旧表 + 票 54 的 Search Commands + 票 58 的 Last Filter +
+ * 票 59 的 Export As）、59 条
  * Canvas & Layers（58 条旧表 + 票 55 的 Toggle Fullscreen）、9 条
- * Text Editing（共 115 条）。
+ * Text Editing（共 117 条）。
  * 表驱动测试 `table.test.ts` 里的期望是照着 Swift 源码手工誊写的，
  * 不从这里生成——本表抄错一条，测试就会失败。
  */
@@ -47,7 +48,7 @@ function editing(title: string, key: string, modifiers: number): ShortcutDefinit
 const SHIFT = 8;
 
 // ---------------------------------------------------------------------------
-// Menus（46）——KeyboardShortcuts.swift:75-98，逐行对照
+// Menus（49）——KeyboardShortcuts.swift:75-98，逐行对照（票 54/58/59 各补一条）
 // ---------------------------------------------------------------------------
 
 const MENUS: readonly ShortcutDefinition[] = [
@@ -59,6 +60,9 @@ const MENUS: readonly ShortcutDefinition[] = [
   menu("Save As", "s", 9),
   menu("Export PNG", "e", 9),
   menu("Export JPEG", "s", 11),
+  // 票 59：统一导出窗口。原版 ⌥⇧⌘W（modifiers 11 = Command|Option|Shift），
+  // Windows 上落成 Ctrl+Alt+Shift+W。
+  menu("Export As", "w", 11),
   menu("Close Project", "w", 1),
   menu("Fit Canvas", "0", 1),
   // 票 54：命令搜索面板（原版 ⌘F，Windows 上 Ctrl+F；纯画布模式的 F 由票 55 加）。
@@ -79,6 +83,11 @@ const MENUS: readonly ShortcutDefinition[] = [
   menu("Deselect", "d", 1),
   menu("Inverse Selection", "i", 9),
   menu("Select Subject", "a", 3),
+  // 票 58：重做上一个滤镜。原版是 ⌃⌘F（modifiers 5 = Control|Command），但 Windows
+  // 的位序里 bit 4（Control）与 bit 1（Command）都渲染成 Ctrl —— 直接用 5 会写出
+  // "Ctrl+Ctrl+F"。票面要求两个原版修饰键映射成两个不同的键，所以这里取
+  // Command|Option = Ctrl+Alt+F（搜索仍是 Ctrl+F，两者不冲突）。
+  menu("Last Filter", "f", 3),
   menu("Curves", "m", 1),
   menu("Levels", "l", 1),
   menu("Hue/Saturation", "u", 1),
@@ -184,7 +193,7 @@ const TEXT_EDITING: readonly ShortcutDefinition[] = [
   ]),
 ];
 
-/** 全部 115 条定义，顺序与原版 `ShortcutDefinition.all` 相同。 */
+/** 全部 117 条定义，顺序与原版 `ShortcutDefinition.all` 相同。 */
 export const SHORTCUTS: readonly ShortcutDefinition[] = [
   ...MENUS,
   ...CANVAS,

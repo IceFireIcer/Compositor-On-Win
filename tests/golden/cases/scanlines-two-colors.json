@@ -1,0 +1,13 @@
+{
+  "kernel": "scanlines",
+  "input": "patches",
+  "width": 48, "height": 48,
+  "epsilon": 1,
+  "params": {
+    "spacing": 5, "thickness": 0.5, "dots": 0, "wobble": 0, "displace": 0,
+    "threshold": 0, "split": 0, "density": 0.2, "contrast": -0.1, "blackLevel": 0.35,
+    "smoothness": 0.5, "originalColors": 0,
+    "dark": [20, 10, 40], "light": [230, 200, 120]
+  },
+  "note": "scanlines_apply：双色调（dark/light）+ 密度/对比 + 黑位，四象限不同 alpha 的 patches 输入；对齐 ScanlinesTests.linesShowOnSolidWhiteAndBlack 的黑位部分。powf/exp2f 跨库 → ε=1。"
+}

@@ -62,10 +62,12 @@ func (w *Workspace) flattenActive() (*render.Bitmap, int, error) {
 }
 
 // exportPreviewReply is BeginExportPreview's reply: the flattened size the
-// dialog's preview reflects.
+// dialog's preview reflects, plus the document resolution Export As needs to
+// label a PDF page's printed size.
 type exportPreviewReply struct {
-	Width  int `json:"width"`
-	Height int `json:"height"`
+	Width      int `json:"width"`
+	Height     int `json:"height"`
+	Resolution int `json:"resolution"`
 }
 
 // exportJPEGReply points the dialog at the staged preview on the HTTP pixel
@@ -82,7 +84,7 @@ func (s *Service) BeginExportPreview() (string, error) {
 	if s.ws == nil {
 		return "", errNoDocument
 	}
-	bmp, _, err := s.ws.flattenActive()
+	bmp, res, err := s.ws.flattenActive()
 	if err != nil {
 		return "", err
 	}
@@ -98,7 +100,7 @@ func (s *Service) BeginExportPreview() (string, error) {
 		preview = render.DownscaleBitmap(bmp, int(float64(bmp.W)*scale+0.5), int(float64(bmp.H)*scale+0.5))
 	}
 	s.exportPreview = preview
-	b, err := json.Marshal(exportPreviewReply{Width: bmp.W, Height: bmp.H})
+	b, err := json.Marshal(exportPreviewReply{Width: bmp.W, Height: bmp.H, Resolution: res})
 	if err != nil {
 		return "", fmt.Errorf("无法编码导出信息: %w", err)
 	}
@@ -158,6 +160,220 @@ func (s *Service) ExportJPEG(quality int, background string, defaultName string)
 	})
 }
 
+// ---------------------------------------------------------------------------
+// Export As (ticket 59): one dialog for PNG/JPEG/TIFF/a one-page PDF, with a
+// proportional resize, a JPEG quality and a background for the formats that
+// have no transparency. The flatten + encode path never touches the document,
+// its history or the tab's dirty flag — an export is a read.
+
+// exportAsRequest is the Export As dialog's settings payload. Width/Height are
+// the target pixels (0 = the flattened size); Quality is JPEG's 1–100;
+// Background is the "#rrggbb" matte JPEG and PDF flatten onto.
+type exportAsRequest struct {
+	Format      string `json:"format"`
+	Width       int    `json:"width"`
+	Height      int    `json:"height"`
+	Quality     int    `json:"quality"`
+	Background  string `json:"background"`
+	DefaultName string `json:"defaultName"`
+}
+
+// exportFormat is one Export As format: the menu label, the save dialog's
+// filter, the extension appended when the user typed none, and the accepted
+// spellings that suppress it.
+type exportFormat struct {
+	id       string
+	label    string
+	ext      string
+	accepted []string
+	filter   runtime.FileFilter
+}
+
+// exportFormats is the dialog's format set (EXR, 16-bit and CMYK stay with
+// tickets 71/69/72).
+var exportFormats = []exportFormat{
+	{id: "png", label: "PNG", ext: ".png", accepted: []string{".png"}, filter: pngFilter},
+	{id: "jpeg", label: "JPEG", ext: ".jpg", accepted: []string{".jpg", ".jpeg"}, filter: jpegFilter},
+	{id: "tiff", label: "TIFF", ext: ".tif", accepted: []string{".tif", ".tiff"},
+		filter: runtime.FileFilter{DisplayName: "TIFF 图像", Pattern: "*.tif;*.tiff"}},
+	{id: "pdf", label: "PDF", ext: ".pdf", accepted: []string{".pdf"},
+		filter: runtime.FileFilter{DisplayName: "PDF 文档", Pattern: "*.pdf"}},
+}
+
+func exportFormatFor(id string) (exportFormat, error) {
+	for _, f := range exportFormats {
+		if f.id == id {
+			return f, nil
+		}
+	}
+	return exportFormat{}, fmt.Errorf("不支持的导出格式 %q（可用：png、jpeg、tiff、pdf）", id)
+}
+
+// parseExportAsRequest normalizes the wire payload and rejects the requests
+// the encoder cannot honour (unknown format, negative or oversized target).
+func parseExportAsRequest(raw string) (exportAsRequest, error) {
+	var req exportAsRequest
+	if err := json.Unmarshal([]byte(raw), &req); err != nil {
+		return req, fmt.Errorf("无法解析导出设置: %w", err)
+	}
+	req.Format = strings.ToLower(strings.TrimSpace(req.Format))
+	if req.Format == "" {
+		req.Format = "png"
+	}
+	if _, err := exportFormatFor(req.Format); err != nil {
+		return req, err
+	}
+	if req.Width < 0 || req.Height < 0 {
+		return req, fmt.Errorf("导出尺寸不能为负: %d × %d", req.Width, req.Height)
+	}
+	if req.Width > 0 && req.Height > 0 {
+		if req.Width > domain.MaxSide || req.Height > domain.MaxSide {
+			return req, fmt.Errorf("导出尺寸 %d × %d 超出 %d 像素边长限制", req.Width, req.Height, domain.MaxSide)
+		}
+		if req.Width*req.Height > domain.MaxSurfacePixels {
+			return req, fmt.Errorf("导出尺寸 %d × %d 超出 %d 百万像素上限",
+				req.Width, req.Height, domain.MaxSurfacePixels/1_000_000)
+		}
+	}
+	if req.Quality <= 0 {
+		req.Quality = 85
+	}
+	if req.Quality > 100 {
+		req.Quality = 100
+	}
+	return req, nil
+}
+
+// targetSize resolves the request against the flattened raster: both sides
+// given means a resize, otherwise the native size stands.
+func (req exportAsRequest) targetSize(w, h int) (int, int) {
+	if req.Width > 0 && req.Height > 0 {
+		return req.Width, req.Height
+	}
+	return w, h
+}
+
+// encodeExportBytes runs the format's encoder over the sized raster.
+func encodeExportBytes(format string, bmp *render.Bitmap, res, quality int, bgR, bgG, bgB uint8) ([]byte, error) {
+	switch format {
+	case "png":
+		return render.EncodePNGWithDPI(bmp, res)
+	case "jpeg":
+		return render.EncodeJPEGWithDPI(bmp, quality, res, bgR, bgG, bgB)
+	case "tiff":
+		return render.EncodeTIFFWithDPI(bmp, res)
+	case "pdf":
+		return render.EncodePDFWithDPI(bmp, res, bgR, bgG, bgB)
+	}
+	return nil, fmt.Errorf("不支持的导出格式 %q", format)
+}
+
+// exportPreviewBytes encodes the staged preview the way the dialog shows it:
+// the format's own bytes when a browser can render them (PNG, JPEG), else a
+// PNG of what the export looks like — TIFF keeps alpha for the checkerboard,
+// PDF shows the flattened page (browsers draw neither TIFF nor PDF in an img).
+func exportPreviewBytes(format string, bmp *render.Bitmap, quality int, bgR, bgG, bgB uint8) ([]byte, string, error) {
+	switch format {
+	case "jpeg":
+		data, err := render.EncodeJPEGWithDPI(bmp, quality, 0, bgR, bgG, bgB)
+		return data, "image/jpeg", err
+	case "pdf":
+		data, err := render.EncodePNG(render.FlattenOverBackground(bmp, bgR, bgG, bgB))
+		return data, "image/png", err
+	default: // png、tiff：保留透明，PNG 是浏览器能画的等价物
+		data, err := render.EncodePNG(bmp)
+		return data, "image/png", err
+	}
+}
+
+// exportAsPreviewReply points the dialog at the staged preview on the HTTP
+// pixel plane and reports the target export size, so the zoom label needs no
+// guesswork.
+type exportAsPreviewReply struct {
+	URL           string `json:"url"`
+	Size          int    `json:"size"`
+	Width         int    `json:"width"`
+	Height        int    `json:"height"`
+	PreviewWidth  int    `json:"previewWidth"`
+	PreviewHeight int    `json:"previewHeight"`
+}
+
+// ExportAsPreview re-encodes the held flattened raster at the request's format
+// and target size. The staged preview is capped at 2048 px on its long side;
+// the export itself is written at the full target size. Stale requests are
+// discarded frontend-side by sequence number (the filter preview pattern).
+func (s *Service) ExportAsPreview(requestJSON string) (string, error) {
+	req, err := parseExportAsRequest(requestJSON)
+	if err != nil {
+		return "", err
+	}
+	s.exportMu.Lock()
+	defer s.exportMu.Unlock()
+	if s.exportRaster == nil {
+		return "", fmt.Errorf("没有进行中的导出预览")
+	}
+	targetW, targetH := req.targetSize(s.exportRaster.W, s.exportRaster.H)
+	stageW, stageH := targetW, targetH
+	const previewLimit = 2048
+	if longest := max(stageW, stageH); longest > previewLimit {
+		scale := float64(previewLimit) / float64(longest)
+		stageW = max(1, int(float64(stageW)*scale+0.5))
+		stageH = max(1, int(float64(stageH)*scale+0.5))
+	}
+	preview := render.ResampleBitmap(s.exportRaster, stageW, stageH)
+	br, bg, bb := parseBackground(req.Background)
+	data, mime, err := exportPreviewBytes(req.Format, preview, req.Quality, br, bg, bb)
+	if err != nil {
+		return "", fmt.Errorf("图像无法编码: %w", err)
+	}
+	url := s.stagePixel(data, mime)
+	s.exportStage = append(s.exportStage, url)
+	reply := exportAsPreviewReply{
+		URL: url, Size: len(data),
+		Width: targetW, Height: targetH,
+		PreviewWidth: stageW, PreviewHeight: stageH,
+	}
+	encoded, err := json.Marshal(reply)
+	if err != nil {
+		return "", fmt.Errorf("无法编码预览: %w", err)
+	}
+	return string(encoded), nil
+}
+
+// ExportAs is File › Export As…: flattens the active document, resizes it to
+// the request's target, encodes the chosen format and writes it through the
+// save dialog. The document, its history and its dirty flag are untouched.
+func (s *Service) ExportAs(requestJSON string) (string, error) {
+	if s.ws == nil {
+		return "", errNoDocument
+	}
+	req, err := parseExportAsRequest(requestJSON)
+	if err != nil {
+		return "", err
+	}
+	s.ws.mu.Lock()
+	hasDocument := s.ws.activeSessionLocked() != nil
+	s.ws.mu.Unlock()
+	if !hasDocument {
+		return "", errNoDocument
+	}
+	format, _ := exportFormatFor(req.Format)
+	name := strings.TrimSpace(req.DefaultName)
+	if name == "" {
+		name = "未命名" + format.ext
+	}
+	br, bg, bb := parseBackground(req.Background)
+	return s.writeExport("导出 "+format.label, name, []runtime.FileFilter{format.filter}, format.accepted, format.ext,
+		func(bmp *render.Bitmap, res int) ([]byte, error) {
+			w, h := req.targetSize(bmp.W, bmp.H)
+			sized := bmp
+			if w != bmp.W || h != bmp.H {
+				sized = render.ResampleBitmap(bmp, w, h)
+			}
+			return encodeExportBytes(format.id, sized, res, req.Quality, br, bg, bb)
+		})
+}
+
 // parseBackground reads "#rrggbb" (anything else uses white).
 func parseBackground(hex string) (uint8, uint8, uint8) {
 	hex = strings.TrimPrefix(hex, "#")
@@ -171,23 +387,23 @@ func parseBackground(hex string) (uint8, uint8, uint8) {
 	return uint8(value >> 16), uint8(value >> 8), uint8(value)
 }
 
-func (s *Service) exportFile(title, defaultName string, filter runtime.FileFilter, ext string, encode func(*render.Bitmap, int) ([]byte, error)) (string, error) {
+// writeExport asks for a destination (the frontend passes the remembered
+// filename), flattens the active document and writes the encoded bytes. The
+// PNG/JPEG shortcuts and Export As share it; a cancelled dialog touches no
+// file. encode receives the flattened raster and the document resolution.
+func (s *Service) writeExport(title, defaultName string, filters []runtime.FileFilter, accepted []string, fallbackExt string, encode func(*render.Bitmap, int) ([]byte, error)) (string, error) {
 	if s.ws == nil {
 		return "", errNoDocument
 	}
-	picked, err := defaultExportSaveDialog(s.runtimeCtx(), title, defaultName, []runtime.FileFilter{filter})
+	picked, err := defaultExportSaveDialog(s.runtimeCtx(), title, defaultName, filters)
 	if err != nil {
 		return "", fmt.Errorf("导出文件对话框失败: %w", err)
 	}
 	if picked == "" {
 		return `{"path":""}`, nil
 	}
-	accepted := []string{ext}
-	if ext == ".jpg" {
-		accepted = append(accepted, ".jpeg")
-	}
 	if !containsFold(accepted, filepath.Ext(picked)) {
-		picked += ext
+		picked += fallbackExt
 	}
 	bmp, res, err := s.ws.flattenActive()
 	if err != nil {
@@ -201,6 +417,15 @@ func (s *Service) exportFile(title, defaultName string, filter runtime.FileFilte
 		return "", fmt.Errorf("写入 %s 失败: %w", filepath.Base(picked), err)
 	}
 	return marshalExportPath(picked)
+}
+
+// exportFile is the PNG/JPEG shortcuts' single-format shape of writeExport.
+func (s *Service) exportFile(title, defaultName string, filter runtime.FileFilter, ext string, encode func(*render.Bitmap, int) ([]byte, error)) (string, error) {
+	accepted := []string{ext}
+	if ext == ".jpg" {
+		accepted = append(accepted, ".jpeg")
+	}
+	return s.writeExport(title, defaultName, []runtime.FileFilter{filter}, accepted, ext, encode)
 }
 
 // containsFold reports whether list holds name, case-insensitively.

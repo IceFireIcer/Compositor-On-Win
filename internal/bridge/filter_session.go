@@ -217,7 +217,11 @@ func prepareFilterGrid(kind string, base *render.Bitmap, baseT domain.Transform,
 	}
 	bounds := render.AlphaBounds(base)
 	emptyLayer := bounds[2] == 0
-	fullSize := kind == FilterAddNoise || kind == FilterContentFill
+	// 原版 Filters.swift:619-621：噪点、颗粒、抖动、扫描线、内容感知填充与移除
+	// 背景都在**全尺寸**上预览 —— 在缩小的副本上做，放大后图案会变粗。颗粒是
+	// 图像调整（adjust:Grain），由下面的 isAdjust 分支覆盖。
+	fullSize := kind == FilterAddNoise || kind == FilterDither || kind == FilterScanlines ||
+		kind == FilterContentFill || kind == FilterRemoveBackground
 	if _, isAdjust := adjustmentKind(kind); isAdjust {
 		fullSize = true
 	}

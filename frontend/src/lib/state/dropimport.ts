@@ -42,6 +42,19 @@ const BROWSER_IMAGE_TYPES: readonly string[] = [
   "image/avif",
 ];
 
+/**
+ * 相机 HEIF（Canon/Sony/Fuji 写 .hif 或 .heif）与 .heic：WebView2 解不了，
+ * 只能靠 Wails 报的磁盘路径走 Go 的 libheif。列在这里不是为了解码，而是为了
+ * **不静默丢弃** —— 只带字节、没有路径的 HEIF 会进失败清单，让用户看到文件名
+ * 和原因，而不是什么都没发生。
+ */
+export const CAMERA_HEIF_TYPES: readonly string[] = [
+  "image/heic",
+  "image/heif",
+  "image/heic-sequence",
+  "image/heif-sequence",
+];
+
 /** 一个被拖进来的项：文件或（网页图的）URI。 */
 export interface DropPayload {
   files: readonly File[];
@@ -74,14 +87,22 @@ export function dropName(file: { name?: string }, index: number): string {
   return name === "" ? `拖入的图像 ${index + 1}` : name;
 }
 
-/** 这一批文件里有哪些是浏览器能解码的图像。 */
+/**
+ * 这一批文件里有哪些是图像：浏览器能解码的（栅格化后走上传面），加上相机
+ * HEIF —— 后者栅格化必然失败，但要留在名单里才能把文件名报进失败清单。
+ */
 export function browserImageFiles(files: readonly File[]): File[] {
-  return files.filter((f) => BROWSER_IMAGE_TYPES.includes(f.type.toLowerCase()) || isImageName(f.name));
+  return files.filter(
+    (f) =>
+      BROWSER_IMAGE_TYPES.includes(f.type.toLowerCase()) ||
+      CAMERA_HEIF_TYPES.includes(f.type.toLowerCase()) ||
+      isImageName(f.name),
+  );
 }
 
-/** 扩展名兜底：WebView2 有时给不出 MIME。 */
+/** 扩展名兜底：WebView2 有时给不出 MIME（相机 HEIF 也算图像文件）。 */
 export function isImageName(name: string): boolean {
-  return /\.(png|jpe?g|webp|gif|bmp|avif)$/i.test(name);
+  return /\.(png|jpe?g|webp|gif|bmp|avif|heic|heif|hif)$/i.test(name);
 }
 
 /** 栅格化器：把任意图像字节转成 PNG（浏览器实现见 browserRasterizer）。 */

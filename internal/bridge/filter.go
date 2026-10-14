@@ -35,6 +35,8 @@ const (
 	FilterDither           = "dither"
 	FilterRemoveBackground = "removeBackground"
 	FilterAdjustPrefix     = "adjust:"
+	// 票 60：从 Dither 风格里独立出来的 Scanlines 滤镜（原版 FilterKind.scanlines）。
+	FilterScanlines = "scanlines"
 )
 
 // filterNames maps kinds to their history entry names (undo menu labels).
@@ -51,6 +53,7 @@ var filterNames = map[string]string{
 	FilterInvertMask:       "反相蒙版",
 	FilterContentFill:      "内容感知填充",
 	FilterDither:           "抖动",
+	FilterScanlines:        "扫描线",
 	FilterRemoveBackground: "移除背景",
 }
 
@@ -84,6 +87,8 @@ type filterParams struct {
 	Distortion float64 `json:"distortion"` // lens correction, −100–100
 
 	Dither render.DitherSettings `json:"dither"` // dither filter
+	// 票 60：独立 Scanlines 滤镜的参数（render.ScanlinesSettings）。
+	Scanlines render.ScanlinesSettings `json:"scanlines"`
 	// Remove Background (SubjectRemoval): Basic keeps the raw model mask;
 	// Advanced runs the refine chain.
 	BackgroundQuality string                   `json:"backgroundQuality"`
@@ -140,6 +145,8 @@ func (p *filterParams) normalized(kind string) filterParams {
 		r.Distortion = clampF(p.Distortion, -100, 100, 0)
 	case FilterCameraRaw:
 		r.CameraRaw = p.CameraRaw.Normalized()
+	case FilterScanlines:
+		r.Scanlines = p.Scanlines.Normalized()
 	}
 	return r
 }
@@ -374,6 +381,8 @@ func runFilterJob(kind string, work *render.Bitmap, p *filterParams, scale float
 		}
 	case FilterDither:
 		render.ApplyDitherFilter(work, p.Dither)
+	case FilterScanlines:
+		render.ApplyScanlinesFilter(work, p.Scanlines)
 	case FilterRemoveBackground:
 		if subjectRaw == nil {
 			return fmt.Errorf("移除背景需要分割结果")

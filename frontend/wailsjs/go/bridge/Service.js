@@ -174,6 +174,14 @@ export function EndStroke() {
   return window['go']['bridge']['Service']['EndStroke']();
 }
 
+export function ExportAs(arg1) {
+  return window['go']['bridge']['Service']['ExportAs'](arg1);
+}
+
+export function ExportAsPreview(arg1) {
+  return window['go']['bridge']['Service']['ExportAsPreview'](arg1);
+}
+
 export function ExportJPEG(arg1, arg2, arg3) {
   return window['go']['bridge']['Service']['ExportJPEG'](arg1, arg2, arg3);
 }

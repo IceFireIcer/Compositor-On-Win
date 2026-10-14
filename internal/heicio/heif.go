@@ -14,6 +14,7 @@ package heicio
 import "C"
 
 import (
+	"errors"
 	"fmt"
 	"runtime"
 	"unsafe"
@@ -25,13 +26,57 @@ import (
 // ErrUnreadable mirrors the importer's refusal for corrupt/unexpected files.
 var ErrUnreadable = fmt.Errorf("无法读取该图像：文件可能已损坏或不可用")
 
+// ErrUnsupportedCodec reports a HEIF/HEIC container whose compression format
+// has no decoder in this build (AV1, JPEG 2000, VVC, …). The file itself may
+// be perfectly fine, so it must not read as "damaged" — and it must never
+// come back as an empty image or as some other format.
+var ErrUnsupportedCodec = errors.New("无法读取该图像：该 HEIF/HEIC 使用了本机不支持的编码（如 AV1、JPEG 2000 或 VVC），libheif 缺少对应的解码器")
+
+// libheif's error enum values (heif_error.h), mirrored as plain ints so the
+// mapping below is a pure function the tests can drive without a real
+// AV1/JPEG 2000 file.
+const (
+	heifCodeUnsupportedFiletype         = int(C.heif_error_Unsupported_filetype)
+	heifCodeUnsupportedFeature          = int(C.heif_error_Unsupported_feature)
+	heifCodeInvalidInput                = int(C.heif_error_Invalid_input)
+	heifCodeDecoderPluginError          = int(C.heif_error_Decoder_plugin_error)
+	heifCodePluginLoading               = int(C.heif_error_Plugin_loading_error)
+	heifSubUnsupportedCodec             = int(C.heif_suberror_Unsupported_codec)
+	heifSubUnsupportedImageType         = int(C.heif_suberror_Unsupported_image_type)
+	heifSubUnsupportedEssentialProperty = int(C.heif_suberror_Unsupported_essential_property)
+	heifSubNoMatchingDecoderInstalled   = int(C.heif_suberror_No_matching_decoder_installed)
+	heifSubNoFtypBox                    = int(C.heif_suberror_No_ftyp_box)
+)
+
+// heifError turns a libheif result into the user-facing error, keeping the
+// unsupported-codec refusal distinct from the corrupt-file one.
 func heifError(err C.struct_heif_error) error {
 	if err.code == C.heif_error_Ok {
 		return nil
 	}
-	message := C.GoString(err.message)
+	return classifyHEIFError(int(err.code), int(err.subcode), C.GoString(err.message))
+}
+
+// classifyHEIFError maps one libheif (code, subcode) pair to the importer's
+// refusal. Only "the image needs a decoder this build does not have" reads as
+// ErrUnsupportedCodec (heif_error.h: Unsupported_feature with the codec/image
+// type/essential-property suberrors, and a decoder plugin that would not
+// load). Everything else — including Unsupported_filetype, which libheif
+// documents as "input file type is not supported" rather than a missing
+// codec, so a JPEG renamed .heic lands here — stays ErrUnreadable.
+// libheif says why: its message is appended to either.
+func classifyHEIFError(code, subcode int, message string) error {
 	if message == "" {
-		message = "libheif 错误"
+		message = "libheif 未给出说明"
+	}
+	switch code {
+	case heifCodePluginLoading:
+		return fmt.Errorf("%w（libheif：%s）", ErrUnsupportedCodec, message)
+	case heifCodeUnsupportedFeature:
+		switch subcode {
+		case heifSubUnsupportedCodec, heifSubUnsupportedImageType, heifSubUnsupportedEssentialProperty:
+			return fmt.Errorf("%w（libheif：%s）", ErrUnsupportedCodec, message)
+		}
 	}
 	return fmt.Errorf("%w: %s", ErrUnreadable, message)
 }

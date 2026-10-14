@@ -5,10 +5,12 @@ import { clearSelection, currentSelection, selectionFromMask } from "./selection
 import { workspace } from "./workspace";
 import {
   ADJUSTMENT_LAYER_KINDS,
+  FILTER_KINDS,
   armedEyedropper,
   beginFilter,
   cancelFilter,
   commitFilter,
+  defaultFilterSettings,
   filterSession,
   updateFilterSettings,
   autoWhiteBalance,
@@ -424,5 +426,34 @@ describe("filter dialog session through the Wails boundary", () => {
     updateFilterSettings({ tonalAmount: 80 });
     await vi.advanceTimersByTimeAsync(60);
     expect(JSON.parse(bridge.UpdateFilterPreview.mock.calls[0][0]).tonalAmount).toBe(80);
+  });
+});
+
+describe("scanlines filter (票 60)", () => {
+  it("lists Scanlines right after Dither in the Filter menu", () => {
+    const ids = FILTER_KINDS.map((kind) => kind.id);
+    expect(ids.indexOf("scanlines")).toBe(ids.indexOf("dither") + 1);
+    expect(FILTER_KINDS.find((kind) => kind.id === "scanlines")?.label).toBe("扫描线…");
+  });
+
+  it("starts at Scanlines.swift's ScanlinesSettings() defaults", () => {
+    // 与 internal/render/scanlines.go 的 DefaultScanlinesSettings() 一一对应；
+    // dark/light 是 0–1 直出 sRGB（对话框里显示成 0–255）。
+    expect(defaultFilterSettings("scanlines").scanlines).toEqual({
+      lineSpacing: 4, thickness: 70, glow: 0, dots: 0, wobble: 0, displace: 0,
+      smoothness: 50, threshold: 0, split: 0, density: 0, contrast: 0,
+      blackLevel: 0, colors: 0, dark: [0, 0, 0], light: [1, 1, 1],
+    });
+  });
+
+  it("carries the scanlines parameters through the existing preview channel", async () => {
+    await beginFilter("scanlines", "扫描线", true);
+    expect(JSON.parse(bridge.BeginFilterEdit.mock.calls[0][2]).scanlines.lineSpacing).toBe(4);
+
+    const settings = defaultFilterSettings("scanlines").scanlines;
+    updateFilterSettings({ scanlines: { ...settings, displace: 40, split: 3, colors: 1 } });
+    await vi.advanceTimersByTimeAsync(60);
+    const preview = JSON.parse(bridge.UpdateFilterPreview.mock.calls[0][0]);
+    expect(preview.scanlines).toMatchObject({ displace: 40, split: 3, colors: 1, smoothness: 50 });
   });
 });

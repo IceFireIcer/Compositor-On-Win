@@ -89,6 +89,10 @@ export function EndRetouchStroke(arg1:string,arg2:boolean):Promise<string>;
 
 export function EndStroke():Promise<string>;
 
+export function ExportAs(arg1:string):Promise<string>;
+
+export function ExportAsPreview(arg1:string):Promise<string>;
+
 export function ExportJPEG(arg1:number,arg2:string,arg3:string):Promise<string>;
 
 export function ExportJPEGPreview(arg1:number,arg2:string):Promise<string>;

@@ -6,6 +6,19 @@ WandPixels 九个内核），**来源提交 `865e4675d09de64c3e4ad90aeacee899754
 （docs 基线，reference 自入库后未改动）**。reference 区保持只读；本目录的
 .c/.h 拷贝件与源文件逐字节一致（可用 diff 校验），AGENTS.md 不变量 #4。
 
+## 票 60 新增：ScanlinesPixels.{c,h}
+
+1.4.8 把 Scanlines 从 Dither 风格拆成独立滤镜，新增了 `ScanlinesParams` 与
+`scanlines_apply`；本目录既有的 `DitherPixels.{c,h}`（来源提交 `865e467`，早于该拆分）
+没有这些符号，而票面禁止改动那份拷贝的数值路径。因此扫描线段**另存一份**：
+**来源提交 `e8c9e29701528413cc0e608d61187c1c61790add`（reference/Swift 子模块当前 pin，
+v1.5.1-8-ge8c9e29）** —— 与上面九个内核的 `865e467` 不同：扫描线段来自 1.4.8 拆分**之后**的
+源码，两份拷贝因此各自注明自己的来源提交。
+`ScanlinesPixels.{c,h}` 逐字拷自当前 `reference/Swift/Compositor/Rendering/
+DitherPixels.{c,h}` 的 `clamp01` / `in_bands` / `adjust_tone` / `write_pixel` /
+`draw_lines` / `scanlines_apply`，只多了文件头的来源说明。`driver_main.c` 新增
+`scanlines` 命令分支驱动它；既有 `dither` 分支与全部既有参考图逐字节未动。
+
 ## 与源文件的差异（仅在拷贝件旁，不改源）
 
 - `dispatch/dispatch.h` + `golden_dispatch.c`：Windows 最小 GCD 垫片。

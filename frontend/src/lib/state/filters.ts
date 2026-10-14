@@ -6,6 +6,7 @@ import {
 } from "./document";
 import { workspace } from "./workspace";
 import { currentSelection, selectionPayload } from "./selection";
+import { lastFilter, recordCommittedFilter, repeatAllowed } from "./lastFilter";
 
 /** The active selection as the bridge's base64 payload ("" = none). */
 function activeSelectionJSON(): string {
@@ -43,6 +44,7 @@ export const FILTER_KINDS: readonly FilterKindDef[] = [
   { id: "lensCorrection", label: "镜头校正…" },
   { id: "cameraRaw", label: "Camera Raw 滤镜…" },
   { id: "dither", label: "抖动…" },
+  { id: "scanlines", label: "扫描线…" },
   { id: "removeBackground", label: "移除背景…" },
 ];
 
@@ -98,6 +100,7 @@ export interface FilterSettings {
   tonalHighlights: number;
   distortion: number;
   dither: Record<string, unknown>;
+  scanlines: Record<string, unknown>;
   cameraRaw: Record<string, unknown>;
   /** Camera Raw panel's per-group eyes (nil-equivalent = all show). */
   backgroundQuality: string;
@@ -144,6 +147,13 @@ export function defaultFilterSettings(kind: string): FilterSettings {
       diffusion: 100, density: 0, contrast: 0, colors: 0,
       dark: [0, 0, 0], light: [255, 255, 255], lightOnDark: true,
       characters: " .:-=+*#%@",
+    },
+    // Scanlines.swift's ScanlinesSettings(): dark/light are 0–1 straight
+    // sRGB; the dialog shows them as 0–255.
+    scanlines: {
+      lineSpacing: 4, thickness: 70, glow: 0, dots: 0, wobble: 0, displace: 0,
+      smoothness: 50, threshold: 0, split: 0, density: 0, contrast: 0,
+      blackLevel: 0, colors: 0, dark: [0, 0, 0], light: [1, 1, 1],
     },
     cameraRaw: {},
     cameraRawShows: {},
@@ -237,15 +247,20 @@ function replaceSession(session: FilterSession, patch: Partial<FilterSession>): 
   if (get(filterSession)?.seed === next.seed) filterSession.set(next);
 }
 
-function applySessionSnapshot(session: FilterSession, raw: string): void {
-  if (get(workspace).activeId === session.tabId && get(document).docId === session.tabId) {
+/** 快照落地：只认发起时那个标签/文档，且不倒退（对话框会话与票 58 的重做共用）。 */
+function applySnapshotForTab(tabId: string | undefined, raw: string): void {
+  if (get(workspace).activeId === tabId && get(document).docId === tabId) {
     const before = get(document);
     const reply = JSON.parse(raw) as { rev: number };
     if (reply.rev < before.rev) return;
-    applyDocumentSnapshot(raw, session.tabId);
+    applyDocumentSnapshot(raw, tabId);
     // Worker completion can precede the RPC reply captured before it landed.
     if (reply.rev === before.rev) document.update((d) => ({ ...d, filterRev: Math.max(d.filterRev, before.filterRev) }));
   }
+}
+
+function applySessionSnapshot(session: FilterSession, raw: string): void {
+  applySnapshotForTab(session.tabId, raw);
 }
 
 function closeSession(session: FilterSession): void {
@@ -388,6 +403,9 @@ export async function commitFilter(): Promise<void> {
     // the bridge decides whether this bakes pixels or edits adjustment metadata.
     const raw = await BridgeService.CommitFilter(settingsJSON(session.settings, session));
     applySessionSnapshot(session, raw);
+    // 票 58：只有成功提交、且属于 Filter 菜单的滤镜才成为"上一个滤镜"
+    // （内容感知填充与图像调整被 recordCommittedFilter 挡掉）。
+    recordCommittedFilter(session);
     closeSession(session);
   } catch (err) {
     console.warn("滤镜提交失败", err);
@@ -420,6 +438,55 @@ export async function cancelFilter(): Promise<void> {
       operation: null,
       error: `取消失败：${err instanceof Error ? err.message : String(err)}`,
     });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Filter ▸ Last Filter（票 58 / U05）
+// ---------------------------------------------------------------------------
+
+/** 失败清理：把 Go 侧那个没有面板的会话取消掉（原版 repeatLastFilter 结尾的 cancelFilter）。 */
+async function cancelRepeatSession(tabId: string, seed: number): Promise<void> {
+  try {
+    applySnapshotForTab(tabId, await BridgeService.CancelFilterSession(tabId, seed));
+  } catch (err) {
+    console.warn("清理重做会话失败", err);
+  }
+}
+
+/**
+ * Filter ▸ Last Filter（Ctrl+Alt+F）：把最近一次成功提交的滤镜按原参数再跑一遍
+ * ——原版 Filters.swift:737-750 的 repeatLastFilter。参数原样带上（包括渐进模糊
+ * 定位这类"位置"参数），**不弹面板、不渲染预览**；每次重做是一次独立的提交，
+ * 因此各自可撤销，输出与手动用同样参数一致（走的是同一条 Go 提交路径）。
+ *
+ * 这里刻意不复用 beginFilter/commitFilter：那两个会写 filterSession store，而
+ * App 是按这个 store 挂 FilterDialog/CameraRawPanel 的，重做必须不弹面板。
+ * 失败时取消 Go 会话，绝不留下悬挂预览。
+ */
+export async function repeatLastFilter(): Promise<boolean> {
+  const record = get(lastFilter);
+  const doc = get(document);
+  const tabId = get(workspace).activeId;
+  const hasLayer = !!doc.docId && doc.docId === tabId && !!doc.activeLayerID;
+  if (!repeatAllowed(record, hasLayer, get(filterSession) !== null) || !record || !doc.activeLayerID) {
+    return false;
+  }
+  const seed = nextSeed = (nextSeed + 1) >>> 0;
+  // 与对话框同一条 wire 形状（settingsJSON 会去掉两项预览专用参数、补上
+  // filterSession 归属），所以 Go 侧认得出这个没有 UI 的会话。
+  const settings = settingsJSON(record.settings, { tabId, seed, previewRequest: 1 });
+  try {
+    applySnapshotForTab(
+      tabId,
+      await BridgeService.BeginFilterEdit(record.kind, doc.activeLayerID, settings, seed, activeSelectionJSON()),
+    );
+    applySnapshotForTab(tabId, await BridgeService.CommitFilter(settings));
+    return true;
+  } catch (err) {
+    console.warn("重做上一个滤镜失败", err);
+    await cancelRepeatSession(tabId, seed);
+    return false;
   }
 }
 

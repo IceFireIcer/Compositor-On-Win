@@ -125,6 +125,33 @@ func pngEXIFOrientation(data []byte) int {
 	return 1
 }
 
+// webpEXIFOrientation walks the RIFF chunk list for the EXIF chunk (the
+// WebP container spec puts camera and phone metadata there). Its payload is
+// a TIFF directory, either bare or behind an "Exif\x00\x00" prefix — the
+// two shapes writers emit.
+func webpEXIFOrientation(data []byte) int {
+	if len(data) < 12 || !bytesEqual(data[:4], []byte("RIFF")) || !bytesEqual(data[8:12], []byte("WEBP")) {
+		return 1
+	}
+	pos := 12
+	for pos+8 <= len(data) {
+		typ := string(data[pos : pos+4])
+		length := int(binary.LittleEndian.Uint32(data[pos+4 : pos+8]))
+		if length < 0 || pos+8+length > len(data) {
+			return 1
+		}
+		if typ == "EXIF" {
+			payload := data[pos+8 : pos+8+length]
+			if len(payload) >= 6 && string(payload[:6]) == "Exif\x00\x00" {
+				payload = payload[6:]
+			}
+			return tiffOrientation(payload)
+		}
+		pos += 8 + length + length%2 // RIFF 块按偶数字节对齐
+	}
+	return 1
+}
+
 // TIFFOrientation reads IFD0's orientation tag from a TIFF/EXIF payload
 // (shared with the HEIC decode path, whose metadata block wraps the same
 // layout after a 4-byte header offset).
