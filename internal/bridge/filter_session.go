@@ -699,8 +699,11 @@ func (s *Service) CommitFilter(settingsJSON string) (string, error) {
 	docChanged := l.Transform != newT
 	if !pixelsChanged && !docChanged {
 		sess.filter = nil
-		sess.rev++             // closing a preview is observable even when pixels are unchanged
-		return sess.envelope() // true no-op: no entry, redo stack intact
+		sess.rev++ // closing a preview is observable even when pixels are unchanged
+		// A true no-op: no entry, redo stack intact. Say so, because the dialog
+		// must not turn an identity filter into "Last Filter" (upstream cancels
+		// before setting lastFilter, Filters.swift:855-866).
+		return sess.commitEnvelope(false)
 	}
 	beforeRasters := map[string]*render.Bitmap{f.assetKey: oldBitmap}
 	sess.hist.Begin(name, *sess.doc, sess.doc.ActiveLayerID)
@@ -716,7 +719,33 @@ func (s *Service) CommitFilter(settingsJSON string) (string, error) {
 	sess.filter = nil
 	sess.rev++
 	s.ws.setTabDirtyLocked(tabID, true)
-	return sess.envelope()
+	return sess.commitEnvelope(true)
+}
+
+// filterCommitReply is CommitFilter's reply: the usual document envelope plus
+// whether this commit actually changed anything. A filter whose settings are
+// the identity returns no error and pushes no history, and the dialog must not
+// turn that into "Last Filter" — upstream cancels before setting lastFilter
+// (Filters.swift:855-866). The embedded envelope marshals inline, so the reply
+// keeps the {rev, filterRev, doc} shape every other document endpoint returns.
+type filterCommitReply struct {
+	documentEnvelope
+	Applied bool `json:"applied"`
+}
+
+func (sess *session) commitEnvelope(applied bool) (string, error) {
+	filterRev := 0
+	if sess.filter != nil {
+		filterRev = sess.filter.previewRev
+	}
+	b, err := json.Marshal(filterCommitReply{
+		documentEnvelope: documentEnvelope{Rev: sess.rev, FilterRev: filterRev, Doc: sess.doc},
+		Applied:          applied,
+	})
+	if err != nil {
+		return "", fmt.Errorf("无法编码提交回包: %w", err)
+	}
+	return string(b), nil
 }
 
 // commitAdjustmentFilterLocked commits a live adjustment-layer edit. The

@@ -429,6 +429,19 @@ export function updateFilterSettings(patch: Partial<FilterSettings>): void {
   schedulePreview();
 }
 
+/**
+ * CommitFilter 的回包是常规文档信封加一个 `applied`：这次提交是否真的进了历史。
+ * 解析不出来就按「应用了」处理 —— 退回旧行为（多记一次上次滤镜），比漏记安全。
+ */
+function commitApplied(raw: string): boolean {
+  try {
+    const parsed = JSON.parse(raw) as { applied?: boolean };
+    return parsed.applied !== false;
+  } catch {
+    return true;
+  }
+}
+
 /** OK: full-size commit (dialog) — the Go session renders scale=1, trims,
  * journals pixels and records history. */
 export async function commitFilter(): Promise<void> {
@@ -441,10 +454,12 @@ export async function commitFilter(): Promise<void> {
     // Every dialog owns a Go session. Commit its frozen source/selection;
     // the bridge decides whether this bakes pixels or edits adjustment metadata.
     const raw = await BridgeService.CommitFilter(settingsJSON(session.settings, session));
+    // 票 58：只有**真的改动过**的提交才算"上一个滤镜"。恒等设置的滤镜不报错也不进
+    // 历史（Go 的 applied=false），上游是在设 lastFilter **之前**就取消
+    // （Filters.swift:855-866），所以晕影数量 0 不该变成 Last Filter。
+    const applied = commitApplied(raw);
     applySessionSnapshot(session, raw);
-    // 票 58：只有成功提交、且属于 Filter 菜单的滤镜才成为"上一个滤镜"
-    // （内容感知填充与图像调整被 recordCommittedFilter 挡掉）。
-    recordCommittedFilter(session);
+    if (applied) recordCommittedFilter(session);
     closeSession(session);
   } catch (err) {
     console.warn("滤镜提交失败", err);

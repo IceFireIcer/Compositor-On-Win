@@ -105,8 +105,20 @@
     }
   }
 
-  // 校样是视图变换（票 72）：第一次打开时向后端要查找表，没有配置就留在菜单
-  // 报错，不发明一张表。两个开关共用同一份表。
+  // 校样是视图变换（票 72）：查找表按**当前**配置生成，没有配置就留在菜单报错，
+  // 不发明一张表。两个开关共用同一份表。
+  async function loadProofLookups(): Promise<boolean> {
+    try {
+      proofLookups.set(JSON.parse(await CMYKProofLookups()));
+      proofError.set("");
+      return true;
+    } catch (err) {
+      proofLookups.set(null);
+      proofError.set(err instanceof Error ? err.message : String(err));
+      return false;
+    }
+  }
+
   async function toggleProof(which: "proof" | "gamut"): Promise<void> {
     const turningOff = which === "proof" ? $proofColors : $gamutWarning;
     if (turningOff) {
@@ -114,17 +126,24 @@
       else gamutWarning.set(false);
       return;
     }
-    if (!$proofLookups) {
-      try {
-        proofLookups.set(JSON.parse(await CMYKProofLookups()));
-        proofError.set("");
-      } catch (err) {
-        proofError.set(err instanceof Error ? err.message : String(err));
-        return;
-      }
-    }
+    if (!$proofLookups && !(await loadProofLookups())) return;
     if (which === "proof") proofColors.set(true);
     else gamutWarning.set(true);
+  }
+
+  /**
+   * 配置变了就得重新取表。只把表清空是不够的：开关还亮着，而画布的 setProof 在
+   * lookup 为 null 时提前返回，会继续用**上一张**3D 纹理 —— 菜单勾了新配置、画布
+   * 却还按旧的校样。取不到新表就把两个开关一起关掉，宁可直通显示。
+   */
+  async function reproof(): Promise<void> {
+    const wasOn = $proofColors || $gamutWarning;
+    proofLookups.set(null);
+    if (!wasOn) return;
+    if (!(await loadProofLookups())) {
+      proofColors.set(false);
+      gamutWarning.set(false);
+    }
   }
   // View 菜单的五个开关状态（勾）+"清除参考线"的可用性。动作与快捷键共用
   // toggleView，所以这里的勾永远反映真实状态，不会和画布/快捷键分叉。
@@ -712,10 +731,9 @@
           disabled: dialogOpen,
           run: () => {
             close();
-            void SetCMYKProfile(profile.name).then(() => {
-              proofLookups.set(null);
-              void refreshProfiles();
-            });
+            void SetCMYKProfile(profile.name)
+              .then(() => reproof())
+              .then(() => refreshProfiles());
           },
         })),
         {
@@ -742,10 +760,7 @@
                 proofError.set("请从桌面版选择一个 ICC 文件");
                 return;
               }
-              void LoadCMYKProfile(path).then(() => {
-                proofError.set("");
-                proofLookups.set(null);
-              }, (err: unknown) => {
+              void LoadCMYKProfile(path).then(() => reproof(), (err: unknown) => {
                 proofError.set(err instanceof Error ? err.message : String(err));
               });
             };

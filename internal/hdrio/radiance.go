@@ -235,7 +235,7 @@ func radianceScanline(r *byteReader, width int, out []byte, prev *[4]byte, haveP
 	return nil
 }
 
-// radianceFlatScanline reads a scanline of plain RGBE pixels, honouring the
+// radianceFlatScanline reads a scanline of plain RGBE pixels, honoring the
 // original encoding's repeat marker: a pixel of (1, 1, 1, n) stands for the
 // previous pixel n more times (Radiance's own oldreadcolrs). The previous
 // pixel can be the last one of the scanline before.

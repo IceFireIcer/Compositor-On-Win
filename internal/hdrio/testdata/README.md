@@ -56,7 +56,7 @@ The raw input was written by this program, run once with Node:
 
 ## What the tests assume about ffmpeg
 
-Two ffmpeg behaviours are load-bearing, and both were established by dumping
+Two ffmpeg behaviors are load-bearing, and both were established by dumping
 bytes rather than by trusting documentation:
 
 1. **Its EXR encoder stores the frame's linear floats verbatim.** With

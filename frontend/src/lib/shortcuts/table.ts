@@ -9,9 +9,8 @@
  *   - 修饰键位：Command/Primary=1、Option/Alt=2、Control=4、Shift=8。
  *
  * 分组：49 条 Menus（46 条旧表 + 票 54 的 Search Commands + 票 58 的 Last Filter +
- * 票 59 的 Export As）、59 条
- * Canvas & Layers（58 条旧表 + 票 55 的 Toggle Fullscreen）、9 条
- * Text Editing（共 117 条）。
+ * 票 59 的 Export As）、59 条 Canvas & Layers（58 条旧表 + 票 55 的 Toggle
+ * Fullscreen）、9 条 Text Editing（共 117 条）。
  * 表驱动测试 `table.test.ts` 里的期望是照着 Swift 源码手工誊写的，
  * 不从这里生成——本表抄错一条，测试就会失败。
  */

@@ -45,7 +45,13 @@ const (
 	heifSubUnsupportedImageType         = int(C.heif_suberror_Unsupported_image_type)
 	heifSubUnsupportedEssentialProperty = int(C.heif_suberror_Unsupported_essential_property)
 	heifSubNoMatchingDecoderInstalled   = int(C.heif_suberror_No_matching_decoder_installed)
-	heifSubNoFtypBox                    = int(C.heif_suberror_No_ftyp_box)
+	// 6000/6001/6002 是**插件安装**出了问题（某个插件文件加载不了、插件目录读不
+	// 了），不是「这个文件的编码没有解码器」。它们不该被说成「不支持的编码」——
+	// 那是把应用自己的安装故障推给用户的文件。
+	heifSubPluginLoadingError  = int(C.heif_suberror_Plugin_loading_error)
+	heifSubPluginIsNotLoaded   = int(C.heif_suberror_Plugin_is_not_loaded)
+	heifSubCannotReadPluginDir = int(C.heif_suberror_Cannot_read_plugin_directory)
+	heifSubNoFtypBox           = int(C.heif_suberror_No_ftyp_box)
 )
 
 // heifError turns a libheif result into the user-facing error, keeping the
@@ -60,18 +66,23 @@ func heifError(err C.struct_heif_error) error {
 // classifyHEIFError maps one libheif (code, subcode) pair to the importer's
 // refusal. Only "the image needs a decoder this build does not have" reads as
 // ErrUnsupportedCodec (heif_error.h: Unsupported_feature with the codec/image
-// type/essential-property suberrors, and a decoder plugin that would not
-// load). Everything else — including Unsupported_filetype, which libheif
-// documents as "input file type is not supported" rather than a missing
-// codec, so a JPEG renamed .heic lands here — stays ErrUnreadable.
-// libheif says why: its message is appended to either.
+// type/essential-property suberrors, and Plugin_loading_error with
+// No_matching_decoder_installed). Everything else stays ErrUnreadable —
+// including Unsupported_filetype, which libheif documents as "input file type
+// is not supported" rather than a missing codec (a JPEG renamed .heic lands
+// there), and the other plugin suberrors, which mean this installation's
+// plugin directory is broken rather than the file being unreadable. libheif
+// says why: its message is appended to either.
 func classifyHEIFError(code, subcode int, message string) error {
 	if message == "" {
 		message = "libheif 未给出说明"
 	}
 	switch code {
 	case heifCodePluginLoading:
-		return fmt.Errorf("%w（libheif：%s）", ErrUnsupportedCodec, message)
+		// 6003 才是「没有匹配的解码器」；6000/6001/6002 是插件装坏了或目录读不了。
+		if subcode == heifSubNoMatchingDecoderInstalled {
+			return fmt.Errorf("%w（libheif：%s）", ErrUnsupportedCodec, message)
+		}
 	case heifCodeUnsupportedFeature:
 		switch subcode {
 		case heifSubUnsupportedCodec, heifSubUnsupportedImageType, heifSubUnsupportedEssentialProperty:

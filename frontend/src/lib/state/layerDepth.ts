@@ -16,9 +16,19 @@ const EMPTY: LayerDepthState = { labels: {}, activeLabel: "", canConvert: false 
 
 export const layerDepth = writable<LayerDepthState>(EMPTY);
 
+let layerDepthSeq = 0;
+
+/**
+ * 位深查询挂在**每次快照**上（document.ts 的 applyDocumentSnapshot），而 RPC 的
+ * 到达顺序不保证 —— 一次笔触、一次图层操作都会各发一次。没有序号守卫时两个重叠
+ * 的回复会乱序落地，菜单和面板就留下过期的标签。与 export.ts:208 的预览守卫同一
+ * 套写法：只有最新一次请求的回复能写 store。
+ */
 export async function refreshLayerDepth(): Promise<void> {
+  const seq = ++layerDepthSeq;
   try {
     const raw = await LayerDepthInfo();
+    if (seq !== layerDepthSeq) return; // 更新的请求已发出：旧回复不得覆盖
     const parsed = JSON.parse(raw) as Partial<LayerDepthState>;
     layerDepth.set({
       labels: parsed.labels ?? {},
@@ -26,6 +36,7 @@ export async function refreshLayerDepth(): Promise<void> {
       canConvert: parsed.canConvert === true,
     });
   } catch {
+    if (seq !== layerDepthSeq) return;
     layerDepth.set(EMPTY);
   }
 }

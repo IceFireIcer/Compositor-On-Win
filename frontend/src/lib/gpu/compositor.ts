@@ -402,6 +402,15 @@ function textureUsage(): number {
     GPU_TEXTURE_USAGE_RENDER_ATTACHMENT;
 }
 
+/**
+ * 着色器该用哪个校样模式。没有查找表就只能直通：把一个非 0 的 mode 放过去，
+ * 着色器会去采样上一次绑定的那张纹理（旧配置的，或者 1×1 占位），于是菜单勾了
+ * 新配置、画布还按旧的校样显示（票 72）。
+ */
+export function proofModeFor(mode: number, lookup: Uint8Array | null, dimension: number): number {
+  return lookup && dimension >= 2 ? mode : 0;
+}
+
 export class WebGpuCompositor {
   private statusValue: CompositorStatus;
   private readonly context: GpuCanvasContextLike | null;
@@ -505,11 +514,12 @@ export class WebGpuCompositor {
   }
 
   /**
-   * 校样是显示变换（票 72）。mode 0 直通，1 用查找表替换颜色，2 同时把
-   * 色域外像素标成洋红。lookup 是 33³ 的 RGBA float32，小端。关闭时不传表。
+   * 校样是显示变换（票 72）。mode 0 直通，非 0 时按查找表替换颜色；标灰是查找表
+   * 自己带的内容（`marked` 表把色域外像素写成灰 0.5），着色器不再另加洋红。
+   * lookup 是 33³ 的 RGBA float32，小端。关闭时不传表。
    */
   setProof(mode: number, lookup: Uint8Array | null, dimension: number): void {
-    this.proofMode = mode;
+    this.proofMode = proofModeFor(mode, lookup, dimension);
     if (!this.device || !lookup || dimension < 2) return;
     this.proofTexture?.destroy?.();
     this.proofTexture = this.device.createTexture({
@@ -539,6 +549,10 @@ export class WebGpuCompositor {
     this.uniformBuffer?.destroy?.();
     this.uniformBuffer = null;
     this.uniformCapacity = 0;
+    this.proofTexture?.destroy?.();
+    this.proofTexture = null;
+    this.proofBuffer?.destroy?.();
+    this.proofBuffer = null;
     this.device?.destroy?.();
   }
 
@@ -964,7 +978,9 @@ export class WebGpuCompositor {
       }],
     });
     present.setPipeline(this.presentPipeline);
-    if (this.proofBuffer) this.device!.queue.writeBuffer(this.proofBuffer, 0, new Uint32Array([this.proofMode, this.proofMode === 2 ? 1 : 0, 0, 0]));
+    // Only proofMode.x is read (the shader picks its table on the CPU side), so
+    // the rest is padding for the vec4u alignment.
+    if (this.proofBuffer) this.device!.queue.writeBuffer(this.proofBuffer, 0, new Uint32Array([this.proofMode, 0, 0, 0]));
     present.setBindGroup(0, this.device!.createBindGroup({
       layout: this.presentLayout,
       entries: [

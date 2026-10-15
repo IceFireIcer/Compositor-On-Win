@@ -33,9 +33,9 @@ func TestEffectsScaledScalesEveryPresentSize(t *testing.T) {
 	if scaled.OuterGlow == nil || !almostEqual(scaled.OuterGlow.Size, 4) {
 		t.Fatalf("outer glow size = %+v, want 4", scaled.OuterGlow)
 	}
-	// Colours, opacities and the inside flag ride along untouched.
+	// Colors, opacities and the inside flag ride along untouched.
 	if scaled.Stroke.Red != 1 || scaled.Stroke.Opacity != 1 {
-		t.Fatalf("stroke colour/opacity changed: %+v", scaled.Stroke)
+		t.Fatalf("stroke color/opacity changed: %+v", scaled.Stroke)
 	}
 	if scaled.Shadow.Opacity != 0.5 || scaled.OuterGlow.Opacity != 0.75 {
 		t.Fatalf("opacities changed: %+v %+v", scaled.Shadow, scaled.OuterGlow)

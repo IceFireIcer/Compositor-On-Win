@@ -210,7 +210,7 @@ func exportFormatFor(id string) (exportFormat, error) {
 }
 
 // parseExportAsRequest normalizes the wire payload and rejects the requests
-// the encoder cannot honour (unknown format, negative or oversized target).
+// the encoder cannot honor (unknown format, negative or oversized target).
 func parseExportAsRequest(raw string) (exportAsRequest, error) {
 	var req exportAsRequest
 	if err := json.Unmarshal([]byte(raw), &req); err != nil {

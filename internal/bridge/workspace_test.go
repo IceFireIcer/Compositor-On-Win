@@ -246,7 +246,7 @@ func TestWorkspaceNewDocumentFillsBackgroundLayer(t *testing.T) {
 
 func TestWorkspaceNewDocumentRejectsUnknownBackground(t *testing.T) {
 	ws := NewWorkspace()
-	if _, err := ws.NewDocument(16, 16, 72, "grey"); err == nil {
+	if _, err := ws.NewDocument(16, 16, 72, "gray"); err == nil {
 		t.Fatal("非法底色应报错")
 	}
 	if s := ws.Snapshot(); len(s.Tabs) != 0 {

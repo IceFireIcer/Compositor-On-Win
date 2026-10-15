@@ -186,6 +186,11 @@ func blurMargin(kind string, p *filterParams) int {
 		margin = p.Radius*3 + 2
 	case FilterMotion:
 		margin = p.Distance/2 + 2
+	case FilterProgressive:
+		// 票 73：上游 Filters.swift:566 给渐进模糊的余量是最大模糊量的 3σ+2。
+		// 不给余量时阶梯只在图层自己的网格上模糊，图层边缘不在画布边上就会与
+		// 透明混掉、淡出，而不是把边缘像素带过去。
+		margin = math.Max(p.ProgressiveFrom, p.ProgressiveTo)*3 + 2
 	case FilterBloom:
 		margin = p.BloomRadius*3 + 2
 	default:

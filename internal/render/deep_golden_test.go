@@ -124,7 +124,6 @@ func regenerateDeepGoldenFixtures(t *testing.T) {
 		t.Skip("设 GOLDEN_REGENERATE=1 才重写夹具")
 	}
 	dir := "testdata"
-	tmp := t.TempDir()
 	basePath := filepath.Join(dir, "deep_base.raw")
 	paintedPath := filepath.Join(dir, "deep_painted.raw")
 	hdrPath := filepath.Join(dir, "hdr_input.raw")
@@ -138,7 +137,6 @@ func regenerateDeepGoldenFixtures(t *testing.T) {
 	deepGoldenRun(t, append([]string{"hdr_normalize", basePath, filepath.Join(dir, "hdr_normalize_expected.raw")}, append(wh, hdrPath, filepath.Join(dir, "hdr_scales.raw"))...)...)
 	deepGoldenRun(t, append([]string{"hdr_restore", basePath, filepath.Join(dir, "hdr_restore_expected.raw")}, append(wh, filepath.Join(dir, "hdr_normalize_expected.raw"), filepath.Join(dir, "hdr_scales.raw"))...)...)
 	deepGoldenRun(t, append([]string{"hdr_exposure", basePath, filepath.Join(dir, "hdr_exposure_expected.raw")}, append(wh, hdrPath, "0.25", "0", "1")...)...)
-	_ = tmp
 }
 
 func itoa(v int) string {

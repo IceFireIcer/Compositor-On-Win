@@ -598,13 +598,22 @@ func (w *Workspace) saveTab(id, path string) (int, error) {
 		return 0, fmt.Errorf("DOCUMENT_BUSY: 文档有尚未完成的编辑，完成或取消后再保存")
 	}
 	doc := cloneDocForEdit(sess.doc)
-	bitmaps := map[string]*render.Bitmap{}
-	if err := alignAssetNames(doc, sess.bitmaps); err != nil {
+	// The rename is on the snapshot only (alignAssetNames): align a *copy* of
+	// the library, never the live one. Renaming the live map left sess.doc
+	// naming the old suffix while the map held the new one, so the layer
+	// vanished from the canvas and the next edit failed with
+	// 内存位图库缺少资产 — and a second save could not find the asset at all.
+	snapshot := make(map[string]*render.Bitmap, len(sess.bitmaps))
+	for name, bmp := range sess.bitmaps {
+		snapshot[name] = bmp
+	}
+	if err := alignAssetNames(doc, snapshot); err != nil {
 		w.mu.Unlock()
 		return 0, err
 	}
+	bitmaps := map[string]*render.Bitmap{}
 	for _, name := range referencedAssetNames(doc) {
-		bmp, ok := sess.bitmaps[name]
+		bmp, ok := snapshot[name]
 		if !ok || bmp == nil {
 			w.mu.Unlock()
 			return 0, fmt.Errorf("内存位图库缺少资产 %s，无法保存", name)

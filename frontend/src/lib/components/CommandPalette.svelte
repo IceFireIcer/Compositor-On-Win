@@ -35,8 +35,6 @@
 
   // 面板开着时画布池让位：焦点落在面板空白处（tabindex=-1 的 .palette）时，
   // 普通字母不该穿透去切工具 —— 原版面板是 key window，画布 keyDown 不响应。
-  // 面板开着时画布池让位：焦点落在面板空白处（tabindex=-1 的 .palette）时，
-  // 普通字母不该穿透去切工具 —— 原版面板是 key window，画布 keyDown 不响应。
   $effect(() => {
     if (!$commandPaletteOpen) return;
     return registerCanvasModalGuard(() => get(commandPaletteOpen));

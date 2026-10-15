@@ -52,9 +52,9 @@ func TestBrushStrokeOnHDRKeepsUntouchedHighlights(t *testing.T) {
 	if got := render.HalfToFloat(after.Deep.Pix[far]); got < 3.9 {
 		t.Fatalf("远离笔触的高光 = %g，想要 ~4", got)
 	}
-	// The stroke centre took the brush value (black).
-	centre := (10*64 + 10) * 4
-	if got := render.HalfToFloat(after.Deep.Pix[centre]); got > 0.01 {
+	// The stroke center took the brush value (black).
+	center := (10*64 + 10) * 4
+	if got := render.HalfToFloat(after.Deep.Pix[center]); got > 0.01 {
 		t.Fatalf("笔触中心 = %g，想要 0", got)
 	}
 }

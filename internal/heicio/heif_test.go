@@ -54,6 +54,10 @@ func TestClassifyHEIFErrorSeparatesUnsupportedCodec(t *testing.T) {
 		{"未知图像类型", heifCodeUnsupportedFeature, heifSubUnsupportedImageType, ErrUnsupportedCodec},
 		{"未知必要属性", heifCodeUnsupportedFeature, heifSubUnsupportedEssentialProperty, ErrUnsupportedCodec},
 		{"没有匹配的解码器插件", heifCodePluginLoading, heifSubNoMatchingDecoderInstalled, ErrUnsupportedCodec},
+		// 插件装坏了/目录读不了：是应用自己的安装故障，不是这个文件的编码不受支持。
+		{"插件文件加载失败", heifCodePluginLoading, heifSubPluginLoadingError, ErrUnreadable},
+		{"插件目录读不了", heifCodePluginLoading, heifSubCannotReadPluginDir, ErrUnreadable},
+		{"插件未加载", heifCodePluginLoading, heifSubPluginIsNotLoaded, ErrUnreadable},
 		// libheif 的 Unsupported_filetype 是"这不是本机能读的文件类型"
 		// （heif_error.h:45），不是"缺解码器"——改名成 .heic 的 JPEG 落在这里，
 		// 报"文件可能已损坏或不可用"比报"不支持 AV1/J2K 编码"更诚实。

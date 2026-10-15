@@ -9,59 +9,16 @@ import (
 // does for EXIF orientations 1–8; any other value stays upright. The result
 // swaps the sides for the four transposed orientations (5–8).
 func ApplyOrientation(src *render.Bitmap, orientation int) *render.Bitmap {
-	var out *render.Bitmap
-	switch orientation {
-	case 2: // mirror horizontal
-		out = render.NewBitmap(src.W, src.H)
-		for y := 0; y < src.H; y++ {
-			for x := 0; x < src.W; x++ {
-				copy(out.Pix[(y*out.W+x)*4:(y*out.W+x)*4+4], src.Pix[(y*src.W+src.W-1-x)*4:])
-			}
+	if orientation < 2 || orientation > 8 {
+		return src // 1 and anything unknown: upright
+	}
+	nw, nh := render.OrientedSize(orientation, src.W, src.H)
+	out := render.NewBitmap(nw, nh)
+	for y := 0; y < src.H; y++ {
+		for x := 0; x < src.W; x++ {
+			dx, dy := render.OrientedPoint(orientation, x, y, src.W, src.H)
+			copy(out.Pix[(dy*nw+dx)*4:(dy*nw+dx)*4+4], src.Pix[(y*src.W+x)*4:])
 		}
-	case 3: // rotate 180
-		out = render.NewBitmap(src.W, src.H)
-		for y := 0; y < src.H; y++ {
-			for x := 0; x < src.W; x++ {
-				copy(out.Pix[(y*out.W+x)*4:(y*out.W+x)*4+4], src.Pix[((src.H-1-y)*src.W+src.W-1-x)*4:])
-			}
-		}
-	case 4: // mirror vertical
-		out = render.NewBitmap(src.W, src.H)
-		for y := 0; y < src.H; y++ {
-			copy(out.Pix[y*out.W*4:(y+1)*out.W*4], src.Pix[(src.H-1-y)*src.W*4:])
-		}
-	case 5: // transpose (mirror horizontal + rotate 270 CW)
-		out = render.NewBitmap(src.H, src.W)
-		for y := 0; y < src.H; y++ {
-			for x := 0; x < src.W; x++ {
-				copy(out.Pix[(x*out.W+y)*4:(x*out.W+y)*4+4], src.Pix[(y*src.W+x)*4:])
-			}
-		}
-	case 6: // rotate 90 CW
-		out = render.NewBitmap(src.H, src.W)
-		for y := 0; y < src.H; y++ {
-			for x := 0; x < src.W; x++ {
-				copy(out.Pix[(x*out.W+(src.H-1-y))*4:(x*out.W+(src.H-1-y))*4+4], src.Pix[(y*src.W+x)*4:])
-			}
-		}
-	case 7: // anti-transpose (mirror horizontal + rotate 90 CW)
-		out = render.NewBitmap(src.H, src.W)
-		for y := 0; y < src.H; y++ {
-			for x := 0; x < src.W; x++ {
-				i := ((src.W-1-x)*out.W + (src.H - 1 - y)) * 4
-				copy(out.Pix[i:i+4], src.Pix[(y*src.W+x)*4:(y*src.W+x)*4+4])
-			}
-		}
-	case 8: // rotate 270 CW
-		out = render.NewBitmap(src.H, src.W)
-		for y := 0; y < src.H; y++ {
-			for x := 0; x < src.W; x++ {
-				i := ((src.W-1-x)*out.W + y) * 4
-				copy(out.Pix[i:i+4], src.Pix[(y*src.W+x)*4:(y*src.W+x)*4+4])
-			}
-		}
-	default: // 1 and anything unknown: upright
-		return src
 	}
 	// The 8-bit copy and the deep raster are one layer. Orienting only the
 	// copy would drop a 16-bit import to 8 bits (ADR-0007).
