@@ -12,6 +12,7 @@ import {
   ConfirmPendingOpen,
   FinishImageImport,
   ImportDroppedPaths,
+  ImportDroppedPathsAsNewProject,
   OpenProjectDialog,
   OpenPath as OpenPathRPC,
   PickImageImport,
@@ -266,6 +267,29 @@ export async function importDroppedPaths(
 ): Promise<{ failures: string[]; raws: string[] }> {
   if (paths.length === 0) return { failures: [], raws: [] };
   const reply = JSON.parse(await ImportDroppedPaths(paths)) as {
+    committed?: boolean;
+    doc?: unknown;
+    begin?: ImportBegin;
+  };
+  if (reply.committed) {
+    applySnapshot(await GetSnapshot());
+    await loadDocument();
+    return { failures: [], raws: [] };
+  }
+  if (!reply.begin) return { failures: ["拖入的文件无法读取"], raws: [] };
+  return runImportBatch(reply.begin);
+}
+
+/**
+ * 拖到**标签栏**（票 74）：新开一个项目，画布按第一张图的尺寸、每张图一层。
+ * 落到画布上仍走 importDroppedPaths（导入为图层）。回包形状与它相同，所以失败
+ * 清单与 RAW 排队的走法完全一致。
+ */
+export async function importDroppedPathsAsNewProject(
+  paths: string[],
+): Promise<{ failures: string[]; raws: string[] }> {
+  if (paths.length === 0) return { failures: [], raws: [] };
+  const reply = JSON.parse(await ImportDroppedPathsAsNewProject(paths)) as {
     committed?: boolean;
     doc?: unknown;
     begin?: ImportBegin;

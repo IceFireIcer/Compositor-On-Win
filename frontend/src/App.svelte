@@ -64,15 +64,20 @@
     watchUpdateProgress,
   } from "./lib/state/update";
   import { OnFileDrop } from "../wailsjs/runtime/runtime";
-  import { importDroppedBlobs, routeDroppedPaths } from "./lib/state/workspace";
+  import {
+    importDroppedBlobs,
+    importDroppedPathsAsNewProject,
+    routeDroppedPaths,
+  } from "./lib/state/workspace";
   import {
     DROP_SETTLE_MS,
     LAYER_DRAG_MIME,
     browserImageFiles,
     browserRasterizer,
+    noteWailsPaths,
     prepareDroppedBlobs,
     readDropPayload,
-    shouldImportDomDrop,
+    shouldImportDomDropNow,
   } from "./lib/state/dropimport";
 
   let version = $state("…");
@@ -88,7 +93,7 @@
   // 拖出的临时文件都算），覆盖 TIFF/PSD/HEIC/RAW 这些浏览器解不了的格式；
   // DOM 的 drop 事件拿到的是**字节**（截图位图、网页图），由浏览器栅格化后
   // 走上传面。两者可能同时收到同一次拖放，DOM 侧用去重窗口避开。
-  let wailsPathsAt: number | null = null;
+  // 拖放去重的时间戳由 state/dropimport 统一持有：画布那条路与标签栏那条路共用。
 
   async function reportImportFailures(failures: string[]): Promise<void> {
     if (failures.length === 0) return;
@@ -122,12 +127,42 @@
 
   async function onDroppedPaths(paths: string[]): Promise<void> {
     if (paths.length === 0) return;
-    wailsPathsAt = Date.now();
+    noteWailsPaths(Date.now());
     try {
       const result = await routeDroppedPaths(paths);
       await reportImportFailures(result.failures);
     } catch (err) {
       console.warn("拖放导入失败", err);
+      await reportImportFailures([err instanceof Error ? err.message : String(err)]);
+    }
+  }
+
+  /** 落点是否在标签栏上（票 74）。没有坐标时按旧路径走。 */
+  function isOverTabBar(x: number, y: number): boolean {
+    if (!x && !y) return false;
+    const bar = globalThis.document?.querySelector(".tab-bar");
+    if (!bar) return false;
+    const rect = bar.getBoundingClientRect();
+    return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+  }
+
+  /**
+   * 票 74：图片落在**标签栏**上就新开项目（画布按第一张图的尺寸），落在别处仍是
+   * 导入为图层。Wails 的窗口级回调带落点坐标，用它判断目标；DOM 那条 drop 事件也
+   * 会为同一次拖放触发，所以先记时间戳让 DOM 侧让位。
+   */
+  async function onShellDrop(x: number, y: number, paths: string[]): Promise<void> {
+    if (paths.length === 0) return;
+    if (!isOverTabBar(x, y)) {
+      await onDroppedPaths(paths);
+      return;
+    }
+    noteWailsPaths(Date.now());
+    try {
+      const result = await importDroppedPathsAsNewProject(paths);
+      await reportImportFailures(result.failures);
+    } catch (err) {
+      console.warn("拖到标签栏失败", err);
       await reportImportFailures([err instanceof Error ? err.message : String(err)]);
     }
   }
@@ -147,12 +182,12 @@
     const dt = event.dataTransfer;
     if (!dt) return;
     if (dt.types.includes(LAYER_DRAG_MIME)) return; // 图层跨标签拖拽
-    if (!shouldImportDomDrop(wailsPathsAt, Date.now())) return; // Wails 已按路径导入
+    if (!shouldImportDomDropNow(Date.now())) return; // Wails 已按路径导入
     event.preventDefault();
     // 等 Wails 的窗口级回调落地再判一次：两条路谁先到不确定，路径先到时
     // DOM 这边必须让位，否则同一次拖放会导入两遍。
     await new Promise((resolve) => setTimeout(resolve, DROP_SETTLE_MS));
-    if (!shouldImportDomDrop(wailsPathsAt, Date.now())) return;
+    if (!shouldImportDomDropNow(Date.now())) return;
     const payload = readDropPayload(dt);
     const files = browserImageFiles(payload.files);
     const failures: string[] = [];
@@ -191,6 +226,39 @@
     // The initial empty mirror precedes the asynchronous Go snapshot. On a
     // frontend reload it must not open a welcome sheet over an existing tab.
     if (workspaceLoaded && !hasDocument($workspace)) newCanvasSheet.set(true);
+  });
+
+  /**
+   * 票 74：欢迎屏（没有打开任何文档时）粘贴图像，直接按图像大小建画布。没有文档
+   * 时 Go 的导入路径本来就会按第一张图新建项目（importNewDocument），所以这里只
+   * 需要把剪贴板里的图交给它。
+   *
+   * 文本仍要能粘进输入框：焦点在可编辑元素上时一概不接手。
+   */
+  async function onWelcomePaste(event: ClipboardEvent): Promise<void> {
+    if (hasDocument($workspace)) return;
+    const target = event.target;
+    if (
+      target instanceof HTMLElement &&
+      (target.isContentEditable || target.tagName === "INPUT" || target.tagName === "TEXTAREA")
+    ) {
+      return;
+    }
+    const item = Array.from(event.clipboardData?.items ?? []).find((entry) =>
+      entry.type.startsWith("image/"),
+    );
+    const blob = item?.getAsFile();
+    if (!blob) return;
+    event.preventDefault();
+    await importDroppedBlobs([{ name: "粘贴的图像", blob }]);
+  }
+
+  $effect(() => {
+    const handler = (event: ClipboardEvent) => {
+      void onWelcomePaste(event);
+    };
+    globalThis.addEventListener("paste", handler);
+    return () => globalThis.removeEventListener("paste", handler);
   });
 
   // Keep the document store (layers + render rev) in sync with the active
@@ -245,8 +313,8 @@
     const stopSelectionTabs = watchSelectionTabs();
     const teardownShortcuts = installAppShortcuts();
     // 窗口级文件拖放：Wails 给的是路径（无路径的内存图像走 DOM 的 drop）。
-    OnFileDrop((_x, _y, paths) => {
-      void onDroppedPaths(paths);
+    OnFileDrop((x, y, paths) => {
+      void onShellDrop(x, y, paths);
     }, false);
     // 第二次启动把参数交给既有实例后，Go 会推这个事件（票 49 的单实例协议）。
     const stopShellPaths = watchShellPaths(() => {

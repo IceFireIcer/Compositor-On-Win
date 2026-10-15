@@ -115,6 +115,8 @@ export function ImageSize(arg1:string):Promise<string>;
 
 export function ImportDroppedPaths(arg1:Array<string>):Promise<string>;
 
+export function ImportDroppedPathsAsNewProject(arg1:Array<string>):Promise<string>;
+
 export function LayerHistogram():Promise<string>;
 
 export function LayerOp(arg1:string,arg2:string):Promise<string>;

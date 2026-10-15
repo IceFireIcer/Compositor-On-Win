@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -48,7 +49,6 @@ type Workspace struct {
 	saveMu   sync.Mutex // serialize package writers without blocking document edits
 	tabs     []Document
 	active   string
-	counter  int
 	sessions map[string]*session
 	// saveReservations closes the gap between Save-As preflight and the final
 	// atomic rename: an open or another save cannot claim a path while its
@@ -111,17 +111,51 @@ func (w *Workspace) newDocumentWithWhiteBackground(width, height, resolution int
 	return w.appendDocument(width, height, resolution, doc, bitmaps, 0)
 }
 
+// nextUntitledName is the lowest free "未命名" number among the open tabs. The
+// original takes the lowest free number rather than counting up, so closing
+// the last project gives "Untitled" again (ProjectWorkspace.addTab, upstream
+// issue #231); the first tab is plain "未命名".
+func (w *Workspace) nextUntitledName() string {
+	taken := map[int]bool{}
+	for _, t := range w.tabs {
+		if n, ok := untitledNumber(t.Name); ok {
+			taken[n] = true
+		}
+	}
+	if !taken[1] {
+		return "未命名"
+	}
+	for n := 2; ; n++ {
+		if !taken[n] {
+			return fmt.Sprintf("未命名 %d", n)
+		}
+	}
+}
+
+// untitledNumber reads the N out of "未命名" (1) or "未命名 N" (N ≥ 2); any
+// other name is not an untitled tab and does not hold a number.
+func untitledNumber(name string) (int, bool) {
+	if name == "未命名" {
+		return 1, true
+	}
+	rest, ok := strings.CutPrefix(name, "未命名 ")
+	if !ok {
+		return 0, false
+	}
+	n, err := strconv.Atoi(rest)
+	if err != nil || n < 2 {
+		return 0, false
+	}
+	return n, true
+}
+
 // appendDocument is the path every create entry shares: number the tab, wrap
 // the model in a session and activate it. layerSeq seeds the session's 图层 N
 // counter when the first layer already took a number.
 func (w *Workspace) appendDocument(width, height, resolution int, doc *domain.Document, bitmaps map[string]*render.Bitmap, layerSeq int) (Snapshot, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	w.counter++
-	name := "未命名"
-	if w.counter > 1 {
-		name = fmt.Sprintf("未命名 %d", w.counter)
-	}
+	name := w.nextUntitledName()
 	tab := Document{
 		// 标签 ID **就是**文档 ID。前端靠它把 /render/{id}.png 与当前文档对上
 		// （App.svelte 的 loadDocument(expectedDocId) 与 CanvasSurface 的

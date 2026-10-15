@@ -8,7 +8,9 @@ import {
   isImageName,
   prepareDroppedBlobs,
   readDropPayload,
+  noteWailsPaths,
   shouldImportDomDrop,
+  shouldImportDomDropNow,
 } from "./dropimport";
 
 describe("拖放导入的前端判定（票 48）", () => {
@@ -28,6 +30,16 @@ describe("拖放导入的前端判定（票 48）", () => {
     expect(shouldImportDomDrop(wailsAt, dropAt + DROP_SETTLE_MS)).toBe(false);
     // 路径回调一直没来 → DOM 正常接手。
     expect(shouldImportDomDrop(null, dropAt + DROP_SETTLE_MS)).toBe(true);
+  });
+
+  // 票 74：标签栏那条路（DOM 的 drop）与画布那条路（Wails 窗口级回调）共用同一个
+  // 时间戳，所以两条路不会为同一次拖放各导一遍。
+  it("共享的时间戳让两条路认同一次拖放", () => {
+    // 从没报过路径时 DOM 接手。
+    expect(shouldImportDomDropNow(1000)).toBe(true);
+    noteWailsPaths(2000);
+    expect(shouldImportDomDropNow(2000 + DROP_DEDUP_MS - 1)).toBe(false);
+    expect(shouldImportDomDropNow(2000 + DROP_DEDUP_MS + 1)).toBe(true);
   });
 
   it("从数据转移里读出文件与 uri-list（忽略注释与空行）", () => {

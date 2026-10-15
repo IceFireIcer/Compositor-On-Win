@@ -31,6 +31,22 @@ export function shouldImportDomDrop(wailsPathsAt: number | null, now: number): b
   return now - wailsPathsAt > DROP_DEDUP_MS;
 }
 
+/**
+ * 最近一次 Wails 窗口级回调报路径的时间戳。同一次拖放会同时惊动窗口级回调与 DOM
+ * 的 drop 事件，谁先到不确定，所以两条路（画布的导入、票 74 标签栏的新建项目）
+ * 共读这一个时间戳去重。
+ */
+let lastWailsPathsAt: number | null = null;
+
+export function noteWailsPaths(now: number): void {
+  lastWailsPathsAt = now;
+}
+
+/** DOM 侧此刻该不该接手：等价于 shouldImportDomDrop(最后一次 Wails 路径时间, now)。 */
+export function shouldImportDomDropNow(now: number): boolean {
+  return shouldImportDomDrop(lastWailsPathsAt, now);
+}
+
 /** 浏览器能直接解码的图像类型（其余的交给 Go 的路径导入）。 */
 const BROWSER_IMAGE_TYPES: readonly string[] = [
   "image/png",

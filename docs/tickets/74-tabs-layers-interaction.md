@@ -4,7 +4,45 @@
 
 **Blocked by:** 02 — 编辑器外壳 UI 与新建画布; 20 — 图层操作命令族与图层面板; 48 — 剪贴板与拖放。
 
-**Status:** in-progress（2026-10-15）——勘察完成，尚未动代码。
+**Status:** done（2026-10-15）——三条验收均已落地。
+
+- [x] 欢迎屏粘贴图像直接按图像大小建画布；文本仍可粘入当前输入框。
+- [x] 图片落在标签栏任意位置新开项目；拖到现有画布仍是图层导入；新项目从图层建立时画布自动适配。
+- [x] 关闭最后一个标签后欢迎页保持稳定，无故增加 Untitled 序号；多标签拖放与撤销有回归用例。
+
+## 实现
+
+1. **欢迎屏粘贴**（`App.svelte` 的 `onWelcomePaste`）：没有打开任何文档时，把剪贴板里的图
+   交给既有的 blob 导入路（`importDroppedBlobs`）——没有文档时 Go 的 `commitImportedLayers`
+   本来就走 `importNewDocument`，按第一张图建项目。焦点在 `input`/`textarea`/可编辑元素上时
+   一概不接手，文本照常粘进输入框。
+2. **标签栏拖放**：新增桥接入口 `ImportDroppedPathsAsNewProject`（与 `ImportDroppedPaths`
+   同形的两种回包），前端 `importDroppedPathsAsNewProject` 与它对接。`TabStrip` 整条栏
+   （含空白处）是拖放目标；桌面端同一次拖放还会惊动 Wails 的窗口级回调，所以 `OnFileDrop`
+   现在用回调带的**落点坐标**判断是否落在标签栏上，落在别处仍走原来的「导入为图层」。
+   两条路共用一个去重时间戳（`dropimport.ts` 的 `noteWailsPaths`/`shouldImportDomDropNow`），
+   否则同一次拖放会导两遍。
+3. **Untitled 序号**：新标签取**最小的空闲**序号，而不是一路递增（原版 `ProjectWorkspace.addTab`，
+   上游 issue #231）。关掉中间那个标签后下一个补它的号；关掉最后一个又拿到「未命名」。
+   两处命名（`appendDocument` 与 `importNewDocument`）共用一个 `nextUntitledName`。
+
+## 验证
+
+| 用例 | 覆盖 |
+| --- | --- |
+| `internal/bridge` `TestDroppingImagesOnTheTabBarOpensANewProject` | 画布按第一张图的尺寸、每张图一层、原文档不受影响 |
+| `internal/bridge` `TestDroppingOnTheTabBarRefusesAnEmptyBatch` | 空批次报错 |
+| `internal/bridge` `TestUntitledNumbersReuseTheLowestFreeSlot` | 上游 `untitledNumbersStayLowAndTheBlankTabStays` 的序号语义 |
+| `internal/bridge` `TestUntitledNumberReadsOnlyUntitledNames` | 只有「未命名」与「未命名 N」占号 |
+| `internal/bridge` `TestImportDroppedPathsCommitsAllRastersAsOneUndo`（既有） | 拖到画布仍是导入为图层、一步撤销 |
+| `frontend` `dropimport.test.ts` | 两条拖放路共用去重时间戳 |
+
+## 已知差异
+
+1. **没有磁盘路径的内存图像**（截图工具位图、网页图）落到标签栏时走的是 Wails 那条路，
+   会按「导入为图层」处理；DOM 侧只认带 `path` 的文件。原版经 NSItemProvider 两者都覆盖。
+2. 原版「最后一个空标签不关闭」这条没做：Windows 侧关掉最后一个标签直接回欢迎屏，
+   语义等价（`canClose` 的判据在原版里就是为了不出现「关了又被替换」的空标签）。
 
 现状（已核对）：
 

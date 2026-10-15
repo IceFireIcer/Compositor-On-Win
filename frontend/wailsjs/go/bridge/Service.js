@@ -226,6 +226,10 @@ export function ImportDroppedPaths(arg1) {
   return window['go']['bridge']['Service']['ImportDroppedPaths'](arg1);
 }
 
+export function ImportDroppedPathsAsNewProject(arg1) {
+  return window['go']['bridge']['Service']['ImportDroppedPathsAsNewProject'](arg1);
+}
+
 export function LayerHistogram() {
   return window['go']['bridge']['Service']['LayerHistogram']();
 }

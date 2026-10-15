@@ -207,6 +207,57 @@ func (s *Service) ImportDroppedPaths(paths []string) (string, error) {
 	return marshalDropReply(dropImportReply{Committed: true, Doc: json.RawMessage(doc)})
 }
 
+// ImportDroppedPathsAsNewProject is ImportDroppedPaths' new-tab sibling: an
+// image dropped on the tab bar opens a NEW project whose canvas is sized by
+// the first image, with every file landing as a centered layer (ticket 74;
+// the original's drop on the tabs, ProjectWorkspace.receiveProviders). A drop
+// on the canvas still goes through ImportDroppedPaths and imports as layers.
+func (s *Service) ImportDroppedPathsAsNewProject(paths []string) (string, error) {
+	if len(paths) == 0 {
+		return "", fmt.Errorf("没有可导入的文件")
+	}
+	begin, err := s.beginImport(paths)
+	if err != nil {
+		return "", err
+	}
+	// Same two reply shapes as ImportDroppedPaths: an all-raster batch commits
+	// here and now, anything else comes back as the begin listing.
+	for _, item := range begin.Items {
+		if item.Status != "ok" {
+			return marshalDropReply(dropImportReply{Committed: false, Begin: &begin})
+		}
+	}
+	doc, err := s.finishImageImportNewProject()
+	if err != nil {
+		return "", err
+	}
+	return marshalDropReply(dropImportReply{Committed: true, Doc: json.RawMessage(doc)})
+}
+
+// finishImageImportNewProject is FinishImageImport's new-tab sibling: same
+// completeness check, but the batch lands in a fresh document instead of the
+// active one.
+func (s *Service) finishImageImportNewProject() (string, error) {
+	s.importMu.Lock()
+	defer s.importMu.Unlock()
+	if len(s.pendingImport) == 0 {
+		return "", fmt.Errorf("没有进行中的导入")
+	}
+	files := make([]pendingImportFile, len(s.pendingImport))
+	copy(files, s.pendingImport)
+	for _, f := range files {
+		if f.bmp == nil {
+			return "", fmt.Errorf("图像 %s 还没有栅格结果（SVG 待栅格化 / 内存图待上传）", f.name)
+		}
+	}
+	reply, err := s.ws.importNewDocument(files)
+	if err != nil {
+		return "", err
+	}
+	s.pendingImport = nil
+	return reply, nil
+}
+
 // beginImport is the shared decode pass behind BeginImageImport and
 // ImportDroppedPaths: it starts a fresh pending batch, decodes every raster
 // file into a buffer and stages SVG bytes for the frontend, which rasterizes
@@ -582,11 +633,7 @@ func (w *Workspace) importNewDocument(files []pendingImportFile) (string, error)
 	doc.ActiveLayerID = &last
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	w.counter++
-	name := "未命名"
-	if w.counter > 1 {
-		name = fmt.Sprintf("未命名 %d", w.counter)
-	}
+	name := w.nextUntitledName()
 	tab := Document{
 		// 见 workspace.NewDocument：标签 ID 与文档 ID 必须一致。
 		ID:         doc.DocumentID,
