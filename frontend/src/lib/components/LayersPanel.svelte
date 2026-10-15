@@ -20,7 +20,7 @@
   import { workspace } from "../state/workspace";
   import { canvasEditTarget, clearMaskTarget, selectMaskTarget } from "../state/layerTarget";
   import { requestLayerMask, type LayerMaskOperation } from "../state/layerMask";
-  import { layerDepth } from "../state/layerDepth";
+  import { depthMenuItemsFor, layerDepth, refreshLayerDepth, runDepthCommand } from "../state/layerDepth";
 
   /**
    * The layer panel (ticket 20 shell + bridge wiring). Rows render top→bottom
@@ -40,6 +40,41 @@
   let targetRequest = 0;
   let dragSourceId: string | null = $state(null);
   let dropIntent: LayerDropIntent | null = $state(null);
+  // 右键菜单（票 69）：上游 NativeLayerList 的菜单里就有「转换为 16 位 / 8 位」，
+  // 光有顶部菜单栏不算接完。位置用视口坐标，越界由 CSS 收回来。
+  // tabID 与 layerID 是两回事：位深命令按标签找到会话、再作用在活动图层上。
+  // 两个 id 都在这里存下来，免得点菜单时把图层 id 当标签 id 递过去。
+  let layerMenu = $state<{ x: number; y: number; layerId: string; tabID: string } | null>(null);
+  let menuEl: HTMLDivElement | undefined = $state();
+
+  // 右键那一层先成为活动层，位深命令（Go 侧只认 ActiveLayerID）才会作用到它；
+  // 然后按这一层重取标签，菜单里的项才是它自己的。
+  // 命中的是行内子元素（比如位深标签）时也要认这一层，所以这里不看
+  // isLayerPanelChildEventTarget —— 那是给左键选中用的。
+  async function openLayerMenu(event: MouseEvent, layer: DocLayer): Promise<void> {
+    event.preventDefault();
+    const at = { x: event.clientX, y: event.clientY };
+    activateLayer(layer.id);
+    await refreshLayerDepth();
+    layerMenu = { ...at, layerId: layer.id, tabID: docState.docId ?? "" };
+  }
+
+  // 菜单外的 pointerdown 才关菜单。全局无条件关会在按钮的 click 之前就把菜单
+  // 拆掉（pointerdown 先于 click），菜单项就永远点不中。
+  $effect(() => {
+    if (!layerMenu) return;
+    const dismiss = (event: Event) => {
+      if (menuEl && event.target instanceof Node && menuEl.contains(event.target)) return;
+      layerMenu = null;
+    };
+    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") layerMenu = null; };
+    globalThis.addEventListener("pointerdown", dismiss);
+    globalThis.addEventListener("keydown", onKey);
+    return () => {
+      globalThis.removeEventListener("pointerdown", dismiss);
+      globalThis.removeEventListener("keydown", onKey);
+    };
+  });
   const hasSelection = $derived(!!$currentSelection?.mask.some((value) => value > 0));
 
   function findLayer(id: string): DocLayer | undefined {
@@ -198,6 +233,7 @@
           tabindex="0"
           draggable="true"
           onclick={(e) => { if (!isLayerPanelChildEventTarget(e)) activateLayer(layer.id); }}
+          oncontextmenu={(e) => openLayerMenu(e, layer)}
           onkeydown={(e) => {
             if (!isLayerPanelChildEventTarget(e) && (e.key === "Enter" || e.key === " ")) {
               e.preventDefault();
@@ -427,6 +463,40 @@
       {selectedMaskLayer?.maskFile ? "删除蒙版" : "删除"}
     </button>
   </div>
+
+  {#if layerMenu}
+    {@const menuLayer = findLayer(layerMenu.layerId)}
+    {#if menuLayer}
+      {@const items = depthMenuItemsFor(
+        $layerDepth.labels[menuLayer.id] ?? "",
+        !menuLayer.isGroup && !menuLayer.adjustment && !menuLayer.text,
+      )}
+      <div
+        class="layer-menu"
+        bind:this={menuEl}
+        style:left={`${layerMenu.x}px`}
+        style:top={`${layerMenu.y}px`}
+        role="menu"
+      >
+        {#each items as item (item.command)}
+          <button
+            type="button"
+            role="menuitem"
+            onclick={() => {
+              const tabID = layerMenu?.tabID ?? "";
+              layerMenu = null;
+              if (tabID) void runDepthCommand(tabID, item.command);
+            }}
+          >
+            {item.label}
+          </button>
+        {/each}
+        {#if items.length === 0}
+          <button type="button" role="menuitem" disabled>此图层无法转换位深</button>
+        {/if}
+      </div>
+    {/if}
+  {/if}
 {/if}
 
 <style>
@@ -527,6 +597,40 @@
 
   .name.group {
     font-weight: 600;
+  }
+
+  /* 右键菜单固定在视口坐标上，越界时由 max-* 收回来。 */
+  .layer-menu {
+    position: fixed;
+    z-index: 40;
+    display: flex;
+    flex-direction: column;
+    min-width: 160px;
+    padding: 4px;
+    background: var(--bg-panel, #2b2b2b);
+    border: 1px solid var(--border, #444);
+    border-radius: 4px;
+    box-shadow: 0 6px 18px rgb(0 0 0 / 45%);
+  }
+
+  .layer-menu button {
+    padding: 5px 10px;
+    color: var(--text);
+    text-align: left;
+    background: transparent;
+    border: none;
+    border-radius: 3px;
+    font: inherit;
+    cursor: pointer;
+  }
+
+  .layer-menu button:hover:not(:disabled) {
+    background: var(--accent, #3d6ea5);
+  }
+
+  .layer-menu button:disabled {
+    color: var(--text-dim, #888);
+    cursor: default;
   }
 
   .depth {

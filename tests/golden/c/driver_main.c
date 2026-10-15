@@ -50,6 +50,15 @@
 //   wand          seedX seedY radius tolerance contiguous
 //   color_range   includeCount (r g b)×n excludeCount (r g b)×m fuzziness invert
 //   brush         — (layer_unpremultiply_opaque)
+//   deep_take_painted      paintedPath (deep starts as the base widened by 257)
+//   deep_take_painted_hdr  paintedPath (deep starts as half floats of base/255)
+//   hdr_normalize  hdr16Path scalesOutPath (8-bit input unused)
+//   hdr_restore    normal16Path scalesPath (8-bit input unused)
+//   hdr_exposure   hdr16Path scale offset inverseGamma
+//
+// The last five write uint16 output (half-float bit patterns for the HDR
+// ones) instead of 8-bit RGBA; their inputs that are 16-bit come from a raw
+// file path rather than the usual 8-bit in.raw.
 //
 // The table builders below (build_levels_tables, build_exposure_table,
 // build_gradient_map_table) port the Swift table generation —
@@ -74,10 +83,47 @@
 #include "LensPixels.h"
 #include "NoisePixels.h"
 #include "WandPixels.h"
+#include "DeepPixels.h"
+
+// float_to_half is a verbatim copy of DeepPixels.c's static deep_to_half (a
+// float as IEEE 754 binary16 bits, rounded to nearest). The kernel keeps it
+// static, so the driver carries its own copy rather than changing the file
+// AGENTS.md invariant #4 keeps byte-identical to upstream.
+static uint16_t float_to_half(float value) {
+    union { float f; uint32_t u; } in = { value };
+    uint32_t sign = (in.u >> 16) & 0x8000, exponent = (in.u >> 23) & 0xff, mantissa = in.u & 0x7fffff;
+    if (exponent == 0xff) return (uint16_t)(sign | 0x7c00 | (mantissa ? 0x200 : 0));
+    int e = (int)exponent - 127 + 15;
+    if (e >= 31) return (uint16_t)(sign | 0x7c00);
+    if (e <= 0) {
+        if (e < -10) return (uint16_t)sign;
+        mantissa |= 0x800000;
+        uint32_t shift = (uint32_t)(14 - e);
+        uint32_t half = mantissa >> shift, rest = mantissa & ((1u << shift) - 1), halfway = 1u << (shift - 1);
+        if (rest > halfway || (rest == halfway && (half & 1))) half += 1;
+        return (uint16_t)(sign | half);
+    }
+    uint32_t half = sign | ((uint32_t)e << 10) | (mantissa >> 13), rest = mantissa & 0x1fff;
+    if (rest > 0x1000 || (rest == 0x1000 && (half & 1))) half += 1;
+    return (uint16_t)half;
+}
 
 static void die(const char *message) {
     fprintf(stderr, "golden_driver: %s\n", message);
     exit(2);
+}
+
+// Some kernels' outputs are not 8-bit RGBA (the deep/HDR ones are uint16 or
+// half-float). A command that fills these in replaces the usual 8-bit write,
+// so the CLI contract (out.raw gets the kernel's output) still holds.
+static uint8_t *alt_bytes = NULL;
+static size_t alt_length = 0;
+
+static void set_alt_output(const void *bytes, size_t length) {
+    alt_bytes = malloc(length ? length : 1);
+    if (!alt_bytes) die("out of memory");
+    memcpy(alt_bytes, bytes, length);
+    alt_length = length;
 }
 
 static double arg_double(const char *s) {
@@ -521,6 +567,92 @@ int main(int argc, char **argv) {
         for (size_t i = 0; i < (size_t)count * 4; ++i) wide[i] = (uint16_t)(pixels[i] * 257);
         dither_quantize16(wide, pixels, (size_t)width, (size_t)height, (size_t)width * 4);
         free(wide);
+    } else if (!strcmp(command, "deep_take_painted")) {
+        // argv: paintedPath. The 8-bit input is the layer's base; the deep
+        // raster starts as its exact 8→16 widening (v*257), as Go does.
+        if (argc < argi + 1) die("deep_take_painted needs a painted raw path");
+        size_t painted_length;
+        uint8_t *painted = read_file(argv[argi], &painted_length);
+        if (painted_length != count * 4) die("painted raw is not width×height RGBA");
+        size_t words = (size_t)count * 4;
+        uint16_t *deep = malloc(words * sizeof(uint16_t));
+        if (!deep) die("out of memory");
+        for (size_t i = 0; i < words; ++i) deep[i] = (uint16_t)(pixels[i] * 257);
+        deep_take_painted(deep, (size_t)width * 8, painted, pixels, (size_t)width * 4,
+                          (size_t)width, (size_t)height);
+        set_alt_output(deep, words * sizeof(uint16_t));
+        free(deep);
+        free(painted);
+    } else if (!strcmp(command, "deep_take_painted_hdr")) {
+        // argv: paintedPath. The deep raster starts as half floats of the
+        // 8-bit base (v/255), so the untouched pixels stay at their own depth.
+        if (argc < argi + 1) die("deep_take_painted_hdr needs a painted raw path");
+        size_t painted_length;
+        uint8_t *painted = read_file(argv[argi], &painted_length);
+        if (painted_length != count * 4) die("painted raw is not width×height RGBA");
+        size_t words = (size_t)count * 4;
+        uint16_t *deep = malloc(words * sizeof(uint16_t));
+        if (!deep) die("out of memory");
+        for (size_t i = 0; i < words; ++i) deep[i] = float_to_half((float)pixels[i] / 255.0f);
+        deep_take_painted_hdr(deep, (size_t)width * 8, painted, pixels, (size_t)width * 4,
+                              (size_t)width, (size_t)height);
+        set_alt_output(deep, words * sizeof(uint16_t));
+        free(deep);
+        free(painted);
+    } else if (!strcmp(command, "hdr_normalize")) {
+        // argv: hdr16Path scalesOutPath. The HDR input is a raw uint16 file
+        // (half-float bit patterns); the 8-bit input is unused.
+        if (argc < argi + 2) die("hdr_normalize needs an hdr16 raw and a scales out path");
+        size_t hdr_length;
+        uint8_t *hdr_bytes = read_file(argv[argi], &hdr_length);
+        size_t words = (size_t)count * 4;
+        if (hdr_length != words * sizeof(uint16_t)) die("hdr16 raw is not width×height RGBA half");
+        const uint16_t *hdr = (const uint16_t *)hdr_bytes;
+        uint16_t *normal = malloc(words * sizeof(uint16_t));
+        float *scales = malloc((size_t)count * sizeof(float));
+        if (!normal || !scales) die("out of memory");
+        deep_hdr_normalize(hdr, (size_t)width * 8, normal, (size_t)width * 8, scales,
+                           (size_t)width, (size_t)height);
+        write_file(argv[argi + 1], (const uint8_t *)scales, (size_t)count * sizeof(float));
+        set_alt_output(normal, words * sizeof(uint16_t));
+        free(normal);
+        free(scales);
+        free(hdr_bytes);
+    } else if (!strcmp(command, "hdr_restore")) {
+        // argv: normal16Path scalesPath. Rebuilds half floats from a 16-bit
+        // raster and the scales hdr_normalize wrote.
+        if (argc < argi + 2) die("hdr_restore needs a normal16 raw and a scales path");
+        size_t normal_length, scales_length;
+        uint8_t *normal_bytes = read_file(argv[argi], &normal_length);
+        uint8_t *scales_bytes = read_file(argv[argi + 1], &scales_length);
+        size_t words = (size_t)count * 4;
+        if (normal_length != words * sizeof(uint16_t)) die("normal16 raw is not width×height RGBA");
+        if (scales_length != (size_t)count * sizeof(float)) die("scales raw is not width×height floats");
+        uint16_t *out = malloc(words * sizeof(uint16_t));
+        if (!out) die("out of memory");
+        deep_hdr_restore((const uint16_t *)normal_bytes, (size_t)width * 8,
+                         (const float *)scales_bytes, out, (size_t)width * 8,
+                         (size_t)width, (size_t)height);
+        set_alt_output(out, words * sizeof(uint16_t));
+        free(out);
+        free(normal_bytes);
+        free(scales_bytes);
+    } else if (!strcmp(command, "hdr_exposure")) {
+        // argv: hdr16Path scale offset inverseGamma.
+        if (argc < argi + 4) die("hdr_exposure needs an hdr16 raw and scale offset inverseGamma");
+        size_t hdr_length;
+        uint8_t *hdr_bytes = read_file(argv[argi], &hdr_length);
+        size_t words = (size_t)count * 4;
+        if (hdr_length != words * sizeof(uint16_t)) die("hdr16 raw is not width×height RGBA half");
+        uint16_t *hdr = malloc(words * sizeof(uint16_t));
+        if (!hdr) die("out of memory");
+        memcpy(hdr, hdr_bytes, words * sizeof(uint16_t));
+        deep_hdr_exposure(hdr, (size_t)width * 8, (size_t)width, (size_t)height,
+                          (float)arg_double(argv[argi + 1]), (float)arg_double(argv[argi + 2]),
+                          (float)arg_double(argv[argi + 3]));
+        set_alt_output(hdr, words * sizeof(uint16_t));
+        free(hdr);
+        free(hdr_bytes);
     } else if (!strcmp(command, "dither")) {
         if (argc < argi + 17) die("dither needs 17 parameters");
         DitherParams params;
@@ -631,7 +763,12 @@ int main(int argc, char **argv) {
         die("unknown command");
     }
 
-    write_file(out_path, pixels, count * 4);
+    if (alt_bytes) {
+        write_file(out_path, alt_bytes, alt_length);
+        free(alt_bytes);
+    } else {
+        write_file(out_path, pixels, count * 4);
+    }
     free(pixels);
     return 0;
 }

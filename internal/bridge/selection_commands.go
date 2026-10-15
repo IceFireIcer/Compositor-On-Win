@@ -108,9 +108,9 @@ func (s *Service) FillSelection(selectionJSON string, mode string, colorJSON str
 		if bytes.Equal(before.Pix, bmp.Pix) {
 			return nil, nil // an empty (or already-clear) region is not an undo step
 		}
-		// The fill changed the 8-bit copy. The deep raster it was derived from
-		// no longer describes these pixels, and Save writes Deep, so drop it.
-		bmp.DropDeep()
+		// The fill changed the 8-bit copy: fold just those pixels into the deep
+		// raster so the layer keeps its depth and its untouched highlights.
+		takePainted(bmp, before)
 		key := *layer.ImageFile
 		return &rasterChange{
 			before: map[string]*render.Bitmap{key: before},
@@ -221,8 +221,9 @@ func (s *Service) MoveSelectedPixels(selectionJSON string, dx, dy int) (string, 
 		if !changed {
 			return nil, nil, fmt.Errorf("选区内没有图层像素，无法移动")
 		}
-		// Moving pixels edits the 8-bit copy; a kept Deep would be the pre-move one.
-		bmp.DropDeep()
+		// Moving pixels edits the 8-bit copy: fold the moved region into the deep
+		// raster instead of discarding the layer's full-precision samples.
+		takePainted(bmp, before)
 		key := *layer.ImageFile
 		return &rasterChange{
 			before: map[string]*render.Bitmap{key: before},

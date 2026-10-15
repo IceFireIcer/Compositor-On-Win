@@ -427,12 +427,13 @@ func (p *retouchSession) cloneResultFromCoverage(coverage *render.Bitmap) (*rend
 		}
 	}
 	after := p.base.Clone()
-	after.DropDeep() // the stamp edits 8-bit pixels; a kept Deep would be the pre-stamp one
 	// The brush engine already supplies the tip and path. One solid StampTick
 	// over that mask composites the frozen, mapped source exactly once, keeping
 	// stroke opacity capped even when dabs overlap (BrushStroke.publish).
 	center := render.Point{X: float64(p.base.W) / 2, Y: float64(p.base.H) / 2}
 	stamp := render.CloneStamp{Opacity: p.settings.Opacity, Hardness: 1}
 	err := stamp.StampTick(after, mask, sample, center, center, math.Hypot(float64(p.base.W), float64(p.base.H))+1, true)
+	// Only the stamped pixels enter the deep raster; the layer keeps its depth.
+	takePainted(after, p.base)
 	return after, err
 }

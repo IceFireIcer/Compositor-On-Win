@@ -755,6 +755,12 @@ func (w *Workspace) EndStroke() (string, error) {
 	if before.W == after.W && before.H == after.H && bytes.Equal(before.Pix, after.Pix) {
 		return marshalEnvelope(sess.rev, sess.doc)
 	}
+	// A 16-bit or HDR layer keeps its full-precision samples: only the pixels
+	// the stroke actually changed become the stroke's 8-bit values, and the
+	// rest of the layer stays at its own depth (upstream DeepLayer.flattened
+	// and deep_take_painted). Without this a single dab would flatten the
+	// layer to 8 bits and Save would lose the highlights.
+	takePainted(after, before)
 	sess.hist.Begin("画笔", *sess.doc, sess.doc.ActiveLayerID)
 	sess.bitmaps[key] = after
 	sess.hist.EndForced(*sess.doc, sess.doc.ActiveLayerID)

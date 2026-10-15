@@ -98,11 +98,12 @@ func healingStrokePreviewLocked(p *healingSession) (*render.Bitmap, error) {
 		return nil, err
 	}
 	asset := p.base.Clone()
-	asset.DropDeep()
 	// SpotHeal reads the coverage and writes only this clone. The live
 	// HealStroke remains appendable, so an HTTP preview cannot finish a stroke.
 	render.SpotHeal(asset, p.stroke.Coverage(), float32(p.opacity), p.mode, p.seed)
 	blendThroughSelection(asset, p.base, p.selection, p.transform)
+	// Same reconcile as the commit, so the preview matches what OK leaves.
+	takePainted(asset, p.base)
 	return renderWithStrokeAsset(p.owner, p.key, asset)
 }
 

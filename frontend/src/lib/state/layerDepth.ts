@@ -3,7 +3,7 @@
  * 向后端要一次标签，转换后再要一次。选区仍是前端状态，多选时不提供转换。
  */
 import { writable } from "svelte/store";
-import { ConvertLayerDepth, LayerDepthInfo } from "../../../wailsjs/go/bridge/Service";
+import { ConvertHDRToSixteenBit, ConvertLayerDepth, LayerDepthInfo } from "../../../wailsjs/go/bridge/Service";
 import { applyDocumentSnapshot } from "./document";
 
 export interface LayerDepthState {
@@ -34,4 +34,44 @@ export async function convertLayerDepth(tabID: string): Promise<void> {
   const raw = await ConvertLayerDepth(tabID);
   if (raw) applyDocumentSnapshot(raw);
   await refreshLayerDepth();
+}
+
+/**
+ * 位深菜单项，对应上游 NativeLayerList 的第 7b 项：有深层像素就是「转换为 8 位」，
+ * 没有就是「转换为 16 位」。HDR 图层两条都给 —— 上游先加「转换为 16 位」
+ * （裁到白、保持 16 位），再加按深层有无决定的「转换为 8 位」。
+ */
+export type DepthCommand = "to16" | "hdrTo16" | "to8";
+
+/**
+ * 位深菜单项。label 是该层的位深标签（空 = 8 位），convertible 是「这一层是像素
+ * 图层」——右键的层未必是活动层，所以两项都由调用方按那一层算，不能读全局
+ * activeLabel。
+ */
+export function depthMenuItemsFor(label: string, convertible: boolean): Array<{ label: string; command: DepthCommand }> {
+  if (!convertible) return [];
+  if (label === "HDR") {
+    return [
+      { label: "转换为 16 位", command: "hdrTo16" },
+      { label: "转换为 8 位", command: "to8" },
+    ];
+  }
+  return label === "16-Bit"
+    ? [{ label: "转换为 8 位", command: "to8" }]
+    : [{ label: "转换为 16 位", command: "to16" }];
+}
+
+/** 活动图层的菜单项（顶部「图层」菜单用）。 */
+export function depthMenuItems(state: LayerDepthState): Array<{ label: string; command: DepthCommand }> {
+  return depthMenuItemsFor(state.activeLabel, state.canConvert);
+}
+
+export async function runDepthCommand(tabID: string, command: DepthCommand): Promise<void> {
+  if (command === "hdrTo16") {
+    const raw = await ConvertHDRToSixteenBit(tabID);
+    if (raw) applyDocumentSnapshot(raw);
+    await refreshLayerDepth();
+    return;
+  }
+  await convertLayerDepth(tabID);
 }

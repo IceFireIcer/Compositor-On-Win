@@ -3,15 +3,16 @@ package render
 import "math"
 
 // The half-float and HDR kernels of DeepPixels.c. The C is copied, with a
-// provenance header only, to tests/golden/c/DeepPixels.c at commit e8c9e29.
-// It is not differentially driven yet: deep_rows uses Apple dispatch_apply,
-// so the Windows driver still needs the serial-band adapter the other
-// kernels use. Until that lands, these functions are checked against known
-// values rather than against the C binary.
+// provenance header only, to tests/golden/c/DeepPixels.c at commit e8c9e29,
+// and driven through the serial dispatch shim (ADR-0003):
+// TestDeepKernelsMatchC compares HDRNormalize, HDRRestore, HDRExposure,
+// DeepTakePainted and DeepTakePaintedHDR against it byte for byte, with the
+// fixtures and recipe in testdata/deep_kernels.md.
 //
-// The arithmetic is meant to stay in float32. Two known gaps remain:
-// math.Pow is float64 where the C uses powf, and the curve exponents are
-// folded as untyped constants. HalfToFloat and FloatToHalf are bit-exact.
+// The arithmetic is meant to stay in float32. One gap remains: math.Pow is
+// float64 where the C uses powf, and the curve exponents are folded as untyped
+// constants. The current fixtures agree byte for byte, but extreme inputs can
+// still differ in the last place. HalfToFloat and FloatToHalf are bit-exact.
 
 // inf32 is the C's INFINITY.
 var inf32 = float32(math.Inf(1))
@@ -154,6 +155,76 @@ func HDRRestore(normal *DeepRaster, scales []float32) *DeepRaster {
 		}
 	}
 	return out
+}
+
+// HDRFilterNormalize prepares an HDR raster for an operation that only
+// understands 8-bit pixels: the within-white raster HDRNormalize builds, as
+// the 8-bit bitmap the kernel reads, plus the per-pixel scales that put the
+// highlights back. Straight rounding, not the dithered copy — the scales
+// multiply the result back up, so dithering here would only add noise.
+func HDRFilterNormalize(src *DeepRaster) (*Bitmap, []float32) {
+	normal, scales := HDRNormalize(src)
+	out := NewBitmap(normal.W, normal.H)
+	for i, v := range normal.Pix {
+		out.Pix[i] = uint8(lroundf(float32(v) / 65535 * 255))
+	}
+	return out, scales
+}
+
+// HDRFilterRestore rebuilds the HDR raster from an operation's 8-bit result,
+// each pixel's colors multiplied by the scale HDRFilterNormalize took out, so
+// the highlights the operation could not hold come back.
+func HDRFilterRestore(result *Bitmap, scales []float32) *DeepRaster {
+	return HDRRestore(DeepFromBitmap(result), scales)
+}
+
+// DeepTakePainted is deep_take_painted: after an 8-bit edit, the pixels that
+// actually changed are written into the 16-bit raster as v*257, and every
+// pixel the edit did not touch keeps its 16-bit samples. That is what lets a
+// brush stroke on a 16-bit layer leave the rest of the layer at 16 bits
+// (ticket 71/82).
+// It reports whether the reconcile happened: a deep raster that does not line
+// up with the pixels cannot be folded into, and the caller must not keep it.
+func DeepTakePainted(deep *DeepRaster, painted, base *Bitmap) bool {
+	if deep == nil || painted == nil || base == nil {
+		return false
+	}
+	if deep.W != painted.W || deep.H != painted.H || base.W != painted.W || base.H != painted.H {
+		return false
+	}
+	for i := 0; i+4 <= len(deep.Pix) && i+4 <= len(painted.Pix) && i+4 <= len(base.Pix); i += 4 {
+		if painted.Pix[i] == base.Pix[i] && painted.Pix[i+1] == base.Pix[i+1] &&
+			painted.Pix[i+2] == base.Pix[i+2] && painted.Pix[i+3] == base.Pix[i+3] {
+			continue
+		}
+		for c := 0; c < 4; c++ {
+			deep.Pix[i+c] = uint16(painted.Pix[i+c]) * 257
+		}
+	}
+	return true
+}
+
+// DeepTakePaintedHDR is deep_take_painted_hdr: the same reconcile for an HDR
+// layer, where a changed pixel becomes the half float of its 8-bit value.
+// Untouched highlights stay exactly as they were.
+// It reports whether the reconcile happened, as DeepTakePainted does.
+func DeepTakePaintedHDR(deep *DeepRaster, painted, base *Bitmap) bool {
+	if deep == nil || painted == nil || base == nil {
+		return false
+	}
+	if deep.W != painted.W || deep.H != painted.H || base.W != painted.W || base.H != painted.H {
+		return false
+	}
+	for i := 0; i+4 <= len(deep.Pix) && i+4 <= len(painted.Pix) && i+4 <= len(base.Pix); i += 4 {
+		if painted.Pix[i] == base.Pix[i] && painted.Pix[i+1] == base.Pix[i+1] &&
+			painted.Pix[i+2] == base.Pix[i+2] && painted.Pix[i+3] == base.Pix[i+3] {
+			continue
+		}
+		for c := 0; c < 4; c++ {
+			deep.Pix[i+c] = FloatToHalf(float32(painted.Pix[i+c]) / 255)
+		}
+	}
+	return true
 }
 
 // HDRExposure is deep_hdr_exposure: Exposure on HDR pixels exactly, in linear

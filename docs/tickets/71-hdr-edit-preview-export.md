@@ -4,11 +4,39 @@
 
 **Blocked by:** 70 — 决策门槛与 .comp v13 / HDR 图层导入; 83 — 16 位色调调整与滤镜。
 
-**Status:** in-progress（2026-10-15）——HDR 转 16 位与图层曝光已落地。色阶、模糊、绘画和调整图层仍走 8 位；画布仍显示派生副本，高光预览属票 83。
+**Status:** in-progress（2026-10-15）——图层上的曝光、色阶、模糊、绘画与变换都已按上游规则保留高光；仍缺调整**图层**在 HDR 深度上合成（那要 16 位合成器，属票 82）。
 
 - [ ] 曝光、色阶、调整层、模糊、变换和绘画按上游 HDR 精度/降级规则工作，未触及高光可恢复。
-- [ ] 屏幕显示有受控映射，预览不把原始高光永久截断为白色。
-- [ ] HDR 转 16 位的用户命令、位深标签、撤销及状态刷新正确。
-- [ ] 保存重开与撤销后高光仍可恢复，按 `DeepLayerTests` 的高光保真用例验证；EXR 导出另见 85。
+  - [x] 曝光：走精确线性光内核（`HDRExposure`），不经 8 位查找表。
+  - [x] 色阶/模糊/其余滤镜：先按像素归一化到白内、跑内核、再按比例乘回（`HDRFilterNormalize`/`HDRFilterRestore`），选区内外分别对账。
+  - [x] 绘画/修复/仿制/填充/剪切：只把改过的像素折进深层栅格（`DeepTakePainted`）。
+  - [x] 变换：只改 placement，不重采样；图像尺寸另走 `DrawTransformedDeep`。
+  - [ ] 调整**图层**：`renderAdjustment` 仍在 8 位合成图上作用，高光在到达它之前已被裁掉。要 16 位合成器，属票 82。
+- [x] 屏幕显示有受控映射，预览不把原始高光永久截断为白色（显示副本派生自深层栅格、每次编辑后重算、从不写回）。
+- [x] HDR 转 16 位的用户命令、位深标签、撤销及状态刷新正确。
+- [x] 保存重开与撤销后高光仍可恢复，按 `DeepLayerTests` 的高光保真用例验证；EXR 导出另见 85。
 
 对等矩阵：U18。原版锚点：`DeepLayers.swift`、`ImageExporter.swift`、`DeepLayerTests.swift`；提交 `a10fcb7`、`b9186f7`。
+
+## 验证
+
+| 用例 | 覆盖 |
+| --- | --- |
+| `TestExposureOnHDRIsExactNotAnEightBitApproximation` | 曝光走线性光内核，结果落在曲线上而不是 8 位近似 |
+| `TestExposureBringsHighlightsIntoThePreview` | 降曝光把高光带进可见范围，深层仍留着大于白的光 |
+| `TestLevelsDimsHDRHighlightsInProportion` | 与上游同名用例互证：色阶按比例压暗 |
+| `TestFilterOnHDRKeepsHighlightsRecoverable` | 反相后图层仍是 HDR |
+| `TestBrushStrokeOnHDRKeepsUntouchedHighlights` | 笔触只改覆盖区域，没画到的高光原样保留 |
+| `TestConvertHDRToSixteenBitClipsHighlights` | 裁到白、保持 16 位、撤销装回高光 |
+| `TestExposureOnHDRRespectsTheSelection`、`TestLevelsOnHDRRespectsTheSelection` | 选区只让选中的像素动 |
+
+## 已知差异
+
+1. **调整图层仍在 8 位合成图上作用**：`renderAdjustment` 克隆的是 8 位合成结果，高光在到达它之前
+   已经被裁掉。上游在 HDR 深度上合成（`EditorCanvas.adjusted` 把 `hdr: hasHDR` 交给
+   `GPUAdjustment.apply`）。要 16 位合成器，属票 82。
+2. **非曝光滤镜的中间量是 8 位**：上游 `normalizing` 把 16 位栅格交给 `run()`；这里的内核只吃 8 位
+   像素，所以白内的层次是 8 位精度（高光本身按比例还原，不受影响）。16 位内核属票 82。
+3. **纯 16 位图层跑滤镜仍会丢深层像素**：内核拿不住它的精度，`runFilterOnGrid` 走 `DropDeep`。
+   上游 `invertKeepsSixteenBits` / `hueSaturationKeepsSixteenBits` 的对应用例属票 82。
+4. 屏幕抖动（8 位屏上的平滑显示）属票 83；这里的显示副本是抖动后的派生副本。

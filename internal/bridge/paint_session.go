@@ -511,7 +511,6 @@ func (s *Service) EndHealingStroke(token string, cancel bool) (string, error) {
 	}
 	p.stroke.Finish()
 	after := p.base.Clone()
-	after.DropDeep() // healing edits the 8-bit copy; Save writes Deep
 	if !render.SpotHeal(after, p.stroke.Coverage(), float32(p.opacity), p.mode, p.seed) {
 		return sess.envelope()
 	}
@@ -519,6 +518,9 @@ func (s *Service) EndHealingStroke(token string, cancel bool) (string, error) {
 	if bytes.Equal(after.Pix, p.base.Pix) {
 		return sess.envelope()
 	}
+	// Fold the healed pixels into the layer's own depth; the rest keeps its
+	// 16-bit or HDR samples (ticket 71/82).
+	takePainted(after, p.base)
 	sess.hist.Begin("污点修复", *sess.doc, sess.doc.ActiveLayerID)
 	l, _ := layerByID(sess.doc, p.layerID) // validateHealingTarget checked this ID.
 	l.Shape, l.Text = nil, nil

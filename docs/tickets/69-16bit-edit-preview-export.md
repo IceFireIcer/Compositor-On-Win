@@ -4,7 +4,7 @@
 
 **Blocked by:** 68 ✅ — 决策门槛与 .comp v12 / 16 位图层存取; 43 ✅ — 画布尺寸/图像尺寸/修剪。
 
-**Status:** in-progress（2026-10-15）——位深转换、图像尺寸重采样、菜单栏与位深标签已落地。图层面板还没有右键菜单。
+**Status:** done（2026-10-15）——位深转换、16 位图像尺寸重采样、菜单栏与图层面板右键菜单、位深标签均已落地。
 
 - [x] 位深转换命令：8 位 ↔ 16 位，撤销 / 重做一致，保存重开一致。
 - [x] 位深标签与可转换性的查询接口（`LayerDepthInfo`）。
@@ -53,10 +53,9 @@
 
 ## 已知差异
 
-1. **前端未接**：右键菜单与位深标签还没画。Go 侧接口（`ConvertLayerDepth` / `LayerDepthInfo`）
-   已就绪并有测试，缺的是 `frontend/src` 的菜单项与标签渲染。
-2. **几何编辑保留精度未做**：图像尺寸重采样目前仍只处理 8 位位图；16 位图层经重采样会走
-   `render.Bitmap` 的 8 位路径，深层像素随之被丢掉（上游用 `ImageResizer` 在 16 位上下文里
-   重采样）。裁剪、画布旋转与翻转本来就只改 placement（`doc_geometry.go` / `canvas_rotate.go`），
-   不重采样，因此这三条已天然保留精度。重采样那条是票 69 剩余的主要工作。
-3. 上游对 HDR 图层另有一条 `convertHDRToSixteenBit`（裁到白、保持 16 位），属票 71。
+1. **图像尺寸只重采样图像尺寸这条路径**：`render.DrawTransformedDeep` 覆盖它；自由变换、裁剪、
+   画布旋转与翻转本来就只改 placement（`doc_geometry.go` / `canvas_rotate.go`），不重采样，
+   因此天然保留精度。上游用 `ImageResizer` 统一处理，这里只对齐了会重采样的那一条。
+2. 上游对 HDR 图层另有一条 `convertHDRToSixteenBit`（裁到白、保持 16 位），属票 71。
+3. 位深标签读的是 Go 侧的 `LayerDepthInfo`，多选时不提供转换——选区是前端状态
+   （AGENTS.md 不变量 5），Go 只能看 `ActiveLayerID`。

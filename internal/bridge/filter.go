@@ -290,6 +290,89 @@ func cropBitmap(src *render.Bitmap, bounds [4]int) *render.Bitmap {
 	return out
 }
 
+// blendDeepThroughSelection limits a full-depth edit the way
+// blendThroughSelection limits the 8-bit one: pixels the selection does not
+// cover go back to the original samples. The 8-bit comparison cannot stand in
+// for this — a highlight that stays above white has the same 8-bit value
+// before and after an Exposure, so comparing copies would keep the unexposed
+// samples (ticket 71).
+func blendDeepThroughSelection(edited, orig *render.DeepRaster, sel *filterSelection, workT domain.Transform) {
+	if edited == nil || orig == nil || sel == nil {
+		return
+	}
+	if edited.W != orig.W || edited.H != orig.H {
+		return
+	}
+	for y := 0; y < edited.H; y++ {
+		for x := 0; x < edited.W; x++ {
+			i := (y*edited.W + x) * 4
+			dx, dy := layerIndexToDoc(workT, edited.W, edited.H, float64(x)+0.5, float64(y)+0.5)
+			mx := int(math.Floor(dx)) - sel.X
+			my := int(math.Floor(dy)) - sel.Y
+			if mx < 0 || my < 0 || mx >= sel.W || my >= sel.H {
+				copy(edited.Pix[i:i+4], orig.Pix[i:i+4])
+				continue
+			}
+			weight := float64(sel.Mask[my*sel.W+mx]) / 255
+			if weight >= 1 {
+				continue
+			}
+			for c := 0; c < 4; c++ {
+				e := float64(render.HalfToFloat(edited.Pix[i+c]))
+				o := float64(render.HalfToFloat(orig.Pix[i+c]))
+				edited.Pix[i+c] = render.FloatToHalf(float32(e*weight + o*(1-weight)))
+			}
+		}
+	}
+}
+
+// cropScales trims the per-pixel HDR highlight scales to the same [left, top,
+// right, bottom) box cropBitmap trims the pixels to, so HDRFilterRestore
+// still lines up with the cropped result (ticket 71).
+func cropScales(scales []float32, srcW, srcH int, bounds [4]int) []float32 {
+	if scales == nil {
+		return nil
+	}
+	left, top, right, bottom := bounds[0], bounds[1], bounds[2], bounds[3]
+	w, h := right-left, bottom-top
+	if w <= 0 || h <= 0 {
+		return nil
+	}
+	out := make([]float32, w*h)
+	for row := 0; row < h; row++ {
+		for col := 0; col < w; col++ {
+			out[row*w+col] = scales[(top+row)*srcW+(left+col)]
+		}
+	}
+	return out
+}
+
+// cropDeep trims a deep raster to the same [left, top, right, bottom) box
+// cropBitmap trims the 8-bit pixels to, for the full-depth kernels that wrote
+// the deep themselves (ticket 71).
+func cropDeep(d *render.DeepRaster, srcW, srcH int, bounds [4]int) *render.DeepRaster {
+	if d == nil {
+		return nil
+	}
+	left, top, right, bottom := bounds[0], bounds[1], bounds[2], bounds[3]
+	w, h := right-left, bottom-top
+	if w <= 0 || h <= 0 {
+		return nil
+	}
+	if left == 0 && top == 0 && w == srcW && h == srcH {
+		return d
+	}
+	out := render.NewDeep(w, h, d.HDR)
+	for row := 0; row < h; row++ {
+		for col := 0; col < w; col++ {
+			si := ((top+row)*srcW + (left + col)) * 4
+			di := (row*w + col) * 4
+			copy(out.Pix[di:di+4], d.Pix[si:si+4])
+		}
+	}
+	return out
+}
+
 // ---------------------------------------------------------------------------
 // PixelFilter.run — one kernel application on a working grid
 // ---------------------------------------------------------------------------

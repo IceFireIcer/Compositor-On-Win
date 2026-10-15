@@ -1,8 +1,10 @@
 // Provenance: copied from reference/Swift/Compositor/Rendering/DeepPixels.c
 // at commit e8c9e29701528413cc0e608d61187c1c61790add (ADR-0003 / ADR-0007).
-// The copy is byte-identical to that file below this header. It is not yet
-// driven by tests/golden: deep_rows uses Apple dispatch_apply, so a Windows
-// driver needs the serial-band adapter used for the other kernels.
+// The copy is byte-identical to that file below this header. deep_rows uses
+// Apple dispatch_apply, served on Windows by the serial-band shim in
+// dispatch/dispatch.h + golden_dispatch.c, the same adapter the other kernels
+// use. driver_main.c drives deep_take_painted, deep_take_painted_hdr,
+// deep_hdr_normalize, deep_hdr_restore and deep_hdr_exposure.
 #include "DeepPixels.h"
 #include <dispatch/dispatch.h>
 #include <math.h>

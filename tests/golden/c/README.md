@@ -11,7 +11,7 @@
 | LevelsPixels、BrushPixels、LensPixels、NoisePixels、WandPixels | `865e4675d09de64c3e4ad90aeacee8997542f4ae`（docs 基线） |
 | ScanlinesPixels（票 60） | `e8c9e29701528413cc0e608d61187c1c61790add`（v1.5.1-8-ge8c9e29，子模块当前 pin） |
 | AdjustPixels（票 63）、HealPixels + PatchPixels（票 65） | `e8c9e29701528413cc0e608d61187c1c61790add` |
-| DeepPixels（票 68，仅拷贝，驱动尚未接入） | `e8c9e29701528413cc0e608d61187c1c61790add` |
+| DeepPixels（票 68 拷贝，票 71 接入驱动） | `e8c9e29701528413cc0e608d61187c1c61790add` |
 
 `865e467` 早于这些内核的最后一次改动，而 `e8c9e29` 是子模块的当前 pin：
 两组拷贝因此各自注明自己的来源提交。票 63/64/65 把改过的内核整体搬到 pin，
@@ -68,6 +68,20 @@ style=10 正是它）；换成当前 reference 会让该枚举整体前移、参
   边缘）、`patch-fill-blend`（旧样本的替代）、`heal-texture`（污点修复 mode 0 在繁忙纹理上）。
   `golden.go` 的输入生成器新增 `curve`、`texture`，蒙版新增 `maskShape: "disc"`。
 - `patch_fill` 用 `expf`/`lrintf`，跨库最后一位不可复现，三个 case 声明 ε=1。
+
+## 票 71：DeepPixels.{c,h} 接入驱动
+
+票 68 把 `DeepPixels.{c,h}` 原样拷进来（只加来源头），但当时没有驱动。票 71 移植了
+`deep_take_painted` / `deep_take_painted_hdr`，并把 HDR 内核也接上——`deep_rows` 用的
+`dispatch_apply` 由既有的串行垫片承担，所以拷贝件仍是逐字节一致的原件。
+
+`driver_main.c` 新增五个命令（`deep_take_painted`、`deep_take_painted_hdr`、`hdr_normalize`、
+`hdr_restore`、`hdr_exposure`）。它们的输出不是 8 位 RGBA（16 位或 half-float 位型），
+所以驱动加了 `alt_bytes`：命令自己填这份缓冲，`out.raw` 照旧拿到内核输出。
+16 位输入从额外路径参数读，不走 8 位 `in.raw`。
+
+夹具与配方在 `internal/render/testdata/deep_kernels.md`，比对由 `TestDeepKernelsMatchC` 完成；
+平时跑测试只读已提交的夹具，不需要编译器。
 
 ## 与源文件的差异（仅在拷贝件旁，不改源）
 

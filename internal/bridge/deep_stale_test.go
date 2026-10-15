@@ -67,9 +67,12 @@ func TestFilterCommitDropsAStaleDeepRaster(t *testing.T) {
 	}
 }
 
-// TestFillDropsAStaleDeepRaster covers the other shape of the bug: a command
-// that mutates the live bitmap in place rather than replacing it.
-func TestFillDropsAStaleDeepRaster(t *testing.T) {
+// TestFillReconcilesTheDeepRaster covers the other shape of the bug: a command
+// that mutates the live bitmap in place rather than replacing it. The deep
+// raster must not be left describing the pre-fill pixels (Save writes Deep),
+// but it must not be thrown away either — the fill's own pixels are folded in
+// and the layer keeps its depth (ticket 71/82, upstream deep_take_painted).
+func TestFillReconcilesTheDeepRaster(t *testing.T) {
 	svc, _ := newTestService(t, 16, 16)
 	sess := activeSessionOf(t, svc)
 	paintRect(sess, 0, 0, 16, 16, 40)
@@ -78,7 +81,13 @@ func TestFillDropsAStaleDeepRaster(t *testing.T) {
 	if _, err := svc.FillSelection("", "foreground", `{"r":1,"g":0,"b":0,"a":1}`); err != nil {
 		t.Fatalf("填充: %v", err)
 	}
-	if sess.bitmaps[key].Deep != nil {
-		t.Fatal("原地填充后不该还挂着编辑前的深层像素")
+	after := sess.bitmaps[key]
+	if after.Deep == nil {
+		t.Fatal("填充后应把改过的像素折进深层栅格，而不是丢掉整层精度")
+	}
+	// The fill wrote opaque red; the deep raster has to say the same thing,
+	// or Save would write the pre-fill gray back.
+	if after.Deep.Pix[0] != 65535 || after.Deep.Pix[1] != 0 || after.Deep.Pix[3] != 65535 {
+		t.Fatalf("深层像素 = %v，想要填充后的红色", after.Deep.Pix[:4])
 	}
 }
