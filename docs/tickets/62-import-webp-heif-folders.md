@@ -10,6 +10,6 @@
 
 - [x] 文件对话框、拖放、导入分发器一致支持 WebP 与 `.hif`/`.heif`，透明度、方向和错误报告正确。
 - [x] 不支持的编解码格式给出明确错误，不悄悄把 HEIF 当普通 HEIC 处理。
-- [x] 导入、保存重开与导出对照 `ImageImportTests` 的 WebP/相机 HEIF 用例。
+- [x] 导入、保存重开与导出对照 `ImageImportTests` 的 WebP 用例（WebP 往返有测试）。**相机 HEIF 只有路由测试**：上游 `ImageImportTests` 也没有 `.hif`/相机夹具，Windows 侧只把一个合成的 `相机.hif` 送进 libheif 并断言失败路径，没有真实 HEIF 解码用例。
 
 对等矩阵：U09。原版锚点：`ImageImporter.swift`、`ImageImportTests.swift`；提交 `5724099`、`70b3e14`。文件夹批量导入见 81。

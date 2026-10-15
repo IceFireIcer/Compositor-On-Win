@@ -7,7 +7,7 @@
 **Status:** done（2026-10-13）
 
 - [x] 两个方向均交换画布宽高，并正确变换图层、蒙版、选区及参考线（选区在前端，见「已知差异」1）。
-- [x] 不重采样图层像素；图层、组和独立蒙版 placement 的变换位置在导出、保存、重开后与预览一致。
+- [x] 不重采样图层像素；图层、组和独立蒙版 placement 的变换位置与预览一致（**内存内**已测：像素逐字节不变 + placement 断言）。保存重开与导出这条没有专门的用例，见「已知差异 / 未验证」。
 - [x] 一次操作对应一次撤销；连续四次同向旋转回到原状。
 - [x] 与原版 `CanvasRotationTests` 的边界及形状用例对照。
 
@@ -68,9 +68,10 @@
    与旋转在同一条历史里）。要让选区跟着撤销，得先把选区搬进 `domain`（超出本票范围）。
 2. **全零（present-but-empty）选区跳过不转**：按约定无选区与全零选区都跳过；全零选区因此保留旧宽高，消费方
    （滤镜 / 剪贴板）都把它当"空"处理，不会误用。原版对空路径也会做一次变换（结果不变）。
-3. **原版 `rotateCanvas` 开头的 `commitTransform()` / `cancelCrop()` / `finishOpacityEdit()` 未接**：
-   Windows 侧的变换草稿是前端会话（`state/transform.ts`），本票的文件范围不含它，MenuBar 入口也直接调
-   `rotateCanvas`。若变换会话开着时旋转，草稿会在转过的画布上提交——需要 Lead 决定是否在菜单入口先提交 /
-   取消变换会话（`flipCanvas` 有同样的既有行为）。
+3. **原版 `rotateCanvas` 开头的三个结算**：`commitTransform()` 已接——`state/canvasRotate.ts` 在发 RPC
+   之前先 `commitTransformSession()`，草稿不会再落到转过的画布上（有用例钉住顺序）。
+   `cancelCrop()` / `finishOpacityEdit()` 没有等价的前端会话；Go 侧遇到在飞的笔刷/滤镜/修复/保存会直接
+   拒绝（`editTransformTab` 的 `errDocumentBusy`），所以不会出现静默错值，但用户看到的是「忙」而不是
+   「先结算再转」。`flipCanvas` 的 `commitTransform()` 仍未接（同一形状，未在本票范围）。
 4. **参考线只由 Go 转一次**：前端 `applyDocumentSnapshot → syncGuidesFromDocument` 重建镜像，前端不再
    `offsetGuides` 二次旋转（与 `crop.go` 的约定相同）。

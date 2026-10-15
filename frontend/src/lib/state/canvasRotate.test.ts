@@ -5,8 +5,18 @@ vi.mock("../../../wailsjs/go/bridge/Service", () => ({
   RotateCanvas: vi.fn(),
 }));
 
+// 票 56：旋转前必须先结算在飞的变换草稿（原版 rotateCanvas 开头的 commitTransform）。
+vi.mock("./transform", async () => {
+  const { writable } = await import("svelte/store");
+  return {
+    transformSession: writable(null),
+    commitTransformSession: vi.fn(async () => true),
+  };
+});
+
 import { RotateCanvas } from "../../../wailsjs/go/bridge/Service";
 import { rotateCanvas, rotateSelection } from "./canvasRotate";
+import { commitTransformSession, transformSession } from "./transform";
 import { applyDocumentSnapshot, clearDocument, document } from "./document";
 import { currentSelection, selectionFromMask, type Selection } from "./selection";
 import { fit, INITIAL_VIEWPORT, viewport } from "./viewport";
@@ -63,6 +73,26 @@ describe("画布旋转 90 度（票 56）", () => {
     currentSelection.set(null);
     seedViewport();
     mockedRotate.mockReset();
+  });
+
+  it("旋转前先结算在飞的变换草稿，且结算发生在 RPC 之前", async () => {
+    mockedRotate.mockResolvedValue(envelope(2, 2, 3));
+    const mockedCommit = vi.mocked(commitTransformSession);
+    mockedCommit.mockClear();
+
+    // 没有草稿时不结算。
+    transformSession.set(null);
+    await rotateCanvas("clockwise");
+    expect(mockedCommit).not.toHaveBeenCalled();
+
+    // 有草稿时先结算，再转 —— 否则草稿会落到转过的画布上。
+    transformSession.set({ layerID: "l1" } as never);
+    await rotateCanvas("clockwise");
+    expect(mockedCommit).toHaveBeenCalledTimes(1);
+    expect(mockedCommit.mock.invocationCallOrder[0]).toBeLessThan(
+      mockedRotate.mock.invocationCallOrder[1]!,
+    );
+    transformSession.set(null);
   });
 
   it("把活动标签与方向交给 RPC，并应用返回的文档快照", async () => {

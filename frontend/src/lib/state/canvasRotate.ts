@@ -13,6 +13,7 @@ import { get } from "svelte/store";
 import { RotateCanvas } from "../../../wailsjs/go/bridge/Service";
 import { applyDocumentSnapshot, document } from "./document";
 import { currentSelection, isEmpty, type Selection } from "./selection";
+import { commitTransformSession, transformSession } from "./transform";
 import { fitViewport } from "./viewport";
 import { activeTab, workspace } from "./workspace";
 
@@ -28,6 +29,18 @@ export async function rotateCanvas(direction: RotateDirection): Promise<void> {
   const tab = activeTab(get(workspace));
   const doc = get(document);
   if (!tab || !doc.docId || tab.id !== doc.docId) return;
+  // 原版 rotateCanvas 开头先 commitTransform()/cancelCrop()/finishOpacityEdit()：
+  // 在飞的变换草稿必须先落到文档上，否则它会在**转过之后**的画布上提交。Windows
+  // 侧的变换草稿是前端会话（state/transform.ts），所以这里先把它结算掉；裁剪与
+  // 不透明度编辑没有等价的前端会话，Go 侧遇到忙会话会直接拒绝（见票面已知差异 3）。
+  if (get(transformSession)) {
+    try {
+      await commitTransformSession();
+    } catch (err) {
+      console.warn("旋转前结算变换会话失败", err);
+      return;
+    }
+  }
   try {
     const raw = await RotateCanvas(tab.id, direction);
     // 回复落地前用户可能已经切了标签：只有发起标签仍是当前文档时才应用。
