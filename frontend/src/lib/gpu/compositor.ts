@@ -299,7 +299,22 @@ fn vsMain(@builtin(vertex_index) index: u32) -> VertexOut {
 fn proofSample(color: vec3f) -> vec4f {
   let n = f32(textureDimensions(proofTexture).x);
   let coord = clamp(color, vec3f(0.0), vec3f(1.0)) * (n - 1.0);
-  return textureLoad(proofTexture, vec3u(coord), 0);
+  let base = vec3u(floor(coord));
+  let next = min(base + vec3u(1u), vec3u(u32(n) - 1u));
+  let f = fract(coord);
+  let c000 = textureLoad(proofTexture, vec3u(base.x, base.y, base.z), 0);
+  let c100 = textureLoad(proofTexture, vec3u(next.x, base.y, base.z), 0);
+  let c010 = textureLoad(proofTexture, vec3u(base.x, next.y, base.z), 0);
+  let c110 = textureLoad(proofTexture, vec3u(next.x, next.y, base.z), 0);
+  let c001 = textureLoad(proofTexture, vec3u(base.x, base.y, next.z), 0);
+  let c101 = textureLoad(proofTexture, vec3u(next.x, base.y, next.z), 0);
+  let c011 = textureLoad(proofTexture, vec3u(base.x, next.y, next.z), 0);
+  let c111 = textureLoad(proofTexture, vec3u(next.x, next.y, next.z), 0);
+  let c00 = mix(c000, c100, f.x);
+  let c10 = mix(c010, c110, f.x);
+  let c01 = mix(c001, c101, f.x);
+  let c11 = mix(c011, c111, f.x);
+  return mix(mix(c00, c10, f.y), mix(c01, c11, f.y), f.z);
 }
 
 @fragment

@@ -37,7 +37,7 @@
   import { checkForUpdates } from "../state/update";
   import { gamutWarning, proofColors, proofError, proofLookups } from "../state/cmykProof";
   import { convertLayerDepth, layerDepth } from "../state/layerDepth";
-  import { ConvertHDRToSixteenBit } from "../../../wailsjs/go/bridge/Service";
+  import { CMYKProfiles, ConvertHDRToSixteenBit, LoadCMYKProfile, SetCMYKProfile } from "../../../wailsjs/go/bridge/Service";
   import { CMYKProofLookups } from "../../../wailsjs/go/bridge/Service";
   import { chordFor } from "../shortcuts/settings";
   import { chordLabel } from "../shortcuts/chords";
@@ -96,6 +96,14 @@
   const editingText = $derived($textSession !== null);
   // 纯画布的可进入性：与 F 的动作共用 canvasOnlyAllowed 一份规则（票 55）。
   const canCanvasOnly = $derived(canvasOnlyAllowed(!!$document.docId, editingText));
+  let cmykProfiles = $state<Array<{ name: string; chosen: boolean }>>([]);
+  async function refreshProfiles(): Promise<void> {
+    try {
+      cmykProfiles = JSON.parse(await CMYKProfiles()) as Array<{ name: string; chosen: boolean }>;
+    } catch {
+      cmykProfiles = [];
+    }
+  }
 
   // 校样是视图变换（票 72）：第一次打开时向后端要查找表，没有配置就留在菜单
   // 报错，不发明一张表。两个开关共用同一份表。
@@ -147,6 +155,7 @@
   const recentFiles = $derived($recentProjects);
   $effect(() => {
     if (open === "文件") void refreshRecentProjects();
+    if (open === "视图") void refreshProfiles();
   });
 
   /** 文件名（菜单里只显示文件名，完整路径放 title/hint）。 */
@@ -692,7 +701,7 @@
         // 用户除了背键位没有别的办法打开参考线/网格/标尺。勾来自上面的
         // viewState（$store 响应式读），与实际状态同源（菜单与快捷键共用 toggleView）。
         {
-          label: "校样颜色",
+          label: $proofError ? `校样颜色（${$proofError}）` : "校样颜色",
           checked: $proofColors,
           disabled: dialogOpen,
           run: () => {
@@ -700,6 +709,17 @@
             void toggleProof("proof");
           },
         },
+        ...cmykProfiles.map((profile) => ({
+          label: profile.chosen ? `✓ ${profile.name}` : profile.name,
+          disabled: dialogOpen,
+          run: () => {
+            close();
+            void SetCMYKProfile(profile.name).then(() => {
+              proofLookups.set(null);
+              void refreshProfiles();
+            });
+          },
+        })),
         {
           label: "色域警告",
           checked: $gamutWarning,
@@ -707,6 +727,31 @@
           run: () => {
             close();
             void toggleProof("gamut");
+          },
+        },
+        {
+          label: "载入 ICC 配置…",
+          disabled: dialogOpen,
+          run: () => {
+            close();
+            const input = globalThis.document.createElement("input");
+            input.type = "file";
+            input.accept = ".icc,.icm";
+            input.onchange = () => {
+              const file = input.files?.[0];
+              const path = file && "path" in file ? String(file.path) : "";
+              if (!path) {
+                proofError.set("请从桌面版选择一个 ICC 文件");
+                return;
+              }
+              void LoadCMYKProfile(path).then(() => {
+                proofError.set("");
+                proofLookups.set(null);
+              }, (err: unknown) => {
+                proofError.set(err instanceof Error ? err.message : String(err));
+              });
+            };
+            input.click();
           },
         },
         {
