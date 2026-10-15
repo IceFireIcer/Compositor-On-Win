@@ -653,6 +653,91 @@ int main(int argc, char **argv) {
         set_alt_output(hdr, words * sizeof(uint16_t));
         free(hdr);
         free(hdr_bytes);
+    } else if (!strcmp(command, "deep_split")) {
+        // argv: deep16Path step channel. The 8-bit input is unused.
+        if (argc < argi + 3) die("deep_split needs a deep16 raw, step and channel");
+        size_t deep_length;
+        uint8_t *deep_bytes = read_file(argv[argi], &deep_length);
+        size_t words = (size_t)count * 4;
+        if (deep_length != words * sizeof(uint16_t)) die("deep16 raw is not width×height RGBA");
+        uint8_t *out = malloc(words);
+        if (!out) die("out of memory");
+        deep_split((const uint16_t *)deep_bytes, (size_t)width * 8, out, (size_t)width * 4,
+                   (size_t)width, (size_t)height, (int)arg_long(argv[argi + 1]), (int)arg_long(argv[argi + 2]));
+        set_alt_output(out, words);
+        free(out);
+        free(deep_bytes);
+    } else if (!strcmp(command, "deep_merge")) {
+        // argv: deep16Path lowPath near0 near1 near2 mid0 mid1 mid2 far0 far1 far2 mixes.
+        // The 8-bit input is unused; every run raster is width×height RGBA bytes.
+        if (argc < argi + 12) die("deep_merge needs a deep16 raw, a low raw, nine run raws and mixes");
+        size_t deep_length;
+        uint8_t *deep_bytes = read_file(argv[argi], &deep_length);
+        size_t words = (size_t)count * 4;
+        if (deep_length != words * sizeof(uint16_t)) die("deep16 raw is not width×height RGBA");
+        uint8_t *runs[11];
+        for (int i = 0; i < 11; i++) {
+            size_t run_length;
+            runs[i] = read_file(argv[argi + 1 + i], &run_length);
+            if (run_length != words) die("a run raw is not width×height RGBA bytes");
+        }
+        uint16_t *out = malloc(words * sizeof(uint16_t));
+        if (!out) die("out of memory");
+        const uint8_t *near[3] = { runs[2], runs[3], runs[4] };
+        const uint8_t *mid[3] = { runs[5], runs[6], runs[7] };
+        const uint8_t *far[3] = { runs[8], runs[9], runs[10] };
+        deep_merge((const uint16_t *)deep_bytes, (size_t)width * 8, runs[1], near, mid, far,
+                   (size_t)width * 4, out, (size_t)width * 8, (size_t)width, (size_t)height,
+                   (int)arg_long(argv[argi + 11]));
+        set_alt_output(out, words * sizeof(uint16_t));
+        free(out);
+        for (int i = 0; i < 11; i++) free(runs[i]);
+        free(deep_bytes);
+    } else if (!strcmp(command, "deep_roundtrip")) {
+        // argv: deep16Path mixes. Splits the 16-bit raster, runs an identity
+        // operation on each run, merges, and writes the 16-bit result — the
+        // whole DeepLayer.run pipeline in one command. The 8-bit input is unused.
+        if (argc < argi + 2) die("deep_roundtrip needs a deep16 raw and mixes");
+        size_t deep_length;
+        uint8_t *deep_bytes = read_file(argv[argi], &deep_length);
+        size_t words = (size_t)count * 4;
+        if (deep_length != words * sizeof(uint16_t)) die("deep16 raw is not width×height RGBA");
+        int mixes = (int)arg_long(argv[argi + 1]);
+        int channels = mixes ? 3 : 1;
+        // (step, channel) pairs: low first, then 1/2/4 steps.
+        uint8_t *runs[10];
+        int n = 0;
+        runs[n] = malloc(words);
+        if (!runs[n]) die("out of memory");
+        deep_split((const uint16_t *)deep_bytes, (size_t)width * 8, runs[n], (size_t)width * 4,
+                   (size_t)width, (size_t)height, 0, -1);
+        n++;
+        const int steps[3] = { 1, 2, 4 };
+        for (int s = 0; s < 3; s++) {
+            for (int c = 0; c < channels; c++) {
+                runs[n] = malloc(words);
+                if (!runs[n]) die("out of memory");
+                deep_split((const uint16_t *)deep_bytes, (size_t)width * 8, runs[n], (size_t)width * 4,
+                           (size_t)width, (size_t)height, steps[s], mixes ? c : -1);
+                n++;
+            }
+        }
+        uint16_t *out = malloc(words * sizeof(uint16_t));
+        if (!out) die("out of memory");
+        // Mirrors DeepLayer.run's runs(_:): without mixes each step has one run,
+        // read for all three channels; with it, the step's three runs are red,
+        // green and blue stepped alone.
+        const int per = mixes ? 3 : 1;
+        const int off[3] = { 0, mixes ? 1 : 0, mixes ? 2 : 0 };
+        const uint8_t *near[3] = { runs[1], runs[1 + off[1]], runs[1 + off[2]] };
+        const uint8_t *mid[3] = { runs[1 + per], runs[1 + per + off[1]], runs[1 + per + off[2]] };
+        const uint8_t *far[3] = { runs[1 + 2 * per], runs[1 + 2 * per + off[1]], runs[1 + 2 * per + off[2]] };
+        deep_merge((const uint16_t *)deep_bytes, (size_t)width * 8, runs[0], near, mid, far,
+                   (size_t)width * 4, out, (size_t)width * 8, (size_t)width, (size_t)height, mixes);
+        set_alt_output(out, words * sizeof(uint16_t));
+        free(out);
+        for (int i = 0; i < n; i++) free(runs[i]);
+        free(deep_bytes);
     } else if (!strcmp(command, "dither")) {
         if (argc < argi + 17) die("dither needs 17 parameters");
         DitherParams params;

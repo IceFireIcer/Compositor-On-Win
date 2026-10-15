@@ -30,29 +30,42 @@ func attachDeep(t *testing.T, sess *session) string {
 	return key
 }
 
-// TestFilterCommitDropsAStaleDeepRaster is the save-loss regression: a filter
-// edits the 8-bit copy, so the deep raster it was derived from is no longer
-// the layer's pixels. Keeping it would make Save write the pre-edit samples.
-func TestFilterCommitDropsAStaleDeepRaster(t *testing.T) {
+// TestFilterKeepsTheDeepRasterConsistentWithTheEdit is the save-loss regression
+// in its current shape: a filter on a 16-bit layer must leave a deep raster
+// that agrees with the edit. The old rule dropped the deep outright (the kernel
+// could not hold 16 bits); ticket 82 runs the kernel the DeepLayer.run way
+// instead, so the layer keeps its precision *and* the saved samples are the
+// edited ones rather than the pre-edit ones.
+func TestFilterKeepsTheDeepRasterConsistentWithTheEdit(t *testing.T) {
 	svc, _ := newTestService(t, 16, 16)
 	sess := activeSessionOf(t, svc)
 	paintRect(sess, 0, 0, 16, 16, 100)
 	key := attachDeep(t, sess)
-	before := append([]uint8(nil), sess.bitmaps[key].Pix...)
+	beforePix := append([]uint8(nil), sess.bitmaps[key].Pix...)
+	beforeDeep := sess.bitmaps[key].Deep.Clone()
 
 	if _, err := svc.ApplyFilter("adjust:Invert", "", `{}`, 7, ""); err != nil {
 		t.Fatalf("反相: %v", err)
 	}
 	after := sess.bitmaps[key]
-	if bytes.Equal(before, after.Pix) {
+	if bytes.Equal(beforePix, after.Pix) {
 		t.Fatal("反相应改变 8 位像素，否则测不出过期")
 	}
-	if after.Deep != nil {
-		t.Fatal("8 位滤镜提交后不该还挂着编辑前的深层像素")
+	if after.Deep == nil || after.Deep.HDR {
+		t.Fatal("16 位图层跑滤镜后应仍是 16 位")
+	}
+	if after.Deep.Pix[0] == beforeDeep.Pix[0] {
+		t.Fatal("深层像素应反映反相，而不是编辑前的样本")
+	}
+	// 与 8 位副本一致（DeepLayer.run 的合成在一步以内）。
+	want := int(after.Pix[0]) * 257
+	if diff := int(after.Deep.Pix[0]) - want; diff > 300 || diff < -300 {
+		t.Fatalf("深层 %d 与 8 位副本 %d×257=%d 不一致", after.Deep.Pix[0], after.Pix[0], want)
 	}
 
+	// 保住了 16 位，所以清单写 v12 而不是 v11。
 	dir := t.TempDir()
-	savePath := filepath.Join(dir, "stale.comp")
+	savePath := filepath.Join(dir, "deep16.comp")
 	svc.saveDialog = func(context.Context) (string, error) { return savePath, nil }
 	if _, err := svc.SaveProjectDialog(); err != nil {
 		t.Fatalf("保存: %v", err)
@@ -62,8 +75,8 @@ func TestFilterCommitDropsAStaleDeepRaster(t *testing.T) {
 	if err != nil {
 		t.Fatalf("打开: %v", err)
 	}
-	if doc.Version != domain.VersionBase {
-		t.Fatalf("丢掉深层后清单版本 = %d，想要 %d", doc.Version, domain.VersionBase)
+	if doc.Version != domain.Version16Bit {
+		t.Fatalf("保住深层后清单版本 = %d，想要 %d", doc.Version, domain.Version16Bit)
 	}
 }
 

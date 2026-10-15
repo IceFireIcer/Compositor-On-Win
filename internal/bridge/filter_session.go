@@ -79,6 +79,17 @@ type filterSession struct {
 // CommitFilter and ApplyFilter are the same run over different sources (the
 // open session's frozen grid, or a freshly prepared one), so both come here
 // rather than repeating the kernel, blend and trim sequence.
+// filterMixesChannels is FilterKind.mixesChannels (Filters.swift:35): an
+// operation whose output channels each depend on all three inputs, which a
+// 16-bit layer runs the slower, channel-by-channel way (DeepLayer.run).
+func filterMixesChannels(kind string) bool {
+	switch kind {
+	case FilterCameraRaw, FilterTonal, FilterScanlines:
+		return true
+	}
+	return false
+}
+
 // adjustmentWorksAtFullDepth reports whether this filter's kernel can work on
 // the HDR raster itself instead of the normalized 8-bit copy. Only Exposure
 // can (upstream DeepLayer.exposure); every other kernel goes through
@@ -104,45 +115,65 @@ func runFilterOnGrid(kind string, p *filterParams, src *render.Bitmap, srcT doma
 	// no such wrapper yet — the kernel cannot hold its precision, so its deep
 	// raster is dropped (ticket 82).
 	work := src.Clone()
-	var hdrScales []float32
-	var hdrDeep *render.DeepRaster
 	hdr := src.Deep != nil && src.Deep.HDR
+	deep16 := src.Deep != nil && !src.Deep.HDR
 	fullDepth := hdr && adjustmentWorksAtFullDepth(p)
-	if hdr {
-		normal, scales := render.HDRFilterNormalize(src.Deep)
-		hdrScales = scales
-		work.Pix = normal.Pix
-		// The deep rides along so a kernel that works at full depth (Exposure)
-		// takes that path instead of the normalized 8-bit one.
-		hdrDeep = src.Deep.Clone()
-		work.Deep = hdrDeep
-	} else {
-		work.DropDeep()
-	}
-	if err := runFilterJob(kind, work, p, clampSides, 1, seed, docW, docH, srcT, emptyLayer, fillMask, subjectRaw); err != nil {
-		return nil, srcT, err
-	}
-	// Keep the kernel's own output before the selection blend: the restore
-	// has to scale the *filtered* raster, not the blended one (outside the
-	// selection the blend has already put the clipped display copy back, and
-	// scaling that is not the inverse of clipping).
-	var filtered *render.Bitmap
-	if hdr && !fullDepth {
-		filtered = &render.Bitmap{W: work.W, H: work.H, Pix: append([]uint8(nil), work.Pix...)}
-	}
-	blendThroughSelection(work, src, sel, srcT)
-	if hdr {
-		restored := hdrDeep
-		if !fullDepth {
-			restored = render.HDRFilterRestore(filtered, hdrScales)
+
+	if deep16 {
+		// A plain 16-bit layer runs the kernel the DeepLayer.run way: on the
+		// raster split into 8-bit values a little below its colors and into
+		// those one, two and four steps up, with the 16-bit result read off
+		// between them. The layer keeps its precision instead of being
+		// flattened to 8 bits (ticket 82).
+		merged, err := render.RunDeep(src.Deep, filterMixesChannels(kind), func(split *render.Bitmap) error {
+			return runFilterJob(kind, split, p, clampSides, 1, seed, docW, docH, srcT, emptyLayer, fillMask, subjectRaw)
+		})
+		if err != nil {
+			return nil, srcT, err
 		}
-		// Either path wrote the whole raster; the selection limits both.
-		blendDeepThroughSelection(restored, src.Deep, sel, srcT)
-		work.Deep = restored
+		// The operation wrote the whole raster; the selection limits it.
+		blendDeepThroughSelection(merged, src.Deep, sel, srcT)
+		work.Deep = merged
 		// The 8-bit copy is a derivation of the deep raster, never the other
 		// way round: a reload would show dithered(deep), so the live canvas
 		// has to show the same thing.
-		work.Pix = restored.ToBitmap().Pix
+		work.Pix = merged.ToBitmap().Pix
+	} else {
+		var hdrScales []float32
+		var hdrDeep *render.DeepRaster
+		if hdr {
+			normal, scales := render.HDRFilterNormalize(src.Deep)
+			hdrScales = scales
+			work.Pix = normal.Pix
+			// The deep rides along so a kernel that works at full depth (Exposure)
+			// takes that path instead of the normalized 8-bit one.
+			hdrDeep = src.Deep.Clone()
+			work.Deep = hdrDeep
+		} else {
+			work.DropDeep()
+		}
+		if err := runFilterJob(kind, work, p, clampSides, 1, seed, docW, docH, srcT, emptyLayer, fillMask, subjectRaw); err != nil {
+			return nil, srcT, err
+		}
+		// Keep the kernel's own output before the selection blend: the restore
+		// has to scale the *filtered* raster, not the blended one (outside the
+		// selection the blend has already put the clipped display copy back, and
+		// scaling that is not the inverse of clipping).
+		var filtered *render.Bitmap
+		if hdr && !fullDepth {
+			filtered = &render.Bitmap{W: work.W, H: work.H, Pix: append([]uint8(nil), work.Pix...)}
+		}
+		blendThroughSelection(work, src, sel, srcT)
+		if hdr {
+			restored := hdrDeep
+			if !fullDepth {
+				restored = render.HDRFilterRestore(filtered, hdrScales)
+			}
+			// Either path wrote the whole raster; the selection limits both.
+			blendDeepThroughSelection(restored, src.Deep, sel, srcT)
+			work.Deep = restored
+			work.Pix = restored.ToBitmap().Pix
+		}
 	}
 	newT := srcT
 	result := work
@@ -156,7 +187,7 @@ func runFilterOnGrid(kind string, p *filterParams, src *render.Bitmap, srcT doma
 			}
 		}
 	}
-	if hdr {
+	if hdr || deep16 {
 		result.Deep = cropDeep(work.Deep, src.W, src.H, bounds)
 	}
 	return result, newT, nil

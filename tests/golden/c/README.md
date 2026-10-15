@@ -78,7 +78,12 @@ style=10 正是它）；换成当前 reference 会让该枚举整体前移、参
 `driver_main.c` 新增五个命令（`deep_take_painted`、`deep_take_painted_hdr`、`hdr_normalize`、
 `hdr_restore`、`hdr_exposure`）。它们的输出不是 8 位 RGBA（16 位或 half-float 位型），
 所以驱动加了 `alt_bytes`：命令自己填这份缓冲，`out.raw` 照旧拿到内核输出。
-16 位输入从额外路径参数读，不走 8 位 `in.raw`。
+16 位输入从额外路径参数读，不走 8 位 `in.raw`（但驱动仍要求第一个参数是 8 位输入，见下）。
+
+票 82 又加了三个（`deep_split`、`deep_merge`、`deep_roundtrip`）。`deep_roundtrip` 是整条
+`DeepLayer.run`：把 16 位栅格拆成 8 位运行的几份、跑恒等操作、再合并回 16 位。它的 `runs` 索引
+必须照抄 `DeepLayer.run` 的 `runs(_:)`——非混色时三个通道读的是**同一个**缓冲，写成三个不同缓冲
+会越界（写错过一次，崩在 0xc0000005）。
 
 夹具与配方在 `internal/render/testdata/deep_kernels.md`，比对由 `TestDeepKernelsMatchC` 完成；
 平时跑测试只读已提交的夹具，不需要编译器。

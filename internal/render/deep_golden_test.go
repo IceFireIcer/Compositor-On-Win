@@ -120,8 +120,11 @@ func deepGoldenRun(t *testing.T, args ...string) {
 // It is skipped unless GOLDEN_REGENERATE=1, so a normal run only compares.
 func regenerateDeepGoldenFixtures(t *testing.T) {
 	t.Helper()
+	// Returning, not t.Skip: a skip here would abort the *whole* test and the
+	// comparison below would never run — which is exactly what happened until
+	// this was fixed. Without the env var there is simply nothing to rewrite.
 	if os.Getenv("GOLDEN_REGENERATE") != "1" {
-		t.Skip("设 GOLDEN_REGENERATE=1 才重写夹具")
+		return
 	}
 	dir := "testdata"
 	basePath := filepath.Join(dir, "deep_base.raw")
