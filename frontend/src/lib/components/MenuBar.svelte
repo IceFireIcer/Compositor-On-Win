@@ -6,7 +6,7 @@
     beginFilter,
     filterSession,
   } from "../state/filters";
-  import { document, layerOps } from "../state/document";
+  import { applyDocumentSnapshot, document, layerOps } from "../state/document";
   import { importImages, saveProjectAs } from "../state/workspace";
   import { copyMerged, exportPNG, openExportAs, openExportJPEG } from "../state/export";
   import { geometrySheet } from "../state/geometry";
@@ -36,6 +36,8 @@
   } from "../state/shell";
   import { checkForUpdates } from "../state/update";
   import { gamutWarning, proofColors, proofError, proofLookups } from "../state/cmykProof";
+  import { convertLayerDepth, layerDepth } from "../state/layerDepth";
+  import { ConvertHDRToSixteenBit } from "../../../wailsjs/go/bridge/Service";
   import { CMYKProofLookups } from "../../../wailsjs/go/bridge/Service";
   import { chordFor } from "../shortcuts/settings";
   import { chordLabel } from "../shortcuts/chords";
@@ -520,6 +522,17 @@
     {
       label: "图层",
       items: [
+        {
+          label: $layerDepth.activeLabel === "HDR" ? "转换为 16 位（裁到白）" : $layerDepth.activeLabel === "" ? "转换为 16 位" : "转换为 8 位",
+          disabled: !$layerDepth.canConvert || dialogOpen || !$document.docId,
+          run: () => {
+            close();
+            const tab = $document.docId;
+            if (!tab) return;
+            if ($layerDepth.activeLabel === "HDR") void ConvertHDRToSixteenBit(tab).then((raw) => raw && applyDocumentSnapshot(raw));
+            else void convertLayerDepth(tab);
+          },
+        },
         {
           label: "通过拷贝的图层",
           hint: hintFor("Menus:Duplicate / Layer via Copy"),

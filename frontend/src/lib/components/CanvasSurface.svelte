@@ -74,6 +74,7 @@
   import { StrokePreview } from "../state/strokePreview";
   import { beginBrushTipDrag, cursorCircle, dragBrushTip, type BrushTipDrag, type BrushTipHud } from "../gpu/brushCursor";
   import { WebGpuCompositor } from "../gpu/compositor";
+  import { gamutWarning, proofColors, proofLookups } from "../state/cmykProof";
   import { palette, showsSampleRing } from "../state/palette";
   import { rgbToHex, setBackground, setForeground, type Rgb } from "../state/color";
   import {
@@ -82,6 +83,13 @@
     SelectObjectAt,
   } from "../../../wailsjs/go/bridge/Service";
   import { cursorForTool } from "./cursors";
+
+  function decodeProof(encoded: string): Uint8Array {
+    const binary = atob(encoded);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    return bytes;
+  }
   import {
     beginGuideCreation,
     beginGuideMove,
@@ -450,10 +458,16 @@
     const renderer = compositor;
     const canvas = gpuCanvas;
     const key = frameKey;
+    const proofOn = $proofColors;
+    const gamutOn = $gamutWarning;
+    const lookups = $proofLookups;
     const request = { docId: doc.id, rev: docState.rev, filterRev: docState.filterRev };
     if (!renderer || !canvas || docState.docId !== doc.id) return;
     if (canvas.width !== doc.width) canvas.width = doc.width;
     if (canvas.height !== doc.height) canvas.height = doc.height;
+    const mode = proofOn ? 1 : gamutOn ? 2 : 0;
+    const table = proofOn && gamutOn ? lookups?.warning : gamutOn ? lookups?.marked : lookups?.proof;
+    renderer.setProof(mode, table ? decodeProof(table) : null, lookups?.dimension ?? 0);
     let stale = false;
     void renderer.render(request).then((result) => {
       if (stale) return;

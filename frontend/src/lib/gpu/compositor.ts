@@ -275,6 +275,8 @@ fn fsMain(input: VertexOut) -> @location(0) vec4f {
 const PRESENT_WGSL = /* wgsl */ `
 @group(0) @binding(0) var sourceSampler: sampler;
 @group(0) @binding(1) var sourceTexture: texture_2d<f32>;
+@group(0) @binding(2) var proofTexture: texture_3d<f32>;
+@group(0) @binding(3) var<uniform> proofMode: vec4u;
 
 struct VertexOut {
   @builtin(position) position: vec4f,
@@ -294,9 +296,26 @@ fn vsMain(@builtin(vertex_index) index: u32) -> VertexOut {
   return out;
 }
 
+fn proofSample(color: vec3f) -> vec4f {
+  let n = f32(textureDimensions(proofTexture).x);
+  let coord = clamp(color, vec3f(0.0), vec3f(1.0)) * (n - 1.0);
+  return textureLoad(proofTexture, vec3u(coord), 0);
+}
+
 @fragment
 fn fsMain(input: VertexOut) -> @location(0) vec4f {
-  return textureSampleLevel(sourceTexture, sourceSampler, input.uv, 0.0);
+  let src = textureSampleLevel(sourceTexture, sourceSampler, input.uv, 0.0);
+  if (proofMode.x == 0u) {
+    return src;
+  }
+  // Upstream flattens onto white before the cube (EditorCanvas proof).
+  // The canvas sample is premultiplied, so un-premultiply, composite over
+  // white, then sample. The lookup already holds the gray gamut mark.
+  let alpha = src.a;
+  let straight = select(vec3f(0.0), src.rgb / max(alpha, 0.0001), alpha > 0.0);
+  let overWhite = straight * alpha + vec3f(1.0 - alpha);
+  let looked = proofSample(overWhite);
+  return vec4f(looked.rgb, 1.0);
 }
 `;
 
@@ -385,6 +404,9 @@ export class WebGpuCompositor {
   private presentPipeline: unknown;
   private presentLayout: unknown;
   private presentSampler: unknown;
+  private proofTexture: { createView: () => unknown; destroy?: () => void } | null = null;
+  private proofBuffer: GpuBufferLike | null = null;
+  private proofMode = 0;
   private uniformBuffer: GpuBufferLike | null = null;
   private uniformCapacity = 0;
   private canvasFormat = "rgba8unorm";
@@ -467,6 +489,28 @@ export class WebGpuCompositor {
     }
   }
 
+  /**
+   * 校样是显示变换（票 72）。mode 0 直通，1 用查找表替换颜色，2 同时把
+   * 色域外像素标成洋红。lookup 是 33³ 的 RGBA float32，小端。关闭时不传表。
+   */
+  setProof(mode: number, lookup: Uint8Array | null, dimension: number): void {
+    this.proofMode = mode;
+    if (!this.device || !lookup || dimension < 2) return;
+    this.proofTexture?.destroy?.();
+    this.proofTexture = this.device.createTexture({
+      size: { width: dimension, height: dimension, depthOrArrayLayers: dimension },
+      dimension: "3d",
+      format: "rgba32float",
+      usage: textureUsage(),
+    }) as { createView: () => unknown; destroy?: () => void };
+    this.device.queue.writeTexture(
+      { texture: this.proofTexture },
+      lookup,
+      { bytesPerRow: dimension * 16, rowsPerImage: dimension },
+      { width: dimension, height: dimension, depthOrArrayLayers: dimension },
+    );
+  }
+
   destroy(): void {
     if (this.destroyed) return;
     this.destroyed = true;
@@ -522,6 +566,8 @@ export class WebGpuCompositor {
     const presentEntries = [
       { binding: 0, visibility: 2, sampler: { type: "non-filtering" } },
       { binding: 1, visibility: 2, texture: { sampleType: "float", viewDimension: "2d" } },
+      { binding: 2, visibility: 2, texture: { sampleType: "float", viewDimension: "3d" } },
+      { binding: 3, visibility: 2, buffer: { type: "uniform" } },
     ];
     this.presentLayout = this.device.createBindGroupLayout({ entries: presentEntries });
     const presentPipelineLayout = this.device.createPipelineLayout({
@@ -542,6 +588,16 @@ export class WebGpuCompositor {
       minFilter: "nearest",
     });
     if (!this.presentSampler) throw new Error("GPU sampler 创建失败");
+    this.proofTexture = this.device.createTexture({
+      size: { width: 1, height: 1, depthOrArrayLayers: 1 },
+      dimension: "3d",
+      format: "rgba32float",
+      usage: textureUsage(),
+    }) as { createView: () => unknown; destroy?: () => void };
+    this.proofBuffer = this.device.createBuffer({
+      size: 16,
+      usage: GPU_BUFFER_USAGE_UNIFORM | GPU_BUFFER_USAGE_COPY_DST,
+    });
     if (this.device.lost) {
       void this.device.lost.then((info) => {
         if (!this.destroyed) this.setFallback(`GPU 设备丢失: ${info.reason ?? info.message ?? "未知原因"}`);
@@ -893,11 +949,14 @@ export class WebGpuCompositor {
       }],
     });
     present.setPipeline(this.presentPipeline);
+    if (this.proofBuffer) this.device!.queue.writeBuffer(this.proofBuffer, 0, new Uint32Array([this.proofMode, this.proofMode === 2 ? 1 : 0, 0, 0]));
     present.setBindGroup(0, this.device!.createBindGroup({
       layout: this.presentLayout,
       entries: [
         { binding: 0, resource: this.presentSampler },
         { binding: 1, resource: targets.textures[current].createView() },
+        { binding: 2, resource: this.proofTexture!.createView() },
+        { binding: 3, resource: { buffer: this.proofBuffer } },
       ],
     }));
     present.draw(6);

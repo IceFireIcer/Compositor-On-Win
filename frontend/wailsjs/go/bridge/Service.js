@@ -370,6 +370,10 @@ export function ConvertLayerDepth(arg1) {
   return window['go']['bridge']['Service']['ConvertLayerDepth'](arg1);
 }
 
+export function ConvertHDRToSixteenBit(arg1) {
+  return window['go']['bridge']['Service']['ConvertHDRToSixteenBit'](arg1);
+}
+
 export function LayerDepthInfo() {
   return window['go']['bridge']['Service']['LayerDepthInfo']();
 }

@@ -20,6 +20,7 @@
   import { workspace } from "../state/workspace";
   import { canvasEditTarget, clearMaskTarget, selectMaskTarget } from "../state/layerTarget";
   import { requestLayerMask, type LayerMaskOperation } from "../state/layerMask";
+  import { layerDepth } from "../state/layerDepth";
 
   /**
    * The layer panel (ticket 20 shell + bridge wiring). Rows render top→bottom
@@ -277,6 +278,9 @@
             title="双击重命名"
           >
             {layer.name}
+            {#if $layerDepth.labels[layer.id]}
+              <span class="depth">{ $layerDepth.labels[layer.id] }</span>
+            {/if}
           </span>
         {/if}
 
@@ -523,6 +527,13 @@
 
   .name.group {
     font-weight: 600;
+  }
+
+  .depth {
+    margin-left: 6px;
+    color: var(--text-dim, #9aa);
+    font-size: 10px;
+    letter-spacing: 0.04em;
   }
 
   .rename {

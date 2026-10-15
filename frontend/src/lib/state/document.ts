@@ -442,6 +442,7 @@ export function applyDocumentSnapshot(raw: string, expectedDocId?: string): bool
   if (!guides.ok) console.warn("document: 参考线无法解析", guides.error);
   // 文档变了，标签栏的脏标记/尺寸可能也变了 —— 见 scheduleWorkspaceRefresh。
   scheduleWorkspaceRefresh();
+  void import("./layerDepth").then((m) => m.refreshLayerDepth());
   return true;
 }
 

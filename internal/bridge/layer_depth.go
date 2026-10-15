@@ -61,6 +61,37 @@ func convertibleLayer(sess *session) (*domain.Layer, *render.Bitmap, error) {
 	return nil, nil, fmt.Errorf("没有活动图层")
 }
 
+// ConvertHDRToSixteenBit 是 HDR 图层的「转换为 16 位」（票 71）。它把高于白色的
+// 光裁到白，图层保持 16 位，比半精度浮点更细。这和 ConvertLayerDepth 对 HDR
+// 图层的处理不同：那条是抖降到 8 位并丢掉深层像素。撤销装回原来的 HDR 栅格，
+// 所以高光没有被永久截掉。
+func (s *Service) ConvertHDRToSixteenBit(tabID string) (string, error) {
+	if s.ws == nil {
+		return "", errNoDocument
+	}
+	return s.ws.editDrawingTabFor(tabID, func(*session) string {
+		return "转换为 16 位"
+	}, func(sess *session) (*rasterChange, error) {
+		layer, bmp, err := convertibleLayer(sess)
+		if err != nil {
+			return nil, err
+		}
+		if bmp == nil || bmp.Deep == nil || !bmp.Deep.HDR {
+			return nil, fmt.Errorf("活动图层不是 HDR 图层")
+		}
+		converted := bmp.Clone()
+		converted.Deep = render.HalfToSixteen(bmp.Deep)
+		derived := converted.Deep.ToBitmap()
+		converted.Pix = derived.Pix
+		key := *layer.ImageFile
+		sess.bitmaps[key] = converted
+		return &rasterChange{
+			before: map[string]*render.Bitmap{key: bmp},
+			after:  map[string]*render.Bitmap{key: converted},
+		}, nil
+	})
+}
+
 // ConvertLayerDepth 在 8 位与 16 位之间转换活动图层，作为一次撤销。
 func (s *Service) ConvertLayerDepth(tabID string) (string, error) {
 	if s.ws == nil {

@@ -37,7 +37,21 @@ func applyAdjustment(a *domain.Adjustment, b *Bitmap) bool {
 		ApplyLUT(b, BuildCurvesLUT(a.Curves, 256))
 		return true
 	case domain.AdjustmentExposure:
-		ApplyLUT(b, BuildExposureLUT(exposureOrDefault(a), 256))
+		settings := exposureOrDefault(a)
+		// An HDR layer keeps light past white. The 8-bit LUT clips at 1, so
+		// turning exposure down could never bring a highlight back into view
+		// (ticket 71, DeepLayer.exposure).
+		if b != nil && b.Deep != nil && b.Deep.HDR {
+			gamma := settings.Gamma
+			if gamma == 0 {
+				gamma = 1
+			}
+			HDRExposure(b.Deep, float32(math.Pow(2, settings.Exposure)), float32(settings.Offset), float32(1/gamma))
+			derived := b.Deep.ToBitmap()
+			b.Pix = derived.Pix
+			return true
+		}
+		ApplyLUT(b, BuildExposureLUT(settings, 256))
 		return true
 	case domain.AdjustmentHueSaturation:
 		ApplyCube(b, BuildHueSaturationCube(a))

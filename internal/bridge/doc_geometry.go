@@ -210,6 +210,16 @@ func applyImageSize(sess *session, req imageSizeRequest) error {
 		origTransform := l.Transform // masks re-rasterize through the same mapping
 		dst := render.NewBitmap(w, h)
 		render.DrawTransformed(src, origTransform, sx, sy, dst, left, top, sampling)
+		// A 16-bit or HDR layer resamples its own raster. The 8-bit bitmap
+		// above is the derived copy of that result, not the other way round:
+		// widening a dithered resample would invent steps (ticket 69).
+		if src.Deep != nil {
+			dst.Deep = render.DrawTransformedDeep(src.Deep, origTransform, sx, sy, w, h, left, top, sampling)
+			if dst.Deep != nil {
+				derived := dst.Deep.ToBitmap()
+				dst.Pix = derived.Pix
+			}
+		}
 		// The pixels now carry rotation/flips; the transform is plain.
 		l.Transform = domain.Transform{
 			Origin:   [2]float64{left, top},
@@ -222,7 +232,7 @@ func applyImageSize(sess *session, req imageSizeRequest) error {
 		// The asset keeps the layer's own name: project.validate requires
 		// <LAYERID>.png, so a fresh UUID here would make the resampled
 		// document unsaveable (the .comp round trip rejects it on open).
-		newName := layerAssetName(l.ID)
+		newName := layerAssetNameFor(l.ID, dst)
 		if err := renameAsset(sess, *l.ImageFile, newName, dst); err != nil {
 			return err
 		}

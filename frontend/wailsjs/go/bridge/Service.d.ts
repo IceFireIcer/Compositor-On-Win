@@ -187,6 +187,8 @@ export function LoadCMYKProfile(arg1:string):Promise<string>;
 
 export function ConvertLayerDepth(arg1:string):Promise<string>;
 
+export function ConvertHDRToSixteenBit(arg1:string):Promise<string>;
+
 export function LayerDepthInfo():Promise<string>;
 
 export function SelectColorRange(arg1:string,arg2:string):Promise<string>;

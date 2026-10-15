@@ -78,8 +78,9 @@ function gpuHarness() {
       ...texture(),
       usage: descriptor.usage as number,
       format: descriptor.format,
+      bytes: new ArrayBuffer(64),
     }),
-    createBuffer: () => ({ destroy: () => undefined }),
+    createBuffer: () => ({ destroy: () => undefined, bytes: new ArrayBuffer(64) }),
     createSampler: () => ({}),
     createBindGroup: () => ({}),
     createCommandEncoder: () => ({
@@ -271,11 +272,11 @@ describe("WebGpuCompositor public contract", () => {
         const resource = group.entries.find((entry) => entry.binding === 2)?.resource as
           | { buffer: Buffer; offset?: number }
           | undefined;
-        if (resource) submitted.push(Array.from(new Float32Array(resource.buffer.bytes, resource.offset ?? 0, 8)));
+        if (resource?.offset !== undefined) submitted.push(Array.from(new Float32Array(resource.buffer.bytes, resource.offset, 8)));
       }
     };
     (harness.device as unknown as { createBuffer: (descriptor: { size: number }) => Buffer }).createBuffer =
-      ({ size }) => ({ bytes: new ArrayBuffer(size), destroy: () => undefined });
+      ({ size }) => ({ bytes: new ArrayBuffer(Math.max(size, 16)), destroy: () => undefined });
     (harness.device as unknown as { createBindGroup: (descriptor: BindGroup) => BindGroup }).createBindGroup =
       (descriptor) => descriptor;
     (harness.device as { createCommandEncoder: () => unknown }).createCommandEncoder = () => {
