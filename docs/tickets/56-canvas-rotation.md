@@ -72,6 +72,7 @@
    之前先 `commitTransformSession()`，草稿不会再落到转过的画布上（有用例钉住顺序）。
    `cancelCrop()` / `finishOpacityEdit()` 没有等价的前端会话；Go 侧遇到在飞的笔刷/滤镜/修复/保存会直接
    拒绝（`editTransformTab` 的 `errDocumentBusy`），所以不会出现静默错值，但用户看到的是「忙」而不是
-   「先结算再转」。`flipCanvas` 的 `commitTransform()` 仍未接（同一形状，未在本票范围）。
+   「先结算再转」。`flipCanvas` 同样补上了这次结算（`actions.ts`，与旋转同一形状）；它没有单独的
+   顺序用例，共用旋转那条。
 4. **参考线只由 Go 转一次**：前端 `applyDocumentSnapshot → syncGuidesFromDocument` 重建镜像，前端不再
    `offsetGuides` 二次旋转（与 `crop.go` 的约定相同）。

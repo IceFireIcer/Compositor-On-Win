@@ -639,6 +639,16 @@ export async function flipCanvas(axis: "horizontal" | "vertical"): Promise<void>
   const tab = currentTab();
   const doc = get(document);
   if (!tab || !doc.docId) return;
+  // 与画布旋转同一条规则（原版 flipCanvas 也先 commitTransform）：在飞的变换草稿必须
+  // 先落到文档上，否则它会在翻转过的画布上提交。
+  if (get(transformSession)) {
+    try {
+      await commitTransformSession();
+    } catch (err) {
+      console.warn("翻转前结算变换会话失败", err);
+      return;
+    }
+  }
   try {
     applyDocumentSnapshot(await FlipCanvas(tab.id, axis), doc.docId);
   } catch (err) {
