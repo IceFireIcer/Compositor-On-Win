@@ -64,6 +64,14 @@
   与其它内核同一条路：`TestGoldenReferencesMatchGoPorts` 逐个 case 比 ref PNG，
   ε 取 case JSON 里的声明。实测 4 个 case 全部通过（最大逐通道偏差 Δ0，声明 ε1）。
 
+## 已知差异
+
+1. **Glow 不是上游算法**：上游在 1/shrink 尺度上模糊（`Scanlines.swift:84-89`），Go 侧做的是全尺寸
+   高斯；黄金驱动的 `scanlines` 命令也没有 glow 参数，所以这条偏离**从未与参考比对过**。
+2. **注释语言**：`internal/render/scanlines.go` 的注释是中文，而该目录其余是英文、它移植的
+   `tests/golden/c/ScanlinesPixels.c` 也是英文。数值常数与出处注释都保留了，只是与 C 拷贝的逐行
+   可比性变差。
+
 ## 参数与默认值（对齐 `Scanlines.swift`）
 
 | 参数 | 范围 | 默认 |

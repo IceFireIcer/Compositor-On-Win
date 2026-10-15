@@ -6,9 +6,9 @@
 
 **Status:** done（1.4.6–1.4.9 增量候选）
 
-- [x] 对照上游 1.4.9 数值基准复核曝光、对比、高光/阴影、去朦胧、纹理、清晰度及锐化；色彩族另见 90。
+- [x] 对照上游 1.4.9 数值基准复核**曝光**、去朦胧、纹理、清晰度及锐化；色彩族另见 90。**对比/高光/阴影只对齐到被取代的祖先算法**：`0b4c56c` 的 `tone_bump` 随后被 `75147a2` 的 adaptive 查表阶段取代，pin 的 `AdjustPixels.c` 与整个 `reference/Swift` 里都已没有该符号，而那一步需要测量数据（票 78/90）。票面自己的已知差异也记着对比/白平衡/白黑/饱和未对齐。
 - [x] 色彩降噪忽略透明像素对饱和度的污染，仅平滑色度并保留亮度；高光/阴影调整不颠倒明暗顺序。
-- [x] 对应 `CameraRawTests` 用例建立可复现的参考像素和容差；旧 1.4.5 黄金样本的数值变化单独记录。
+- [x] 对应 `CameraRawTests` 用例建立可复现的参考像素和容差（曲线/特效/细节/光学/校准/混色/分级/辉光/晕影）；旧 1.4.5 黄金样本的数值变化单独记录。**tone 路径没有活样本**：基础 `camera-raw` 用例已退役到 `tests/golden/legacy/`，`cases/` 里没有覆盖高光/阴影的用例，所以那条路径只对着被取代的祖先算法，没有与 pin 比对过。
 - [x] 同图同设置预览与提交一致；查表与预览性能另见 78。
 
 对等矩阵：U10。原版锚点：`CameraRaw*.swift`、`CameraRawTests.swift`；提交 `42a559b`、`75147a2`、`0b4c56c`。色彩族与性能分见 90、79。
@@ -23,7 +23,7 @@
 
 | 上游提交 | 改动 | Go 位置 |
 | --- | --- | --- |
-| `0b4c56c` | 高光/阴影改用 `tone_bump`（u(1−2u)²）：曲线斜率恒为正，黑白与中灰不动 | `camToneBump` / `camToneShadows` / `camToneHighlights` |
+| `0b4c56c` | 高光/阴影改用 `tone_bump`（u(1−2u)²）：曲线斜率恒为正，黑白与中灰不动。**已被下面的 `75147a2` 取代**——pin 里没有 `tone_bump`，上游现在走 adaptive 查表阶段（`CameraRawTables.swift:164-166`），那一步需要测量数据 | `camToneBump` / `camToneShadows` / `camToneHighlights`（对齐到被取代的祖先） |
 | `42a559b` | 色彩降噪改为「红/蓝相对亮度的色差按 alpha 加权模糊后放回，亮度不变」 | `ApplyCameraRawDetail` 的 `noiseColor` 段 |
 | `75147a2` | 去雾读画面自身最亮 1% 的雾色；纹理/清晰度改用保边（guided）滤波、半径与画面边长成比例；Masking 0 时全图锐化、强度 1.9×(0.5+Detail) | `camDehazeHaze` / `camEffectsDehaze` / `guidedFilterPlane` / `ApplyCameraRawEffects` / `ApplyCameraRawDetail` |
 
