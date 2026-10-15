@@ -11,6 +11,7 @@
 | LevelsPixels、BrushPixels、LensPixels、NoisePixels、WandPixels | `865e4675d09de64c3e4ad90aeacee8997542f4ae`（docs 基线） |
 | ScanlinesPixels（票 60） | `e8c9e29701528413cc0e608d61187c1c61790add`（v1.5.1-8-ge8c9e29，子模块当前 pin） |
 | AdjustPixels（票 63）、HealPixels + PatchPixels（票 65） | `e8c9e29701528413cc0e608d61187c1c61790add` |
+| DeepPixels（票 68，仅拷贝，驱动尚未接入） | `e8c9e29701528413cc0e608d61187c1c61790add` |
 
 `865e467` 早于这些内核的最后一次改动，而 `e8c9e29` 是子模块的当前 pin：
 两组拷贝因此各自注明自己的来源提交。票 63/64/65 把改过的内核整体搬到 pin，

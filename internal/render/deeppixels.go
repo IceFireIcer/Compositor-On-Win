@@ -2,12 +2,16 @@ package render
 
 import "math"
 
-// The half-float and HDR kernels of DeepPixels.c (copied to
-// tests/golden/c/DeepPixels.c at commit e8c9e29; the copy replaces the C's
-// dispatch_apply row bands with a serial loop, which is byte-identical). The
-// arithmetic stays in float32 to match the C exactly: Go folds untyped
-// constants at higher precision, so every constant below is spelled as a
-// float32 expression.
+// The half-float and HDR kernels of DeepPixels.c. The C is copied, with a
+// provenance header only, to tests/golden/c/DeepPixels.c at commit e8c9e29.
+// It is not differentially driven yet: deep_rows uses Apple dispatch_apply,
+// so the Windows driver still needs the serial-band adapter the other
+// kernels use. Until that lands, these functions are checked against known
+// values rather than against the C binary.
+//
+// The arithmetic is meant to stay in float32. Two known gaps remain:
+// math.Pow is float64 where the C uses powf, and the curve exponents are
+// folded as untyped constants. HalfToFloat and FloatToHalf are bit-exact.
 
 // inf32 is the C's INFINITY.
 var inf32 = float32(math.Inf(1))
