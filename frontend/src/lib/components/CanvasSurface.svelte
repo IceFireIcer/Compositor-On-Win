@@ -8,6 +8,7 @@
     documentPoint,
     documentRect,
     keyboardZoomTarget,
+    middleZoomFactor,
     panByStore,
     pointsPerPixel,
     resizeViewport,
@@ -27,7 +28,15 @@
     updateHealSettings,
     wandSettings,
   } from "../state/tools";
-  import { eyedropperClick } from "../state/filters";
+  import { eyedropperClick, filterSession, updateFilterSettings } from "../state/filters";
+  import {
+    PROGRESSIVE_HANDLE_RADIUS,
+    beginProgressiveDrag,
+    defaultProgressiveLine,
+    moveProgressiveHandle,
+    progressiveLine,
+    type ProgressiveHandle,
+  } from "../state/progressiveBlur";
   import {
     currentSelection,
     ellipseRegion,
@@ -139,6 +148,13 @@
   let viewWidth = $state(0);
   let viewHeight = $state(0);
   let panning = $state(false);
+  // 中键 + Command/Control：绕按下点缩放（票 75，EditorCanvas.swift:2041-2048）。
+  // 锚点是按下时的视图坐标，拖到哪算到哪，与平移各自独立。
+  let middleZoom = $state<{ anchorX: number; anchorY: number; zoom: number } | null>(null);
+  let middleZoomOut = $state(false);
+  // 票 73：渐进模糊线的拖动。端点本身存在滤镜会话的设置里（文档坐标），这里只记
+  // 「正在拖哪一个」，所以对话框滑杆与画布拖动改的是同一份状态。
+  let progressiveDrag: ProgressiveHandle | null = null;
 
   type SelectionGesture =
     | {
@@ -408,8 +424,32 @@
     })(),
   );
   const cursor = $derived(
-    cursorForTool({ tool: $activeTool, bits: $modifierBits, panning }),
+    cursorForTool({
+    tool: $activeTool,
+    bits: $modifierBits,
+    panning,
+    middleZoom: middleZoom ? (middleZoomOut ? "out" : "in") : null,
+  }),
   );
+
+  /**
+   * 票 73：渐进模糊的线，文档坐标。滤镜会话的 kind 是渐进模糊时才有；设置里
+   * 缺端点就按默认落点补（与 Go 侧同一条公式），所以线总是画得出来。
+   */
+  const progressiveOverlay = $derived.by(() => {
+    const session = $filterSession;
+    if (!session || session.kind !== "progressiveBlur") return null;
+    const layer = docState.layers.find((candidate) => candidate.id === session.layerId);
+    const fallback = defaultProgressiveLine(
+      {
+        origin: layer?.transform.origin ?? [0, 0],
+        size: layer?.transform.size ?? [doc.width, doc.height],
+      },
+      doc.width,
+      doc.height,
+    );
+    return progressiveLine(session.settings, fallback);
+  });
 
   // The composited document image, rendered Go-side at /render/{id}.png and
   // cache-busted by the document rev. Only shown while this tab is the
@@ -1017,9 +1057,40 @@
         return;
       }
     }
+    if (e.button === 1 && (e.ctrlKey || e.metaKey)) {
+      // Middle + Command/Control zooms about the press point, as in Blender;
+      // it keeps its own anchor so it cannot disturb a left-button drag.
+      const r = stage!.getBoundingClientRect();
+      middleZoom = {
+        anchorX: e.clientX - r.left,
+        anchorY: e.clientY - r.top,
+        zoom: get(viewport).zoom,
+      };
+      middleZoomOut = false;
+      stage?.setPointerCapture(e.pointerId);
+      e.preventDefault();
+      return;
+    }
     if (e.button === 1 || ((spaceHeld || $activeTool === "hand") && e.button === 0)) {
       panDrag = { x: e.clientX, y: e.clientY };
       panning = true;
+      stage?.setPointerCapture(e.pointerId);
+      e.preventDefault();
+      return;
+    }
+    // 票 73：渐进模糊打开时左键归它（原版 beginProgressiveDrag，
+    // EditorCanvas.swift:2463-2474）：抓住某个端点就拖它，按在别处则**重开一条
+    // 线**（两端先落在指针上，接着拖终点）—— 「在画布上拖出两点」是一次手势。
+    if (e.button === 0 && progressiveOverlay) {
+      const tolerance = PROGRESSIVE_HANDLE_RADIUS / Math.max(pointsPerPixel(get(viewport)), 0.0001);
+      const begun = beginProgressiveDrag(docPointOf(e), progressiveOverlay, tolerance);
+      if (begun.line !== progressiveOverlay) {
+        updateFilterSettings({
+          progressiveStart: [begun.line.start.x, begun.line.start.y],
+          progressiveEnd: [begun.line.end.x, begun.line.end.y],
+        });
+      }
+      progressiveDrag = begun.handle;
       stage?.setPointerCapture(e.pointerId);
       e.preventDefault();
       return;
@@ -1137,6 +1208,21 @@
       queueSample(docPixelOf(e), e.altKey);
       return;
     }
+    if (progressiveDrag && progressiveOverlay) {
+      const moved = moveProgressiveHandle(progressiveOverlay, progressiveDrag, docPointOf(e), e.shiftKey);
+      updateFilterSettings({
+        progressiveStart: [moved.start.x, moved.start.y],
+        progressiveEnd: [moved.end.x, moved.end.y],
+      });
+      return;
+    }
+    if (middleZoom) {
+      const r = stage!.getBoundingClientRect();
+      const factor = middleZoomFactor(middleZoom.anchorY, e.clientY - r.top);
+      middleZoomOut = factor < 1;
+      zoomAt(middleZoom.zoom * factor, middleZoom.anchorX, middleZoom.anchorY, doc.width, doc.height);
+      return;
+    }
     if (panDrag) {
       panByStore(e.clientX - panDrag.x, e.clientY - panDrag.y);
       panDrag = { x: e.clientX, y: e.clientY };
@@ -1245,9 +1331,12 @@
       }
       return;
     }
-    if (panDrag) stage?.releasePointerCapture(e.pointerId);
+    if (panDrag || middleZoom || progressiveDrag) stage?.releasePointerCapture(e.pointerId);
     panDrag = null;
     panning = false;
+    middleZoom = null;
+    middleZoomOut = false;
+    progressiveDrag = null;
   }
 
   function onPointerCancel(e: PointerEvent): void {
@@ -1267,6 +1356,9 @@
     samplePending = null;
     panDrag = null;
     panning = false;
+    middleZoom = null;
+    middleZoomOut = false;
+    progressiveDrag = null;
     if (stage?.hasPointerCapture(e.pointerId)) stage.releasePointerCapture(e.pointerId);
   }
 
@@ -1427,6 +1519,21 @@
             <circle class="transform-handle rotation-handle" cx={rotationGrip.x} cy={rotationGrip.y} r={4 / Math.max(ppp, 0.0001)} />
           {/if}
         {/if}
+      </svg>
+    {/if}
+    {#if progressiveOverlay}
+      <!-- 票 73：渐进模糊的线。viewBox 用文档像素（与 .doc 同系），所以端点直接
+           是文档坐标；线宽/手柄半径除以 ppp 保持屏幕尺寸不随缩放变粗。 -->
+      <svg class="progressive-line" viewBox="0 0 {doc.width} {doc.height}" preserveAspectRatio="none" aria-hidden="true">
+        <line
+          x1={progressiveOverlay.start.x}
+          y1={progressiveOverlay.start.y}
+          x2={progressiveOverlay.end.x}
+          y2={progressiveOverlay.end.y}
+          vector-effect="non-scaling-stroke"
+        />
+        <circle class="progressive-handle" cx={progressiveOverlay.start.x} cy={progressiveOverlay.start.y} r={PROGRESSIVE_HANDLE_RADIUS / Math.max(ppp, 0.0001)} />
+        <circle class="progressive-handle" cx={progressiveOverlay.end.x} cy={progressiveOverlay.end.y} r={PROGRESSIVE_HANDLE_RADIUS / Math.max(ppp, 0.0001)} />
       </svg>
     {/if}
     {#if $showGuides && $visibleGuides.length > 0}
@@ -1703,6 +1810,26 @@
     fill: none;
     stroke: #3b82f6;
     stroke-width: 1;
+    vector-effect: non-scaling-stroke;
+  }
+
+  /* 渐进模糊的线（票 73）：与变换框同一套画法 —— svg 被非等比拉伸，所以线宽靠
+     vector-effect 固定，手柄半径则按 ppp 折算，屏幕上始终一样大。 */
+  .progressive-line {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+  }
+  .progressive-line line {
+    stroke: #f59e0b;
+    stroke-width: 2;
+    stroke-dasharray: 6 4;
+    vector-effect: non-scaling-stroke;
+  }
+  .progressive-handle {
+    fill: #ffffff;
+    stroke: #f59e0b;
+    stroke-width: 2;
     vector-effect: non-scaling-stroke;
   }
 

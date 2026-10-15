@@ -59,7 +59,7 @@
 | --- | --- | --- | --- | --- | --- |
 | C18 | Fit Canvas / Actual Pixels / Zoom In/Out | ⌘0/⌘1/=/- | 3 | M3 | ☑ 票13+47：视口命令 + 快捷键/视图菜单 |
 | C19 | Pixel Grid 开关（≥800%） | — | 5 | M3 | ◐ 像素网格 ≥800% 自动显示（`CanvasSurface.svelte:320,852`，`PIXEL_GRID_ZOOM` ← `state/viewport.ts:32`）；原版的 showsPixelGrid 开关没有 store/入口，`Menus:Show Grid`（`actions.ts:683`）绑的是布局网格（原版 Show ▸ Grid，属 C22） |
-| C20 | Snap 总开关 | — | 7 | M3 | ◐ 开关已接（`state/view.ts:38` + 菜单「对齐」`MenuBar.svelte:512` + ⇧⌘; `table.ts:97`），但零消费端：`snapOptions()`/`guideTargets()`（`view.ts:162,171`）只被测试引用，画布拖拽（`CanvasSurface.svelte:540`）与裁剪都没把目标传进 `snap()` |
+| C20 | Snap 总开关 | — | 7 | M3 | ☑ 票76：总开关与四个子目标都接上并持久化（`state/view.ts` 的 `snapEnabled`/`snapToggles`，键名照抄原版 ToolDefaults）；菜单「对齐」+ ⇧⌘; + 命令面板动态勾选；消费端见 V04 |
 | C21 | Show Transform Controls | ⌘H | 34 | M3 | ◐ store 与测试齐备（`transformSession.ts:1063` showsTransformControls）但零消费者；⌘H 与菜单项接到 `beginTransformSession`（`actions.ts:690`、`MenuBar.svelte:538`），画布只在会话存在时画控件（`CanvasSurface.svelte:867`）——按 ⌘H 得到的是开会话，不是切换控件 |
 | C22 | Grid ' / Guides ; / Rulers ⌘R 开关 | ' ; ⌘R | 6 | M3 | ☑ 三个开关都接上并可见：`state/view.ts:29,32,35` + 菜单勾（`MenuBar.svelte:485-510`）+ ⌘'/⌘;/⌘R（`table.ts:94-96`）；画布真的画布局网格/参考线/标尺（`CanvasSurface.svelte:858,888,974`），`view.test.ts` 覆盖 |
 | C23 | Grid Settings…（间距/细分） | — | 6 | M3 | ☐ 无 Grid Settings 表单/菜单项，Go 侧也没有 gridSettings（internal grep = 0）；布局网格参数硬编码 normalizeGrid(64, 8)（`state/view.ts:47`） |
@@ -210,7 +210,7 @@
 | V01 | 视口：0.001–32×、17 级梯、锚点保持、fit/100% | `CanvasViewport` | 3 | M3 | ☑ 票13：0.001–32× / 17 级梯 / 锚点保持 / fit / 100%（`state/viewport.ts`、`viewport.test.ts`），已接画布（`CanvasSurface.svelte:315,658`）与 ⌘0/⌘1/=/− |
 | V02 | 像素网格 ≥800% / 棋盘格 / 文档边界 | `drawPixelGrid` | 5/8 | M3 | ☑ 像素网格 ≥800%（`CanvasSurface.svelte:320`）+ 棋盘格 + 文档边界叠层（`CanvasSurface.svelte:828-857`），`viewport.test.ts` 覆盖阈值 |
 | V03 | 标尺/参考线（拖出/移动/拖回删除/锁定/清除）/布局网格 | `Guides.swift` | 6-7 | M3 | ☑ 标尺（`CanvasSurface.svelte:974-999`）+ 参考线拖出/移动/拖回标尺删除（`:602,635,750`）+ 锁定（`:582`）+ 清除（`MenuBar.svelte:530`）+ 布局网格（`:858`）；持久化走 `SetGuides`（`internal/bridge/guides.go:30`、`guides_test.go`） |
-| V04 | 吸附：参考线/网格/图层/文档边界 + Ctrl 旁路 | `TransformSnap`/`CropSnap` | 35 | M3 | ◐ 内核齐备（`state/snap.ts:221`、`snap.test.ts`，含 Ctrl 旁路与四目标）；零消费端：`state/view.ts:162 snapOptions()` 只被测试引用，画布拖拽（`CanvasSurface.svelte:540`）未传 targets |
+| V04 | 吸附：参考线/网格/图层/文档边界 + Ctrl 旁路 | `TransformSnap`/`CropSnap` | 35 | M3 | ☑ 内核齐备（`state/snap.ts`、`snap.test.ts`，含 Ctrl 旁路与四目标）且已有消费端：图层拖拽（`CanvasSurface.svelte` 的 `canvasSnapInput`）与裁剪（`CropOverlay.svelte:233,242`）都把 targets 传进 `snap()`；票76 补上总开关门控与偏好持久化 |
 | V05 | 锐利缩小采样（Lanczos 级联） | `DownsampleCache` | 51 | M2 | ☐ 全仓无 Lanczos/降采样实现（internal/render grep = 0），缩放靠 CSS img |
 | V06 | 数值拖拽调节（拖标签 scrub）/方向键步进/点击跳转 | `NumericScrub`/`SliderSnap` | 54 | M3 控件 | ◐ 纯函数 + 测试齐备（`components/numeric.ts:68,102,116`、`numeric.test.ts`）；零生产消费者（各表单仍用原生 input） |
 | V07 | 合成徽标光标（加选/减选/吸管/旋转等 ~10 种） | NSCursor 家族 | — | M3 | ☑ 票13：合成徽标光标按工具/修饰键切换（`components/cursors.ts`、`cursors.test.ts`），已接画布（`CanvasSurface.svelte:340`） |
@@ -294,10 +294,10 @@
 | U17 | .comp HDR/EXR 存取与版本门控 | 70 | M1/M7 | ✅ 非 sRGB 色度仍按数字读取 |
 | U18 | HDR 编辑与画布预览 | 71 | M2/M7 | ◐ 图层编辑已保留高光，调整图层待 82 |
 | U19 | CMYK ICC 校样 | 72 | M2/M7 | ◐ 查找表已接到显示，无内置 ICC |
-| U20 | Progressive Blur | 73 | M5 | ☐ |
-| U21 | 欢迎页粘贴、标签栏和图层建项目 | 74 | M0/M7 | ☐ |
-| U22 | 中键平移与修饰键缩放 | 75 | M3 | ☐ |
-| U23 | Snap 总开关与命令状态 | 76 | M3/M9 | ☐ |
+| U20 | Progressive Blur | 73 | M5 | ✅ 可变半径用 8 档高斯阶梯近似 |
+| U21 | 欢迎页粘贴、标签栏和图层建项目 | 74 | M0/M7 | ☐ 勘察完成，缺「按图像尺寸新建项目」入口 |
+| U22 | 中键平移与修饰键缩放 | 75 | M3 | ✅ |
+| U23 | Snap 总开关与命令状态 | 76 | M3/M9 | ✅ |
 | U24 | 文件夹直接子图像批量导入 | 77 | M7 | ☐ |
 | U25 | Camera Raw 查表与预览性能 | 78 | M5/M10 | ☐ |
 | U26 | 半透明像素的图层特效着色 | 79 | M5 | ☐ |

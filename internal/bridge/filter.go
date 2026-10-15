@@ -37,6 +37,8 @@ const (
 	FilterAdjustPrefix     = "adjust:"
 	// 票 60：从 Dither 风格里独立出来的 Scanlines 滤镜（原版 FilterKind.scanlines）。
 	FilterScanlines = "scanlines"
+	// 票 73：画布上拖两点控制模糊渐变的渐进模糊（原版 FilterKind.progressiveBlur）。
+	FilterProgressive = "progressiveBlur"
 )
 
 // filterNames maps kinds to their history entry names (undo menu labels).
@@ -54,6 +56,7 @@ var filterNames = map[string]string{
 	FilterContentFill:      "内容感知填充",
 	FilterDither:           "抖动",
 	FilterScanlines:        "扫描线",
+	FilterProgressive:      "渐进模糊",
 	FilterRemoveBackground: "移除背景",
 }
 
@@ -88,6 +91,16 @@ type filterParams struct {
 	TonalHighlights float64 `json:"tonalHighlights"` // −100–100
 
 	Distortion float64 `json:"distortion"` // lens correction, −100–100
+
+	// 票 73 渐进模糊：模糊量从线段起点处的 From 渐变到终点处的 To（径向时从起点
+	// 向外）。两个端点是**文档坐标**，所以缩放、平移之后仍然贴着同一处图像
+	// （原版 FilterSettings.progressiveStart/End）。
+	ProgressiveFrom     float64     `json:"progressiveFrom"`
+	ProgressiveTo       float64     `json:"progressiveTo"`
+	ProgressiveStart    *[2]float64 `json:"progressiveStart,omitempty"`
+	ProgressiveEnd      *[2]float64 `json:"progressiveEnd,omitempty"`
+	ProgressiveRadial   bool        `json:"progressiveRadial"`
+	ProgressiveInverted bool        `json:"progressiveInverted"`
 
 	Dither render.DitherSettings `json:"dither"` // dither filter
 	// 票 60：独立 Scanlines 滤镜的参数（render.ScanlinesSettings）。
@@ -125,6 +138,10 @@ func (p *filterParams) normalized(kind string) filterParams {
 	case FilterMotion:
 		r.Angle = clampF(p.Angle, -90, 90, 0)
 		r.Distance = clampF(p.Distance, 1, 2000, 10)
+	case FilterProgressive:
+		// 原版 FilterSettings 的默认：From 0、To 20，线性、不反相。
+		r.ProgressiveFrom = clampF(p.ProgressiveFrom, 0, 250, 0)
+		r.ProgressiveTo = clampF(p.ProgressiveTo, 0, 250, 20)
 	case FilterAddNoise:
 		r.Amount = clampF(p.Amount, 0.1, 400, 10)
 	case FilterVignette:
@@ -402,6 +419,40 @@ func vignetteFrameFor(work *render.Bitmap, workT domain.Transform, docW, docH in
 	return vignetteFrame{x: minX, y: minY, w: maxX - minX, h: maxY - minY, fillsClear: true}
 }
 
+// progressiveLine is the ramp's two endpoints in the working grid's pixels.
+// The settings hold document coordinates, so zooming and panning never move
+// the line off the image it was placed on (ticket 73); a payload that names
+// none falls back to the same default the dialog opens with.
+func (p *filterParams) progressiveLine(work *render.Bitmap, workT domain.Transform, docW, docH int) (render.Point, render.Point) {
+	startDoc := [2]float64{float64(docW) / 2, float64(docH) * 0.35}
+	endDoc := [2]float64{float64(docW) / 2, float64(docH)}
+	if p.ProgressiveStart != nil {
+		startDoc = *p.ProgressiveStart
+	}
+	if p.ProgressiveEnd != nil {
+		endDoc = *p.ProgressiveEnd
+	}
+	sx, sy := docToLayerIndex(workT, work.W, work.H, startDoc[0], startDoc[1])
+	ex, ey := docToLayerIndex(workT, work.W, work.H, endDoc[0], endDoc[1])
+	return render.Point{X: sx, Y: sy}, render.Point{X: ex, Y: ey}
+}
+
+// defaultProgressiveLine is where Progressive Blur starts on the layer: sharp
+// at the top of its visible part, blurring to its foot (Filters.swift:706-713).
+// The area is the layer's placement intersected with the canvas; an empty or
+// off-canvas placement falls back to the whole canvas.
+func defaultProgressiveLine(t domain.Transform, docW, docH int) ([2]float64, [2]float64) {
+	minX := math.Max(0, t.Origin[0])
+	minY := math.Max(0, t.Origin[1])
+	maxX := math.Min(float64(docW), t.Origin[0]+t.Size[0])
+	maxY := math.Min(float64(docH), t.Origin[1]+t.Size[1])
+	if maxX <= minX || maxY <= minY {
+		minX, minY, maxX, maxY = 0, 0, float64(docW), float64(docH)
+	}
+	midX := (minX + maxX) / 2
+	return [2]float64{midX, minY + (maxY-minY)*0.35}, [2]float64{midX, maxY}
+}
+
 // runFilterJob applies one filter kind to work in place at the given scale
 // (PixelFilter.run). blur kernels receive the scaled slider so a
 // downscaled preview blurs proportionally less. clampSides names the working
@@ -423,6 +474,14 @@ func runFilterJob(kind string, work *render.Bitmap, p *filterParams, clampSides 
 		// CIMotionBlur's radius per streak pixel: an even streak of length d
 		// spreads d/√12, so this radius matches its spread.
 		render.ApplyMotionBlurSides(work, p.Angle, p.Distance*scale*render.MotionRadiusPerPixel, clampSides)
+	case FilterProgressive:
+		start, end := p.progressiveLine(work, workT, docW, docH)
+		render.ApplyProgressiveBlur(work, render.ProgressiveBlurSettings{
+			Start: start, End: end,
+			From: p.ProgressiveFrom * scale, To: p.ProgressiveTo * scale,
+			Radial: p.ProgressiveRadial, Inverted: p.ProgressiveInverted,
+			Clamp: clampSides,
+		})
 	case FilterBloom:
 		render.ApplyBloom(work, p.BloomRadius*scale, p.BloomAmount/50)
 	case FilterAddNoise:

@@ -7,6 +7,7 @@ import {
 import { workspace } from "./workspace";
 import { currentSelection, selectionPayload } from "./selection";
 import { lastFilter, recordCommittedFilter, repeatAllowed } from "./lastFilter";
+import { defaultProgressiveLine } from "./progressiveBlur";
 
 /** The active selection as the bridge's base64 payload ("" = none). */
 function activeSelectionJSON(): string {
@@ -37,6 +38,8 @@ export interface FilterKindDef {
 export const FILTER_KINDS: readonly FilterKindDef[] = [
   { id: "gaussianBlur", label: "高斯模糊…" },
   { id: "motionBlur", label: "运动模糊…" },
+  // 票 73：画布上拖两点定渐变（Filters.swift FilterKind 的顺序：紧跟运动模糊）。
+  { id: "progressiveBlur", label: "渐进模糊…" },
   { id: "addNoise", label: "添加杂色…" },
   { id: "vignette", label: "晕影…" },
   { id: "bloomGlow", label: "辉光 / Bloom…" },
@@ -103,6 +106,14 @@ export interface FilterSettings {
   tonalMidtones: number;
   tonalHighlights: number;
   distortion: number;
+  /** 票 73 渐进模糊：线段两端的模糊量与两个端点（**文档坐标**，所以缩放平移
+   * 之后仍贴着同一处图像），以及线性/径向与反相。 */
+  progressiveFrom: number;
+  progressiveTo: number;
+  progressiveStart: [number, number] | null;
+  progressiveEnd: [number, number] | null;
+  progressiveRadial: boolean;
+  progressiveInverted: boolean;
   dither: Record<string, unknown>;
   scanlines: Record<string, unknown>;
   cameraRaw: Record<string, unknown>;
@@ -142,6 +153,14 @@ export function defaultFilterSettings(kind: string): FilterSettings {
     tonalMidtones: 60,
     tonalHighlights: 30,
     distortion: 0,
+    // 原版 FilterSettings：From 0、To 20，线性、不反相；端点在打开滤镜时由 Go 侧
+    // 按图层的可见区域填（Filters.swift:708-713），所以这里先是 null。
+    progressiveFrom: 0,
+    progressiveTo: 20,
+    progressiveStart: null,
+    progressiveEnd: null,
+    progressiveRadial: false,
+    progressiveInverted: false,
     backgroundQuality: "basic",
     refineEdges: 12,
     matteContrast: 25,
@@ -341,6 +360,21 @@ export async function beginFilter(
   if (!layerId) return;
   const settings = defaultFilterSettings(kind);
   if (initialAdjustment) settings.adjustment = initialAdjustment;
+  // 票 73：渐进模糊一打开就把线放在图层上（原版 Filters.swift:708-713）。端点由
+  // 前端算并随设置一起发给 Go，所以对话框和画布立刻就有线可画、可拖。
+  if (kind === "progressiveBlur") {
+    const layer = doc.layers.find((candidate) => candidate.id === layerId);
+    const line = defaultProgressiveLine(
+      {
+        origin: layer?.transform.origin ?? [0, 0],
+        size: layer?.transform.size ?? [doc.width, doc.height],
+      },
+      doc.width,
+      doc.height,
+    );
+    settings.progressiveStart = line.start;
+    settings.progressiveEnd = line.end;
+  }
   const seed = nextSeed = (nextSeed + 1) >>> 0;
   opening.add(tabId);
   try {

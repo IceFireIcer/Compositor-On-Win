@@ -237,6 +237,44 @@ it("the menu bar publishes the same menu the palette searches, with the live Ctr
   expect(await page.locator('[data-entry-id="帮助 › 检查更新…"]').count()).toBe(1);
   expect(await page.locator('[data-entry-id="视图 › 适应窗口"] .shortcut').textContent()).toBe("Ctrl+0");
 });
+it("shows the live Snap master and target states in the palette (ticket 76)", async () => {
+  await page.evaluate(`(async () => {
+    const { mount, tick } = await import("/node_modules/.vite-palette-browser/deps/svelte.js");
+    const { default: MenuBar } = await import("/src/lib/components/MenuBar.svelte");
+    const { menuModel } = await import("/src/lib/commands/menuModel.ts");
+    const view = await import("/src/lib/state/view.ts");
+    window.menuModel = menuModel;
+    window.snapView = view;
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    mount(MenuBar, { target: host });
+    await tick();
+  })()`);
+  await page.locator(".search").fill("");
+  const checked = (id) => page.locator(`[data-entry-id="${id}"] .check`).count();
+  await poll(() => page.locator('[data-entry-id="视图 › 对齐"]').count()).toBe(1);
+
+  // 总开关关、网格目标开：两者都要如实反映在面板上。
+  await page.evaluate(() => {
+    window.snapView.snapEnabled.set(false);
+    window.snapView.snapToggles.set({ guides: true, grid: true, layerBounds: false, docBounds: false });
+  });
+  await poll(() => checked("视图 › 对齐")).toBe(0);
+  expect(await checked("视图 › 对齐到网格")).toBe(1);
+  expect(await checked("视图 › 对齐到图层")).toBe(0);
+  expect(await checked("视图 › 对齐到文档边界")).toBe(0);
+
+  // 面板开着时拨总开关，勾要跟着变（原版每次打开重读 NSMenu 的效果）。
+  await page.evaluate(() => window.snapView.snapEnabled.set(true));
+  await poll(() => checked("视图 › 对齐")).toBe(1);
+  expect(await checked("视图 › 对齐到参考线")).toBe(1);
+
+  // 这一条测的是偏好持久化：别把 localStorage 留给后面的用例。
+  await page.evaluate(() => {
+    window.snapView.snapEnabled.set(true);
+    window.snapView.snapToggles.set({ guides: true, grid: false, layerBounds: true, docBounds: true });
+  });
+});
 
 it("disables tools and mask commands while no document is open, keeping menu commands", async () => {
   await page.evaluate(() => window.loadDocument(false));

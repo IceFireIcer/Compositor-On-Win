@@ -38,14 +38,8 @@ export const showGuides = writable(true);
 /** View > Show Rulers —— 上/左标尺；参考线从这里拖出。 */
 export const showRulers = writable(true);
 
-/** View > Snap —— 吸附总开关。 */
-export const snapEnabled = writable(true);
-
 /** View > Lock Guides —— 锁定的参考线不可移动/删除。 */
 export const lockGuides = writable(false);
-
-/** View > Snap To 的四个子目标。 */
-export const snapToggles = writable<SnapToggles>({ ...DEFAULT_SNAP_TOGGLES });
 
 /** 布局网格参数；默认对齐原版 LayoutGrid（64 px，八等分）。 */
 export const layoutGrid = writable<LayoutGrid>(normalizeGrid(64, 8));
@@ -86,26 +80,84 @@ function storeBool(key: string, value: boolean): void {
  * 带持久化的开关：`set`/`update` 先改内存再写盘，所以菜单、快捷键、命令
  * 面板任何一条路径拨动它都会落盘，不用各自记得调用保存。
  */
-function persistedBool(key: string, fallback: boolean): Writable<boolean> {
-  const store = writable<boolean>(readStoredBool(key, fallback));
+/**
+ * 带持久化的 store：`set`/`update` 先改内存再写盘，所以菜单、快捷键、命令
+ * 面板任何一条路径拨动它都会落盘，不用各自记得调用保存。save 拿到新值，负责
+ * 把它写成一个键（`persistedBool`）或多个键（吸附的四个子目标）。
+ */
+function persisted<T>(initial: T, save: (value: T) => void): Writable<T> {
+  const store = writable<T>(initial);
   return {
     subscribe: store.subscribe,
-    set(value: boolean): void {
+    set(value: T): void {
       store.set(value);
-      storeBool(key, value);
+      save(value);
     },
-    update(fn: (value: boolean) => boolean): void {
-      store.update((value) => {
-        const next = fn(value);
-        storeBool(key, next);
+    update(fn: (value: T) => T): void {
+      store.update((current) => {
+        const next = fn(current);
+        save(next);
         return next;
       });
     },
   };
 }
 
+function persistedBool(key: string, fallback: boolean): Writable<boolean> {
+  return persisted(readStoredBool(key, fallback), (value) => storeBool(key, value));
+}
+
 /** 视图 ▸ 导航器：从 300% 起在画布角落显示缩略图；默认关，偏好持久化。 */
 export const showsNavigator: Writable<boolean> = persistedBool(NAVIGATOR_KEY, false);
+
+// ---------------------------------------------------------------------------
+// 吸附开关（票 76）—— 属于「人」而不是文档的偏好
+// ---------------------------------------------------------------------------
+
+/**
+ * 键名照抄原版 ToolDefaults 的五个开关（EditorSession.swift:329-339）：
+ * snap / snapGuides / snapGrid / snapLayers / snapBounds。原版注释写明这些是
+ * 「keep whatever they were last set to, across tabs and across launches」，
+ * 所以 Windows 侧也落在 localStorage 上而不是 manifest 里。
+ *
+ * Ctrl 旁路不在这里：它是 snapOptions(bypass) 的一次性参数，永远不写盘 ——
+ * 票面要求「不把临时旁路修饰键误写成关闭总开关」。
+ */
+const SNAP_KEY = "snap";
+const SNAP_TOGGLE_KEYS: Record<keyof SnapToggles, string> = {
+  guides: "snapGuides",
+  grid: "snapGrid",
+  layerBounds: "snapLayers",
+  docBounds: "snapBounds",
+};
+
+/** View > Snap —— 吸附总开关，偏好持久化。 */
+export const snapEnabled: Writable<boolean> = persistedBool(SNAP_KEY, true);
+
+/**
+ * 四个子目标一起读；缺哪一项就用原版默认值补哪一项。导出是给测试用的：
+ * 「新会话读回同样的值」这条要能在不重置模块图的前提下断言（`vi.resetModules`
+ * 重导一个被几十个测试引用的模块会把整套跑超时）。
+ */
+export function readSnapTogglesFromStorage(): SnapToggles {
+  return {
+    guides: readStoredBool(SNAP_TOGGLE_KEYS.guides, DEFAULT_SNAP_TOGGLES.guides),
+    grid: readStoredBool(SNAP_TOGGLE_KEYS.grid, DEFAULT_SNAP_TOGGLES.grid),
+    layerBounds: readStoredBool(SNAP_TOGGLE_KEYS.layerBounds, DEFAULT_SNAP_TOGGLES.layerBounds),
+    docBounds: readStoredBool(SNAP_TOGGLE_KEYS.docBounds, DEFAULT_SNAP_TOGGLES.docBounds),
+  };
+}
+
+/** View > Snap To 的四个子目标；set/update 先改内存再写盘。 */
+function persistedSnapToggles(): Writable<SnapToggles> {
+  return persisted(readSnapTogglesFromStorage(), (value) => {
+    for (const target of Object.keys(SNAP_TOGGLE_KEYS) as Array<keyof SnapToggles>) {
+      storeBool(SNAP_TOGGLE_KEYS[target], value[target]);
+    }
+  });
+}
+
+export const snapToggles: Writable<SnapToggles> = persistedSnapToggles();
 
 // ---------------------------------------------------------------------------
 // 参考线（镜像 Go 的 domain.Document.guides）

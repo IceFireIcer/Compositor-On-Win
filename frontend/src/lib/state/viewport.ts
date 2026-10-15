@@ -238,6 +238,29 @@ export function translateBy(
 /** Alias keeping the port's vocabulary explicit at call sites. */
 export const panBy = translateBy;
 
+/**
+ * Middle-button zoom: every 100 view points up doubles the zoom, every 100
+ * down halves it (EditorCanvas.swift:2044-2047, "doubling for every 100 points,
+ * as the Zoom tool drags"). The macOS view is flipped, so "up" is toward
+ * smaller y; the browser's clientY grows downward, which leaves
+ * (startY - currentY) the same sign on both sides — the formula carries over
+ * unchanged.
+ */
+export const MIDDLE_ZOOM_POINTS_PER_DOUBLING = 100;
+
+export function middleZoomFactor(startY: number, currentY: number): number {
+  return Math.pow(2, (startY - currentY) / MIDDLE_ZOOM_POINTS_PER_DOUBLING);
+}
+
+/** The zoom a middle-button drag asks for, clamped to the viewport's range. */
+export function middleZoomTarget(
+  s: ViewportState,
+  startY: number,
+  currentY: number,
+): number {
+  return clampZoom(s.zoom * middleZoomFactor(startY, currentY));
+}
+
 /** Whether the per-document-pixel grid is visible at this zoom. */
 export function showsPixelGrid(zoom: number): boolean {
   return zoom >= PIXEL_GRID_ZOOM;

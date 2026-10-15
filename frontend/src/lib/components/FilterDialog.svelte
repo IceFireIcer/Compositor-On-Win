@@ -300,6 +300,35 @@
               <input type="number" min="1" max="2000" value={s.distance}
                 onchange={(e) => updateFilterSettings({ distance: +e.currentTarget.value })} />
             </label>
+          {:else if kind === "progressiveBlur"}
+            <div class="row">
+              <span>形状</span>
+              <select value={s.progressiveRadial ? "radial" : "linear"}
+                onchange={(e) => updateFilterSettings({ progressiveRadial: e.currentTarget.value === "radial" })}>
+                <option value="linear">线性</option>
+                <option value="radial">径向</option>
+              </select>
+            </div>
+            <label class="row">
+              <span>From (px)</span>
+              <input type="range" min="0" max="250" step="0.5" value={s.progressiveFrom}
+                oninput={(e) => updateFilterSettings({ progressiveFrom: +e.currentTarget.value })} />
+              <input type="number" min="0" max="250" step="0.5" value={s.progressiveFrom}
+                onchange={(e) => updateFilterSettings({ progressiveFrom: +e.currentTarget.value })} />
+            </label>
+            <label class="row">
+              <span>To (px)</span>
+              <input type="range" min="0" max="250" step="0.5" value={s.progressiveTo}
+                oninput={(e) => updateFilterSettings({ progressiveTo: +e.currentTarget.value })} />
+              <input type="number" min="0" max="250" step="0.5" value={s.progressiveTo}
+                onchange={(e) => updateFilterSettings({ progressiveTo: +e.currentTarget.value })} />
+            </label>
+            <label class="check" title="两端互换：起点用 To、终点用 From">
+              <input type="checkbox" checked={s.progressiveInverted}
+                onchange={(e) => updateFilterSettings({ progressiveInverted: e.currentTarget.checked })} />
+              反相
+            </label>
+            <p class="hint">在画布上拖动线段的两个端点调整方向与范围。</p>
           {:else if kind === "addNoise"}
             <label class="row">
               <span>数量 %</span>

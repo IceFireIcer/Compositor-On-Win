@@ -162,14 +162,19 @@ export interface CursorInput {
   bits: number;
   /** True while a pan drag is in flight (closed hand). */
   panning?: boolean;
+  /** Middle-button zoom in flight (ticket 75): the magnifier, out when shrinking. */
+  middleZoom?: "in" | "out" | null;
 }
 
 /**
  * The current tool's cursor over the canvas. Mirrors EditorCanvas.swift
- * `toolCursor` (line 1444): Space or the hand tool wins first, then per-tool
- * mapping; selection tools get Shift = add, Alt = subtract badges.
+ * `toolCursor` (line 1444): a gesture already in flight wins first — the
+ * middle-button zoom magnifier, then a pan drag, then Space or the hand tool —
+ * and after that the per-tool mapping; selection tools get Shift = add,
+ * Alt = subtract badges.
  */
-export function cursorForTool({ tool, bits, panning }: CursorInput): string {
+export function cursorForTool({ tool, bits, panning, middleZoom }: CursorInput): string {
+  if (middleZoom) return middleZoom === "out" ? ZOOM_OUT_CURSOR : ZOOM_IN_CURSOR;
   if (panning) return GRABBING_CURSOR;
   if (has(bits, Modifier.Space)) return HAND_CURSOR;
   switch (tool) {

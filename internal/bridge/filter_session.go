@@ -295,7 +295,7 @@ func validFilterKind(kind string) bool {
 // (Filters.swift FilterEdit.init); top is the image's row 0, and a rotated
 // layer's sides don't run along the canvas's, so it has none.
 func canvasEdgeSides(kind string, t domain.Transform, gridW, gridH, docW, docH int) render.EdgeSides {
-	if kind != FilterGaussian && kind != FilterMotion {
+	if kind != FilterGaussian && kind != FilterMotion && kind != FilterProgressive {
 		return 0
 	}
 	if t.Rotation != 0 {
@@ -514,6 +514,14 @@ func (s *Service) BeginFilterEdit(kind, layerID, settingsJSON string, seed uint3
 	fs, err := prepareFilterGrid(kind, base, l.Transform, &p, sel, sess.doc.Width, sess.doc.Height)
 	if err != nil {
 		return "", err
+	}
+	// Progressive Blur opens with its line on the layer (Filters.swift:708-713):
+	// sharp near the top of its visible part, blurred at its foot. A payload
+	// that already carries a line keeps it, so reopening the dialog after a
+	// drag does not reset it.
+	if kind == FilterProgressive && p.ProgressiveStart == nil && p.ProgressiveEnd == nil {
+		start, end := defaultProgressiveLine(l.Transform, sess.doc.Width, sess.doc.Height)
+		p.ProgressiveStart, p.ProgressiveEnd = &start, &end
 	}
 	fs.layerID = l.ID
 	fs.assetKey = *l.ImageFile
