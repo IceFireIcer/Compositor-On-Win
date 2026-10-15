@@ -16,7 +16,7 @@
       内核 13 项参数全部落地（范围/默认对齐 `Scanlines.swift` 的 `normalized`）；
       `FilterDialog.svelte` 有 12 条滑块 + 颜色模式 + 双色调取色（屏色/线色）；
       `filters.ts` 的 `FILTER_KINDS` / `FilterSettings` / `defaultFilterSettings` 已加 scanlines。
-- [x] 位移形成前后遮挡，纯黑/纯白和透明边界行为对齐原版；效果可预览、选区限制、撤销。**「端到端可用」没有专门用例**：黄金基准直接调 `render.ApplyScanlinesFilter`，没有 bridge 用例把 kind `scanlines` 走完 BeginFilterEdit/CommitFilter。
+- [x] 位移形成前后遮挡，纯黑/纯白和透明边界行为对齐原版；效果可预览、选区限制、撤销。**端到端已补**：`TestScanlinesFilterRunsThroughTheSession` 把 kind `scanlines` 走完 BeginFilterEdit → CommitFilter → Undo，`TestScanlinesFilterCancelLeavesPixelsAlone` 覆盖取消。
       遮挡（"抬起的线挡住后面的线"）、黑位、纯黑/纯白、透明边界已由
       `internal/render/scanlines_test.go` 逐条对齐原版 `ScanlinesTests.swift` 并验证；
       "可预览、选区限制、撤销"走既有管线（BeginFilterEdit / UpdateFilterPreview /

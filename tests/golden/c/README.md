@@ -83,6 +83,16 @@ style=10 正是它）；换成当前 reference 会让该枚举整体前移、参
 夹具与配方在 `internal/render/testdata/deep_kernels.md`，比对由 `TestDeepKernelsMatchC` 完成；
 平时跑测试只读已提交的夹具，不需要编译器。
 
+**再生成入口与其它内核不同**（ADR-0003 §2 的落差，已登记）：`go run ./tests/golden/gen`
+只覆盖 `cases/` 里那些 8 位 RGBA 进出的内核，**不会**重生成 deep/HDR 夹具——它们的输出是
+16 位或 half-float 位型，harness 的 PNG 管线装不下。那批夹具走另一条命令：
+
+```
+GOLDEN_REGENERATE=1 go test ./internal/render/ -run TestDeepKernelsMatchC
+```
+
+（仍需先按上面的命令编译 `golden_driver.exe`。）
+
 ## 与源文件的差异（仅在拷贝件旁，不改源）
 
 - `dispatch/dispatch.h` + `golden_dispatch.c`：Windows 最小 GCD 垫片。
