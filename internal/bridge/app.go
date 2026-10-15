@@ -47,6 +47,8 @@ type Service struct {
 	// wait here for the frontend's SVG rasters before the commit lands.
 	importMu      sync.Mutex
 	pendingImport []pendingImportFile
+	// pendingImportNewProject sends the staged batch to a new tab (ticket 74).
+	pendingImportNewProject bool
 
 	// Export preview (ticket 42): one flattened composite held between
 	// quality-slider moves; the dialog's preview re-encodes from it.

@@ -1,8 +1,24 @@
 <script lang="ts">
   import { SelectTab } from "../../../wailsjs/go/bridge/Workspace";
-  import { applySnapshot, closeTab, importDroppedPathsAsNewProject, transferLayer, workspace, type DocTab } from "../state/workspace";
+  import {
+    applySnapshot,
+    closeTab,
+    importDroppedBlobsAsNewProject,
+    importDroppedPathsAsNewProject,
+    transferLayer,
+    workspace,
+    type DocTab,
+  } from "../state/workspace";
   import { pendingClose, requestClose, resolveClose } from "../state/confirm";
-  import { DROP_SETTLE_MS, LAYER_DRAG_MIME, shouldImportDomDropNow } from "../state/dropimport";
+  import {
+    DROP_SETTLE_MS,
+    LAYER_DRAG_MIME,
+    browserImageFiles,
+    browserRasterizer,
+    prepareDroppedBlobs,
+    readDropPayload,
+    shouldImportDomDropNow,
+  } from "../state/dropimport";
   import ConfirmDialog from "./ConfirmDialog.svelte";
 
   let { onnew }: { onnew: () => void } = $props();
@@ -52,16 +68,34 @@
 
   async function onBarDrop(event: DragEvent): Promise<void> {
     barDragOver = false;
-    if (event.dataTransfer?.types.includes(LAYER_DRAG_MIME)) return; // 每个标签自己处理
+    const dt = event.dataTransfer;
+    if (!dt || dt.types.includes(LAYER_DRAG_MIME)) return; // 每个标签自己处理
     const paths = barDropPaths(event);
-    if (paths.length === 0) return;
     event.preventDefault();
     // 与画布那条路共用去重：桌面端同一次拖放 Wails 的窗口级回调也会到，先让位给
     // 它（它带落点坐标，能认出标签栏）。两条路谁先到不确定，所以等一拍再判。
     if (!shouldImportDomDropNow(Date.now())) return;
     await new Promise((resolve) => setTimeout(resolve, DROP_SETTLE_MS));
     if (!shouldImportDomDropNow(Date.now())) return;
-    await importDroppedPathsAsNewProject(paths).catch((err) => console.warn("拖到标签栏失败", err));
+    if (paths.length > 0) {
+      await importDroppedPathsAsNewProject(paths).catch((err) =>
+        console.warn("拖到标签栏失败", err),
+      );
+      return;
+    }
+    // 没有磁盘路径的内存图（截图工具的位图、网页里拖来的图片）走上传面，
+    // 但同样落成新项目（票 74）。
+    const files = browserImageFiles(readDropPayload(dt).files);
+    if (files.length === 0) return;
+    const { ready, failed } = await prepareDroppedBlobs(files, browserRasterizer);
+    if (failed.length > 0) {
+      console.warn("拖到标签栏：有图像无法解码", failed);
+    }
+    if (ready.length > 0) {
+      await importDroppedBlobsAsNewProject(ready).catch((err) =>
+        console.warn("拖到标签栏失败", err),
+      );
+    }
   }
 
   function choose(id: string): void {

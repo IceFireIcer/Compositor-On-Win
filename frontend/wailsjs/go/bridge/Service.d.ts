@@ -15,6 +15,8 @@ export function ApplyUpdate():Promise<string>;
 
 export function BeginBlobImport(arg1:Array<string>):Promise<string>;
 
+export function BeginBlobImportAsNewProject(arg1:Array<string>):Promise<string>;
+
 export function BeginExportPreview():Promise<string>;
 
 export function BeginFilterEdit(arg1:string,arg2:string,arg3:string,arg4:number,arg5:string):Promise<string>;

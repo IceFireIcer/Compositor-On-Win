@@ -26,6 +26,10 @@ export function BeginBlobImport(arg1) {
   return window['go']['bridge']['Service']['BeginBlobImport'](arg1);
 }
 
+export function BeginBlobImportAsNewProject(arg1) {
+  return window['go']['bridge']['Service']['BeginBlobImportAsNewProject'](arg1);
+}
+
 export function BeginExportPreview() {
   return window['go']['bridge']['Service']['BeginExportPreview']();
 }

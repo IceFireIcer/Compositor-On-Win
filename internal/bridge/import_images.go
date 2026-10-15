@@ -143,6 +143,18 @@ func (s *Service) BeginImageImport(paths []string) (string, error) {
 // No pixel-budget check runs here: a blob's size is only known once it
 // uploads (the SVG path can check its declared size instead).
 func (s *Service) BeginBlobImport(names []string) (string, error) {
+	return s.beginBlobImport(names, false)
+}
+
+// BeginBlobImportAsNewProject is BeginBlobImport's new-tab sibling (ticket 74):
+// an in-memory image dropped on the tab bar opens a NEW project sized by it,
+// the same way a path-bearing one does. The batch is staged identically; only
+// FinishImageImport's destination differs.
+func (s *Service) BeginBlobImportAsNewProject(names []string) (string, error) {
+	return s.beginBlobImport(names, true)
+}
+
+func (s *Service) beginBlobImport(names []string, newProject bool) (string, error) {
 	if s.ws == nil {
 		return "", errNoDocument
 	}
@@ -152,6 +164,7 @@ func (s *Service) BeginBlobImport(names []string) (string, error) {
 	s.importMu.Lock()
 	defer s.importMu.Unlock()
 	s.pendingImport = nil
+	s.pendingImportNewProject = newProject
 	canvasW, canvasH, hasDoc := s.ws.activeCanvasInfo()
 	items := make([]importItem, 0, len(names))
 	for _, name := range names {
@@ -386,12 +399,20 @@ func (s *Service) FinishImageImport() (string, error) {
 		}
 	}
 	// The release happens inside the commit path so the SVGs stay fetchable
-	// while the frontend is still drawing them.
-	reply, err := s.ws.commitImportedLayers(files)
+	// while the frontend is still drawing them. A batch staged for a new
+	// project (ticket 74) lands in a fresh tab instead of the active one.
+	var reply string
+	var err error
+	if s.pendingImportNewProject {
+		reply, err = s.ws.importNewDocument(files)
+	} else {
+		reply, err = s.ws.commitImportedLayers(files)
+	}
 	if err != nil {
 		return "", err
 	}
 	s.pendingImport = nil
+	s.pendingImportNewProject = false
 	return reply, nil
 }
 
@@ -401,6 +422,7 @@ func (s *Service) CancelImageImport() {
 	s.importMu.Lock()
 	defer s.importMu.Unlock()
 	s.pendingImport = nil
+	s.pendingImportNewProject = false
 }
 
 // decodeHEIC reads one HEIC file through libheif with the import budget

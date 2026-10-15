@@ -7,6 +7,7 @@ import {
 } from "../../../wailsjs/go/bridge/Workspace";
 import {
   BeginBlobImport,
+  BeginBlobImportAsNewProject,
   BeginImageImport,
   CancelPendingOpen,
   ConfirmPendingOpen,
@@ -353,6 +354,28 @@ export async function importDroppedBlobs(
   if (files.length === 0) return { failures: [], raws: [] };
   const names = files.map((f) => (f.name.trim() === "" ? "Dropped" : f.name));
   const begin = JSON.parse(await BeginBlobImport(names)) as ImportBegin;
+  if (begin.items.length !== names.length) {
+    // 上传 token 是按位次对齐的：数量对不上就宁可整体失败，也不要错配图像。
+    return { failures: ["拖入的图像与导入批次数量不一致"], raws: [] };
+  }
+  const blobs = new Map<string, Blob>();
+  begin.items.forEach((item, index) => {
+    const file = files[index];
+    if (item.uploadUrl && file) blobs.set(item.uploadUrl, file.blob);
+  });
+  return runImportBatch(begin, blobs);
+}
+
+/**
+ * 拖到**标签栏**的**内存图像**（票 74）：没有磁盘路径，所以走上传面，但落在新标签里。
+ * 与 importDroppedBlobs 同一形状，只是批次在 Go 侧被标成「新开项目」。
+ */
+export async function importDroppedBlobsAsNewProject(
+  files: readonly { name: string; blob: Blob }[],
+): Promise<{ failures: string[]; raws: string[] }> {
+  if (files.length === 0) return { failures: [], raws: [] };
+  const names = files.map((f) => (f.name.trim() === "" ? "Dropped" : f.name));
+  const begin = JSON.parse(await BeginBlobImportAsNewProject(names)) as ImportBegin;
   if (begin.items.length !== names.length) {
     // 上传 token 是按位次对齐的：数量对不上就宁可整体失败，也不要错配图像。
     return { failures: ["拖入的图像与导入批次数量不一致"], raws: [] };

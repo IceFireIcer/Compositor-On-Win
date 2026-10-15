@@ -6,6 +6,7 @@ import {
   closeTab,
   hasDocument,
   importDroppedBlobs,
+  importDroppedBlobsAsNewProject,
   importDroppedPaths,
   routeDroppedPaths,
   importImages,
@@ -29,6 +30,7 @@ vi.mock("../../../wailsjs/go/bridge/Workspace", () => ({
 }));
 vi.mock("../../../wailsjs/go/bridge/Service", () => ({
   BeginBlobImport: vi.fn(),
+  BeginBlobImportAsNewProject: vi.fn(),
   BeginImageImport: vi.fn(),
   DocumentSnapshot: vi.fn(),
   FinishImageImport: vi.fn(),
@@ -50,6 +52,7 @@ import {
 } from "../../../wailsjs/go/bridge/Workspace";
 import {
   BeginBlobImport,
+  BeginBlobImportAsNewProject,
   BeginImageImport,
   DocumentSnapshot,
   FinishImageImport,
@@ -98,6 +101,7 @@ const mockedFinishImport = vi.mocked(FinishImageImport);
 const mockedDroppedPaths = vi.mocked(ImportDroppedPaths);
 const mockedOpenPath = vi.mocked(OpenPath);
 const mockedBlobImport = vi.mocked(BeginBlobImport);
+const mockedBlobImportNewProject = vi.mocked(BeginBlobImportAsNewProject);
 const mockedTransfer = vi.mocked(TransferLayer);
 const mockedRasterizeSVG = vi.mocked(rasterizeSVG);
 const mockedUploadRaster = vi.mocked(uploadRaster);
@@ -430,6 +434,28 @@ describe("拖放导入与跨标签搬运（票 48）", () => {
     const result = await importDroppedBlobs([{ name: "a.png", blob: new Blob(["png"]) }]);
     expect(result.failures[0]).toContain("数量不一致");
     expect(mockedFinishImport).not.toHaveBeenCalled();
+  });
+
+  // 票 74：内存图落到标签栏也新开项目，所以走的是 AsNewProject 那条绑定。
+  it("内存图拖到标签栏走新项目绑定", async () => {
+    mockedBlobImportNewProject.mockResolvedValue(
+      JSON.stringify({
+        items: [{ path: "", status: "blob", name: "shot.png", uploadUrl: "/pixel/upload/tok9" }],
+        hasDocument: false,
+        canvasW: 0,
+        canvasH: 0,
+      }),
+    );
+    vi.mocked(uploadRaster).mockResolvedValue(undefined);
+    mockedGetSnapshot.mockResolvedValue(snapshot([{ id: "t9" }], "t9"));
+    mockedDocSnapshot.mockResolvedValue('{"rev":1,"filterRev":0,"doc":null}');
+
+    await importDroppedBlobsAsNewProject([{ name: "shot.png", blob: new Blob(["png"]) }]);
+    expect(mockedBlobImportNewProject).toHaveBeenCalledWith(["shot.png"]);
+    // 普通的 BeginBlobImport 不该被碰到：那会把图导进当前文档。
+    expect(mockedBlobImport).not.toHaveBeenCalled();
+    expect(uploadRaster).toHaveBeenCalledWith("/pixel/upload/tok9", expect.any(Blob));
+    expect(mockedFinishImport).toHaveBeenCalledTimes(1);
   });
 
   it("图层跨标签拖拽：应用 Go 返回的快照并加载目标文档", async () => {
