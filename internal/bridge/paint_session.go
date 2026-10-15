@@ -511,6 +511,7 @@ func (s *Service) EndHealingStroke(token string, cancel bool) (string, error) {
 	}
 	p.stroke.Finish()
 	after := p.base.Clone()
+	after.DropDeep() // healing edits the 8-bit copy; Save writes Deep
 	if !render.SpotHeal(after, p.stroke.Coverage(), float32(p.opacity), p.mode, p.seed) {
 		return sess.envelope()
 	}

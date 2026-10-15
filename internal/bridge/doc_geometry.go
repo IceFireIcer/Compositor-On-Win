@@ -334,7 +334,17 @@ func parseFillHex(hex string) (uint8, uint8, uint8, error) {
 // (internal/project validate: the uppercase layer id), which a resampled layer
 // has to keep or the package it is saved into fails validation.
 func layerAssetName(layerID string) string { return strings.ToUpper(layerID) + ".png" }
-func layerMaskName(layerID string) string  { return strings.ToUpper(layerID) + ".mask.png" }
+
+// layerAssetNameFor names a layer's pixels by what they are: an HDR raster is
+// an EXR, everything else a PNG (ADR-0007 §3). The suffix is what the package
+// reader uses to pick a decoder, so it has to follow Deep.HDR.
+func layerAssetNameFor(layerID string, bmp *render.Bitmap) string {
+	if bmp != nil && bmp.Deep != nil && bmp.Deep.HDR {
+		return strings.ToUpper(layerID) + ".exr"
+	}
+	return layerAssetName(layerID)
+}
+func layerMaskName(layerID string) string { return strings.ToUpper(layerID) + ".mask.png" }
 
 // renameAsset stores the resampled bitmap under the layer's own name and drops
 // the old one, so the .comp round-trip writes exactly the live assets.

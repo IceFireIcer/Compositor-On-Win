@@ -107,8 +107,12 @@ func validateDocument(doc *domain.Document) error {
 		if len(l.Name) > maxNameBytes {
 			return invalidf("图层 %s 的名称超过 %d 字节", l.ID, maxNameBytes)
 		}
-		if l.ImageFile != nil && *l.ImageFile != imageName(l.ID) {
-			return invalidf("图层 %s 的 imageFile 必须为 %q，得到 %q", l.ID, imageName(l.ID), *l.ImageFile)
+		// An HDR layer's asset is an EXR from version 13 (ADR-0007); every
+		// other image is the layer's own PNG, and masks stay PNG.
+		if l.ImageFile != nil && *l.ImageFile != imageName(l.ID) &&
+			!(doc.Version >= domain.VersionHDR && *l.ImageFile == exrName(l.ID)) {
+			return invalidf("图层 %s 的 imageFile 必须为 %q（版本 %d 起可为 %q），得到 %q",
+				l.ID, imageName(l.ID), domain.VersionHDR, exrName(l.ID), *l.ImageFile)
 		}
 	}
 	if doc.ActiveLayerID != nil && !ids[*doc.ActiveLayerID] {
@@ -323,4 +327,8 @@ func groupWord(isGroup bool) string {
 // imageName / maskName are the asset filename conventions: derived from the
 // layer's uppercase UUID ("\(id.uuidString).png" in the original).
 func imageName(layerID string) string { return strings.ToUpper(layerID) + ".png" }
-func maskName(layerID string) string  { return strings.ToUpper(layerID) + ".mask.png" }
+
+// exrName is an HDR layer's asset name ("\(id.uuidString).exr" in the
+// original), legal from version 13.
+func exrName(layerID string) string  { return strings.ToUpper(layerID) + ".exr" }
+func maskName(layerID string) string { return strings.ToUpper(layerID) + ".mask.png" }

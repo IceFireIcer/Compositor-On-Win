@@ -15,6 +15,7 @@
 | Vision | 主体/对象选择 | u2netp ONNX + GuidedMatte（ADR-0005） | 37 ☑ |
 | Accelerate | vDSP/vImage 加速路径 | 不需要：Go 内核以逐位对齐优先 | — |
 | CoreText | Dither 字形、PSDText 渲染 | Dither 用 basicfont（金测通过）；文本引擎见下表 | 36 ☑、39、44–46 |
+| ColorSync | ICC 配置读取、CMYK 软打样、CMYK 导入/导出 | 见下表：lcms2 + `internal/colorio`（ADR-0008） | 72/86/87 |
 | CryptoKit | ProjectDigest SHA256 | Go `crypto/sha256` | 05 |
 | UniformTypeIdentifiers | 文件对话框类型 | Wails FileFilter | 01 |
 | Foundation / Testing / XCTest | 基础/测试 | Go stdlib / go test / vitest | — |
@@ -31,6 +32,7 @@
 | ImageIO：导出 PNG/JPEG | 42 | 无依赖：Go `image/png`、`image/jpeg` 标准库 | — |
 | CoreText：文字引擎（排版/整形/栅格化） | 44 | [go-text/typesetting](https://github.com/go-text/typesetting)（MIT 主模块；子包 BSD-3/Unlicense；含 FreeType 许可条款的栅格化部分——均为宽松许可） | go.mod，纯 Go（票 44 实施时引入） |
 | Sparkle：自动更新（appcast.xml） | 50 ✅ | **无依赖**：自写 `internal/update`（标准库 `crypto/ed25519` 验签 + `net/http` 拉 feed）+ GitHub Releases 上的 `feed.json`（`scripts/genfeed` 生成/签名） | 不引入 go-selfupdate —— 见下方"与原计划的偏差" |
+| ColorSync：CMYK 输出配置与软打样 | 72/86/87 | [Little CMS 2](https://github.com/mm2/Little-CMS) 2.19（MIT）+ 自写 cgo 绑定（internal/colorio，ADR-0008） | vcpkg manifest（x64-mingw-static，已被 libraw 依赖）+ CI binary cache |
 
 ## 二·补、与原计划的偏差（票 50 实施后回填）
 

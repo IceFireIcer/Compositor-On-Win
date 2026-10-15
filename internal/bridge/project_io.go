@@ -13,6 +13,7 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
 	"compositor-win/internal/domain"
+	"compositor-win/internal/hdrio"
 	"compositor-win/internal/psd"
 	"compositor-win/internal/render"
 )
@@ -258,13 +259,50 @@ func (s *Service) loadProject(path string) (*domain.Document, map[string]*render
 		if err != nil {
 			return nil, nil, err
 		}
-		img, err := png.Decode(bytes.NewReader(data))
+		bmp, err := decodeProjectAsset(name, data)
 		if err != nil {
-			return nil, nil, fmt.Errorf("资产 %s 解码失败: %w", name, err)
+			return nil, nil, err
 		}
-		bitmaps[name] = render.BitmapFromImage(img)
+		bitmaps[name] = bmp
 	}
 	return doc, bitmaps, nil
+}
+
+// decodeProjectAsset turns one package asset into the bitmap the session
+// holds. A 16-bit PNG and an EXR keep their full precision in the deep
+// raster (ADR-0007 §3); the 8-bit bitmap is the derived dithered copy every
+// operation and the canvas read, and only the deep raster is ever written
+// back. An EXR whose brightest sample is within white loads as a 16-bit
+// layer, which is upstream's deep_half_peak rule (project-format.md).
+func decodeProjectAsset(name string, data []byte) (*render.Bitmap, error) {
+	if strings.HasSuffix(strings.ToLower(name), ".exr") {
+		deep, err := hdrio.DecodeEXR(data)
+		if err != nil {
+			return nil, fmt.Errorf("资产 %s 解码失败: %w", name, err)
+		}
+		return bitmapFromDeep(deep), nil
+	}
+	img, err := png.Decode(bytes.NewReader(data))
+	if err != nil {
+		return nil, fmt.Errorf("资产 %s 解码失败: %w", name, err)
+	}
+	return render.WorkingBitmap(img), nil
+}
+
+// hdrWithinWhite is upstream's threshold: an EXR no brighter than this is a
+// 16-bit layer, not an HDR one (DeepLayers.swift wideAsset).
+const hdrWithinWhite = 1.001
+
+// bitmapFromDeep classifies a decoded wide raster and attaches it to its
+// derived 8-bit copy. Upstream wideAsset does the same split: a float image
+// no brighter than white is a 16-bit layer (DeepLayers.swift:174).
+func bitmapFromDeep(deep *render.DeepRaster) *render.Bitmap {
+	if deep.HDR && deep.Peak() <= hdrWithinWhite {
+		deep = render.HalfToSixteen(deep)
+	}
+	bmp := deep.ToBitmap()
+	bmp.Deep = deep
+	return bmp
 }
 
 // SaveProjectDialog writes the active document: an already-known package

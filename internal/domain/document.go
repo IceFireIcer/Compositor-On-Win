@@ -4,8 +4,20 @@ package domain
 const (
 	FormatID       = "com.compositor.project"
 	ColorSpaceSRGB = "sRGB"
-	// FormatVersion is written by new saves; versions 1–10 remain readable.
-	FormatVersion = 11
+	// FormatVersion is the newest version this build understands: what the
+	// reader accepts and what the newest feature needs. ADR-0007 adds 16-bit
+	// layer images at 12 and HDR/EXR ones at 13.
+	FormatVersion = 13
+	// Version16Bit is the first version allowing a 16-bit layer image;
+	// VersionHDR the first allowing an EXR one (an HDR layer).
+	Version16Bit = 12
+	VersionHDR   = 13
+	// VersionBase is the version every other feature in this build needs, and
+	// therefore what a document with no deep layers is written as. Save writes
+	// the lowest version a document's contents require, not FormatVersion, so
+	// documents that use nothing newer stay openable by older macOS builds
+	// (ADR-0007 §4); see project.Store.Save.
+	VersionBase = 11
 )
 
 // GuideAxis is the orientation of an alignment guide.

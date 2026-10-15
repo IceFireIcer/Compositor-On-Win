@@ -350,6 +350,30 @@ export function SaveProjectDialog() {
   return window['go']['bridge']['Service']['SaveProjectDialog']();
 }
 
+export function CMYKProofLookups() {
+  return window['go']['bridge']['Service']['CMYKProofLookups']();
+}
+
+export function CMYKProfiles() {
+  return window['go']['bridge']['Service']['CMYKProfiles']();
+}
+
+export function SetCMYKProfile(arg1) {
+  return window['go']['bridge']['Service']['SetCMYKProfile'](arg1);
+}
+
+export function LoadCMYKProfile(arg1) {
+  return window['go']['bridge']['Service']['LoadCMYKProfile'](arg1);
+}
+
+export function ConvertLayerDepth(arg1) {
+  return window['go']['bridge']['Service']['ConvertLayerDepth'](arg1);
+}
+
+export function LayerDepthInfo() {
+  return window['go']['bridge']['Service']['LayerDepthInfo']();
+}
+
 export function SelectColorRange(arg1, arg2) {
   return window['go']['bridge']['Service']['SelectColorRange'](arg1, arg2);
 }

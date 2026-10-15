@@ -192,6 +192,7 @@ func (s *Service) CutSelection(selectionJSON string) (string, error) {
 			return nil, fmt.Errorf("内存位图库缺少资产 %s", *layer.ImageFile)
 		}
 		cleared := bmp.Clone()
+		cleared.DropDeep() // the erase edits 8-bit pixels; a kept Deep would be stale
 		if !clearSelectionOnLayer(cleared, layer.Transform, sel) {
 			return nil, nil // the selection misses this layer: nothing to undo
 		}

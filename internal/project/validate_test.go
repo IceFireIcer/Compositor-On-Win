@@ -182,9 +182,9 @@ func TestValidateHeaderFields(t *testing.T) {
 		t.Fatalf("version 0 应 VersionError, got %v", err)
 	}
 	doc = baseDoc()
-	doc.Version = 12
-	if err := validateDocument(doc); !errors.As(err, &verr) || verr.Version != 12 {
-		t.Fatalf("version 12 应 VersionError, got %v", err)
+	doc.Version = 14
+	if err := validateDocument(doc); !errors.As(err, &verr) || verr.Version != 14 {
+		t.Fatalf("version 14 应 VersionError, got %v", err)
 	}
 	doc = baseDoc()
 	doc.ColorSpace = "Display P3"

@@ -35,6 +35,8 @@
     refreshRecentProjects,
   } from "../state/shell";
   import { checkForUpdates } from "../state/update";
+  import { gamutWarning, proofColors, proofError, proofLookups } from "../state/cmykProof";
+  import { CMYKProofLookups } from "../../../wailsjs/go/bridge/Service";
   import { chordFor } from "../shortcuts/settings";
   import { chordLabel } from "../shortcuts/chords";
   import { registerCanvasModalGuard } from "../shortcuts/dispatch";
@@ -92,6 +94,28 @@
   const editingText = $derived($textSession !== null);
   // 纯画布的可进入性：与 F 的动作共用 canvasOnlyAllowed 一份规则（票 55）。
   const canCanvasOnly = $derived(canvasOnlyAllowed(!!$document.docId, editingText));
+
+  // 校样是视图变换（票 72）：第一次打开时向后端要查找表，没有配置就留在菜单
+  // 报错，不发明一张表。两个开关共用同一份表。
+  async function toggleProof(which: "proof" | "gamut"): Promise<void> {
+    const turningOff = which === "proof" ? $proofColors : $gamutWarning;
+    if (turningOff) {
+      if (which === "proof") proofColors.set(false);
+      else gamutWarning.set(false);
+      return;
+    }
+    if (!$proofLookups) {
+      try {
+        proofLookups.set(JSON.parse(await CMYKProofLookups()));
+        proofError.set("");
+      } catch (err) {
+        proofError.set(err instanceof Error ? err.message : String(err));
+        return;
+      }
+    }
+    if (which === "proof") proofColors.set(true);
+    else gamutWarning.set(true);
+  }
   // View 菜单的五个开关状态（勾）+"清除参考线"的可用性。动作与快捷键共用
   // toggleView，所以这里的勾永远反映真实状态，不会和画布/快捷键分叉。
   //
@@ -654,6 +678,24 @@
         // --- 视图开关（票 14 / 47）：原先这五条只有快捷键、没有菜单入口，
         // 用户除了背键位没有别的办法打开参考线/网格/标尺。勾来自上面的
         // viewState（$store 响应式读），与实际状态同源（菜单与快捷键共用 toggleView）。
+        {
+          label: "校样颜色",
+          checked: $proofColors,
+          disabled: dialogOpen,
+          run: () => {
+            close();
+            void toggleProof("proof");
+          },
+        },
+        {
+          label: "色域警告",
+          checked: $gamutWarning,
+          disabled: dialogOpen,
+          run: () => {
+            close();
+            void toggleProof("gamut");
+          },
+        },
         {
           label: "显示网格",
           hint: hintFor("Menus:Show Grid"),

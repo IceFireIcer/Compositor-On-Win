@@ -286,6 +286,14 @@ func gradientDrawingStop(c fillColorPayload, alpha float64) render.GradientStop 
 // must finish validation before replacing assets and must not edit old pixels
 // in place: journal snapshots can be shared with prior undo entries.
 func (w *Workspace) editDrawingTab(tabID, name string, fn func(*session) (*rasterChange, error)) (string, error) {
+	return w.editDrawingTabFor(tabID, func(*session) string { return name }, fn)
+}
+
+// editDrawingTabFor is editDrawingTab with the history name chosen from the
+// session under the lock. A depth conversion needs that: whether the step is
+// called "Convert to 16-Bit" or "Convert to 8-Bit" is decided by the pixels
+// the command is about to replace.
+func (w *Workspace) editDrawingTabFor(tabID string, name func(*session) string, fn func(*session) (*rasterChange, error)) (string, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	sess := w.sessions[tabID]
@@ -296,7 +304,7 @@ func (w *Workspace) editDrawingTab(tabID, name string, fn func(*session) (*raste
 		return "", errDocumentBusy
 	}
 	before := cloneDocForEdit(sess.doc)
-	sess.hist.Begin(name, *sess.doc, sess.doc.ActiveLayerID)
+	sess.hist.Begin(name(sess), *sess.doc, sess.doc.ActiveLayerID)
 	change, err := fn(sess)
 	if err != nil {
 		sess.doc = before

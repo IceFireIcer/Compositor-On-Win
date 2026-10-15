@@ -83,7 +83,11 @@ func runFilterOnGrid(kind string, p *filterParams, src *render.Bitmap, srcT doma
 	clampSides render.EdgeSides, seed uint32, docW, docH int, emptyLayer bool,
 	sel *filterSelection, fillMask []uint8, subjectRaw *render.Bitmap, keepOutline bool,
 ) (*render.Bitmap, domain.Transform, error) {
+	// The kernel edits the 8-bit copy. The deep raster it was derived from
+	// would then be stale, and Save writes Deep, so drop it: the layer is
+	// 8-bit from here (upstream's rule; 16-bit-aware filters are ticket 82).
 	work := src.Clone()
+	work.DropDeep()
 	if err := runFilterJob(kind, work, p, clampSides, 1, seed, docW, docH, srcT, emptyLayer, fillMask, subjectRaw); err != nil {
 		return nil, srcT, err
 	}

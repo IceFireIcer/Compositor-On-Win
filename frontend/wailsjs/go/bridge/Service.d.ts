@@ -177,6 +177,18 @@ export function SaveProjectAsDialog():Promise<string>;
 
 export function SaveProjectDialog():Promise<string>;
 
+export function CMYKProofLookups():Promise<string>;
+
+export function CMYKProfiles():Promise<string>;
+
+export function SetCMYKProfile(arg1:string):Promise<void>;
+
+export function LoadCMYKProfile(arg1:string):Promise<string>;
+
+export function ConvertLayerDepth(arg1:string):Promise<string>;
+
+export function LayerDepthInfo():Promise<string>;
+
 export function SelectColorRange(arg1:string,arg2:string):Promise<string>;
 
 export function SelectObjectAt(arg1:number,arg2:number):Promise<string>;

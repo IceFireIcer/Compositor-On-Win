@@ -602,10 +602,12 @@ func insertCopy(sess *session, doc *domain.Document, id string, newBitmaps map[s
 // other.
 func copyLayerAssets(sess *session, layer *domain.Layer, newBitmaps map[string]*render.Bitmap) error {
 	if layer.ImageFile != nil {
-		if err := cloneAsset(sess, derefString(layer.ImageFile), layer.ID+".png", newBitmaps); err != nil {
+		old := derefString(layer.ImageFile)
+		name := layerAssetNameFor(layer.ID, sess.bitmaps[old])
+		if err := cloneAsset(sess, old, name, newBitmaps); err != nil {
 			return err
 		}
-		layer.ImageFile = idPtr(layer.ID + ".png")
+		layer.ImageFile = idPtr(name)
 	}
 	if layer.MaskFile != nil {
 		if err := cloneAsset(sess, derefString(layer.MaskFile), layer.ID+".mask.png", newBitmaps); err != nil {

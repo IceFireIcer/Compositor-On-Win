@@ -346,8 +346,10 @@ func orbGeometry(cfg Config, spec orbSpec) image.Rectangle {
 //   - 图层顺序始终自下而上。
 func buildDocument(cfg Config, existing *domain.Document, plan []planLayer) (*domain.Document, StepReport, error) {
 	doc := &domain.Document{
-		Format:     domain.FormatID,
-		Version:    domain.FormatVersion,
+		Format: domain.FormatID,
+		// 本示例只写 8 位 RGBA PNG 图层，所以按 ADR-0007 §4 声明最低所需
+		// 版本 11：这样的包在只认 v11 的 macOS 版上也能打开。
+		Version:    domain.VersionBase,
 		ColorSpace: domain.ColorSpaceSRGB,
 		Width:      cfg.Width,
 		Height:     cfg.Height,
@@ -355,7 +357,7 @@ func buildDocument(cfg Config, existing *domain.Document, plan []planLayer) (*do
 	if existing != nil {
 		// 保留未知/额外字段：只覆盖本示例负责的部分。
 		*doc = *existing
-		doc.Version = domain.FormatVersion
+		doc.Version = domain.VersionBase
 		doc.Width = cfg.Width
 		doc.Height = cfg.Height
 	}

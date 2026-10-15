@@ -63,6 +63,11 @@ func ApplyOrientation(src *render.Bitmap, orientation int) *render.Bitmap {
 	default: // 1 and anything unknown: upright
 		return src
 	}
+	// The 8-bit copy and the deep raster are one layer. Orienting only the
+	// copy would drop a 16-bit import to 8 bits (ADR-0007).
+	if src.Deep != nil {
+		out.Deep = render.OrientDeep(src.Deep, orientation)
+	}
 	return out
 }
 

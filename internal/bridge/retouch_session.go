@@ -427,6 +427,7 @@ func (p *retouchSession) cloneResultFromCoverage(coverage *render.Bitmap) (*rend
 		}
 	}
 	after := p.base.Clone()
+	after.DropDeep() // the stamp edits 8-bit pixels; a kept Deep would be the pre-stamp one
 	// The brush engine already supplies the tip and path. One solid StampTick
 	// over that mask composites the frozen, mapped source exactly once, keeping
 	// stroke opacity capped even when dabs overlap (BrushStroke.publish).

@@ -27,7 +27,7 @@ func runBearingDoc(version int) *domain.Document {
 
 func TestStoreTextRunsRoundTrip(t *testing.T) {
 	dir := t.TempDir()
-	doc := runBearingDoc(domain.FormatVersion)
+	doc := runBearingDoc(domain.VersionBase)
 	if err := (&Store{}).Save(dir, doc, sampleAssets()); err != nil {
 		t.Fatalf("save: %v", err)
 	}
@@ -70,24 +70,26 @@ func TestStoreTextRunsVersionGates(t *testing.T) {
 	mustPass(t, runBearingDoc(domain.FormatVersion), "v11 两种 run")
 }
 
-// TestStoreSaveStampsTheCurrentVersion pins the ticket-45 blocker: a document
-// opened from an older package gains per-run styles, and saving it must write
-// version 11 (as the original does on every save) instead of being rejected
-// by its own declared version.
-func TestStoreSaveStampsTheCurrentVersion(t *testing.T) {
+// TestStoreSaveStampsTheLowestRequiredVersion pins the ticket-45 blocker and
+// ADR-0007 §4 together: a document opened from an older package gains per-run
+// styles, and saving it must write the lowest version those contents need
+// (11) instead of being rejected by its own declared version — and instead of
+// always writing the newest version, which would make every document this
+// build writes unreadable to macOS builds that only understand 11.
+func TestStoreSaveStampsTheLowestRequiredVersion(t *testing.T) {
 	for _, declared := range []int{1, 5, 9, 10} {
 		dir := t.TempDir()
 		doc := runBearingDoc(declared)
 		doc.Layers[2].Text.ColorRuns = nil // colorRuns need v10, fontRuns v11
 		if err := (&Store{}).Save(dir, doc, sampleAssets()); err != nil {
-			t.Fatalf("v%d 文档保存应通过（写入当前版本）：%v", declared, err)
+			t.Fatalf("v%d 文档保存应通过（写入最低所需版本）：%v", declared, err)
 		}
 		reopened, err := (&Store{}).Open(dir)
 		if err != nil {
 			t.Fatalf("v%d 保存后重新打开失败：%v", declared, err)
 		}
-		if reopened.Version != domain.FormatVersion {
-			t.Fatalf("v%d 文档保存后应写为 v%d，得到 v%d", declared, domain.FormatVersion, reopened.Version)
+		if reopened.Version != domain.VersionBase {
+			t.Fatalf("v%d 文档保存后应写为 v%d，得到 v%d", declared, domain.VersionBase, reopened.Version)
 		}
 		style := reopened.Layers[2].Text
 		if style == nil || len(style.FontRuns) != 1 || style.FontRuns[0].FontName != "Arial" {

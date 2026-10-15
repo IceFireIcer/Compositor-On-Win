@@ -9,6 +9,9 @@ LGPL 依赖在文末单独一节声明（仅以动态库形式使用，源码不
   安装包分发。许可与源码：https://github.com/microsoft/onnxruntime 。
 - `github.com/yalue/onnxruntime_go` 是 Go 动态加载绑定；版本见 `go.mod`，
   许可见其上游仓库：https://github.com/yalue/onnxruntime_go 。
+- [Little CMS 2](https://github.com/mm2/Little-CMS)（lcms2，Marti Maria Saguer）以
+  **静态库**形式链入（vcpkg，x64-mingw-static），是 CMYK 校样与 CMYK 导入/导出的
+  色彩引擎（ADR-0008）。许可见其上游仓库；源码不进入本仓库。
 
 | 库 | 引入票 | 用途 |
 | --- | --- | --- |
@@ -16,6 +19,7 @@ LGPL 依赖在文末单独一节声明（仅以动态库形式使用，源码不
 `crypto/ed25519` 验签 + `net/http` 拉 feed，feed 生成脚本 `scripts/genfeed` 同样只用标准库。
 原计划的 creativeprojects/go-selfupdate 未采用，原因见 [docs/dependencies.md](docs/dependencies.md)。）
 | [go-text/typesetting](https://github.com/go-text/typesetting) 主模块 | 44（计划） | 文字排版/整形 |
+| [lcms2](https://github.com/mm2/Little-CMS) 2.19（vcpkg，x64-mingw-static） | 72/86/87 | CMYK 软打样与 CMYK 导入/导出的 ICC 色彩引擎（ADR-0008） |
 
 ## Apache-2.0
 

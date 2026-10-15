@@ -146,7 +146,7 @@ func TestDecodeManifestRejectsBadHeader(t *testing.T) {
 		wantErr error
 	}{
 		{"format 错误", func(m map[string]any) { m["format"] = "com.other.project" }, ErrInvalid},
-		{"version 12", func(m map[string]any) { m["version"] = 12 }, &VersionError{Version: 12}},
+		{"version 14", func(m map[string]any) { m["version"] = 14 }, &VersionError{Version: 14}},
 		{"version 显式 0", func(m map[string]any) { m["version"] = 0 }, &VersionError{Version: 0}},
 		{"version 缺失", func(m map[string]any) { delete(m, "version") }, ErrInvalid},
 		{"layers 缺失", func(m map[string]any) { delete(m, "layers") }, ErrInvalid},

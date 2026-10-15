@@ -76,7 +76,7 @@ func sampleDoc() *domain.Document {
 	textLayer.BlendMode = &normal
 	doc := &domain.Document{
 		Format:        domain.FormatID,
-		Version:       domain.FormatVersion,
+		Version:       domain.VersionBase,
 		ColorSpace:    domain.ColorSpaceSRGB,
 		DocumentID:    testDocID,
 		Width:         100,

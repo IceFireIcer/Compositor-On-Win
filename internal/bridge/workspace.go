@@ -599,6 +599,10 @@ func (w *Workspace) saveTab(id, path string) (int, error) {
 	}
 	doc := cloneDocForEdit(sess.doc)
 	bitmaps := map[string]*render.Bitmap{}
+	if err := alignAssetNames(doc, sess.bitmaps); err != nil {
+		w.mu.Unlock()
+		return 0, err
+	}
 	for _, name := range referencedAssetNames(doc) {
 		bmp, ok := sess.bitmaps[name]
 		if !ok || bmp == nil {
@@ -633,11 +637,7 @@ func (w *Workspace) saveTab(id, path string) (int, error) {
 
 	assets := map[string][]byte{}
 	for name, bmp := range bitmaps {
-		encode := render.EncodePNG
-		if strings.HasSuffix(name, ".mask.png") {
-			encode = render.EncodeMaskPNG
-		}
-		data, err := encode(bmp)
+		data, err := encodeAsset(name, bmp)
 		if err != nil {
 			return 0, fmt.Errorf("编码资产 %s 失败: %w", name, err)
 		}
