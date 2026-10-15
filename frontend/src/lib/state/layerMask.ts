@@ -16,7 +16,7 @@ import { SetLayerMask } from "../../../wailsjs/go/bridge/Service";
 import { applyDocumentSnapshot, document } from "./document";
 import { selectMaskTarget } from "./layerTarget";
 import { currentSelection, selectionPayload } from "./selection";
-import { workspace } from "./workspace";
+import { isCurrentTab, workspace } from "./workspace";
 
 /** Service.SetLayerMask 接受的操作名（internal/bridge/layer_mask.go 的白名单）。 */
 export type LayerMaskOperation =
@@ -42,10 +42,10 @@ export async function requestLayerMask(
   operation: LayerMaskOperation,
   selectionJSON: string,
 ): Promise<string | null> {
-  if (!tabId || get(workspace).activeId !== tabId || get(document).docId !== tabId) return null;
+  if (!isCurrentTab(tabId)) return null;
   try {
     const raw = await SetLayerMask(tabId, layerId, operation, selectionJSON);
-    if (get(workspace).activeId !== tabId || get(document).docId !== tabId) return null;
+    if (!isCurrentTab(tabId)) return null;
     return raw;
   } catch (err) {
     console.warn("图层蒙版操作 " + operation + " 失败", err);

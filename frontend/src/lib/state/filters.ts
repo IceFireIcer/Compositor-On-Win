@@ -4,7 +4,7 @@ import {
   applyDocumentSnapshot,
   document,
 } from "./document";
-import { workspace } from "./workspace";
+import { isCurrentTab, workspace } from "./workspace";
 import { currentSelection, selectionPayload } from "./selection";
 import { lastFilter, recordCommittedFilter, repeatAllowed } from "./lastFilter";
 import { defaultProgressiveLine } from "./progressiveBlur";
@@ -273,7 +273,7 @@ function replaceSession(session: FilterSession, patch: Partial<FilterSession>): 
 
 /** 快照落地：只认发起时那个标签/文档，且不倒退（对话框会话与票 58 的重做共用）。 */
 function applySnapshotForTab(tabId: string | undefined, raw: string): void {
-  if (get(workspace).activeId === tabId && get(document).docId === tabId) {
+  if (isCurrentTab(tabId ?? "")) {
     const before = get(document);
     const reply = JSON.parse(raw) as { rev: number };
     if (reply.rev < before.rev) return;

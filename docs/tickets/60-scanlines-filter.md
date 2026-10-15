@@ -66,8 +66,13 @@
 
 ## 已知差异
 
-1. **Glow 不是上游算法**：上游在 1/shrink 尺度上模糊（`Scanlines.swift:84-89`），Go 侧做的是全尺寸
-   高斯；黄金驱动的 `scanlines` 命令也没有 glow 参数，所以这条偏离**从未与参考比对过**。
+1. **Glow 已按上游的结构实现**（`sigma = 行距*3+3`、`shrink = floor(sigma/4)`、缩小 → 以 `sigma/shrink`
+   模糊 → 放大，`Scanlines.swift:84-89`），但**边缘采样不同**：上游先用 `clampedToExtent()` 让模糊看到边缘
+   复制的像素，这里与包内其它模糊一致地采样框外的透明。试过加上钳制，结果是宽模糊在 16×32 夹具上
+   平均成画面均值、把暗缝填平，**反而违反上游自己的断言** `linesShowOnSolidWhiteAndBlack`（全辉光下
+   线与缝仍要差 > 40），所以在能逐位对齐 Core Image 的数值之前不加钳制。
+   黄金驱动的 `scanlines` 命令也没有 glow 参数，所以这条路径仍**没有与参考比对过**；新增的三条单测
+   钉住算术与「Glow>0 才改像素」。
 2. **注释语言**：`internal/render/scanlines.go` 的注释是中文，而该目录其余是英文、它移植的
    `tests/golden/c/ScanlinesPixels.c` 也是英文。数值常数与出处注释都保留了，只是与 C 拷贝的逐行
    可比性变差。

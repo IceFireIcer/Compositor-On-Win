@@ -1,6 +1,6 @@
 import { derived, get, writable } from "svelte/store";
 import { document } from "./document";
-import { workspace } from "./workspace";
+import { isCurrentTab, workspace } from "./workspace";
 
 export interface CanvasEditTarget {
   layerID: string;
@@ -24,7 +24,7 @@ export function clearMaskTarget(tabId: string): void {
 /** Call after the owner layer's setActive reply has been applied. */
 export function selectMaskTarget(tabId: string, layerID: string): boolean {
   const doc = get(document);
-  if (get(workspace).activeId !== tabId || doc.docId !== tabId ||
+  if (!isCurrentTab(tabId) ||
       doc.activeLayerID !== layerID || !doc.layers.find((l) => l.id === layerID)?.maskFile) return false;
   maskTargets.update((targets) => ({ ...targets, [tabId]: layerID }));
   return true;
@@ -33,7 +33,7 @@ export function selectMaskTarget(tabId: string, layerID: string): boolean {
 /** Capture once at gesture start, then pass unchanged through that gesture. */
 export function getCanvasEditTarget(tabId: string): CanvasEditTarget | null {
   const doc = get(document);
-  if (!tabId || get(workspace).activeId !== tabId || doc.docId !== tabId) return null;
+  if (!isCurrentTab(tabId)) return null;
   const layer = doc.layers.find((l) => l.id === doc.activeLayerID);
   if (!layer) return null;
   return { layerID: layer.id, targetMask: !!layer.maskFile && get(maskTargets)[tabId] === layer.id };

@@ -13,28 +13,32 @@ import "math"
 
 // ScanlinesParams mirrors the C struct (DitherPixels.h).
 type ScanlinesParams struct {
-	// 相邻两条扫描线之间隔多少像素。
+	// How far apart the lines are, in pixels.
 	Spacing int
-	// 满亮的线填满行距的多少，0–1；调子越暗，线画得越细。
+	// How much of the gap a full-bright line fills, 0-1; dimmer parts draw it thinner.
 	Thickness float32
-	// 0–1：暗于该值的调子把线拆成圆点，经短划过渡到实线。
+	// 0-1: tones darker than this break the lines into round dots, through dashes
+	// into the solid line above it.
 	Dots float32
-	// 每行左右摇摆的像素数，沿画面向下成一道波。
+	// Pixels the lines waver sideways, in a wave down the screen.
 	Wobble float32
-	// 画面亮处把线抬起（负值则下沉）的像素数，线因此拱进画面的形状里。
+	// Pixels a line rises where the picture under it is bright (or, negative,
+	// falls), so the lines swell into the picture's shapes.
 	Displace float32
-	// 0–1：暗于该值的调子完全不画线，屏幕留黑。
+	// 0-1: tones darker than this draw no line, leaving the screen dark.
 	Threshold float32
-	// 红蓝各向一边移开的像素数，给线的边缘加彩色镶边。
+	// Pixels the red and blue are moved apart, for colored fringes.
 	Split float32
-	// −1…1：先压暗或提亮，再变平或变冲。
+	// -1...1: darker or lighter, and flatter or punchier, before the lines are drawn.
 	Density  float32
 	Contrast float32
-	// 0–1：画面全黑处线还留多亮，像 CRT 的亮度旋钮托起黑位。
+	// 0-1: how bright the lines are where the picture is black, as a CRT's
+	// brightness knob lifts its black.
 	BlackLevel float32
-	// 0–1：亮度先沿线和跨行平滑多远，才拿去抬线。
+	// 0-1: how far the brightness is smoothed along and across the lines before
+	// it displaces them.
 	Smoothness float32
-	// 0：dark 上的 light 线（直出 sRGB）。1：线取画面自己的颜色。
+	// 0: light lines on dark (straight sRGB). 1: the lines take the picture's own colors.
 	OriginalColors bool
 	Dark           [3]uint8
 	Light          [3]uint8
@@ -73,10 +77,12 @@ func ScanlinesApply(b *Bitmap, p *ScanlinesParams) bool {
 	}
 	tone := make([]float32, count*planes)
 	alpha := make([]uint8, count)
-	// 每行沿线方向的调子：它盖住那几行的平均，取样位置随行的摇摆移动。
+	// One tone per line along its direction: the average of the rows it covers,
+	// sampled where the row's wobble puts it.
 	scan := make([]float32, lines*width*planes)
 
-	// Density 以 gamma 压暗（正）或提亮，黑白两端不动；contrast 以中灰为轴。
+	// Density darkens (positive) or lightens through a gamma, holding both ends;
+	// contrast pivots around mid gray.
 	gamma := float32(math.Exp2(float64(p.Density) * 1.5))
 	contrast := float32(1)
 	if p.Contrast >= 0 {
@@ -113,7 +119,7 @@ func ScanlinesApply(b *Bitmap, p *ScanlinesParams) bool {
 		if bottom > height {
 			bottom = height
 		}
-		// 一道慢波叠一道快波，像 CRT 同步漂移时画面在摇。
+		// A slow wave over a fast one, as a CRT's picture sways when sync drifts.
 		wave := float32(math.Sin(float64(line)*0.45))*0.7 + float32(math.Sin(float64(line)*1.7+1.3))*0.3
 		shift := int64(math.Round(float64(wobble * wave)))
 		for x := 0; x < width; x++ {
@@ -146,7 +152,7 @@ func ScanlinesApply(b *Bitmap, p *ScanlinesParams) bool {
 		return false
 	}
 
-	// 色彩分离：红往一边、蓝往另一边，线的边缘因此出现彩色镶边。
+	// Split: red one way and blue the other, so the lines' edges take a colored fringe.
 	split := int64(math.Round(float64(p.Split)))
 	if split > 0 {
 		copyRow := make([]uint8, width*4)
@@ -178,11 +184,13 @@ func ScanlinesApply(b *Bitmap, p *ScanlinesParams) bool {
 	return true
 }
 
-// scanlinesDrawLines ports draw_lines: 一列一列地把线画在扫出的调子上。
-// 位移之后它是从正面看的一片地形（Rutt-Etra 视频合成器的做法）：每条线被
-// 画面亮度平滑成的山丘抬起（或往另一边压低），并遮住它后面的东西，于是近处
-// 的线包在形状之上，而不是穿过后面的线。最近的一条先画：线抬升时是最下面
-// 那条，下沉时是最上面那条。
+// scanlinesDrawLines ports draw_lines: it draws the lines column by column over
+// the tones it scanned. Once displaced it is a landscape seen head-on (the
+// Rutt-Etra video synthesizer's trick): each line is lifted by the hills the
+// picture's smoothed brightness makes (or pushed the other way) and hides what
+// is behind it, so the near lines wrap over the shapes instead of crossing the
+// lines behind them. The nearest one is drawn first: the bottom line when the
+// lines rise, the top one when they fall.
 func scanlinesDrawLines(b *Bitmap, p *ScanlinesParams, scan []float32, alpha []uint8, lines, spacing int) bool {
 	width, height := b.W, b.H
 	original := p.OriginalColors
@@ -196,8 +204,9 @@ func scanlinesDrawLines(b *Bitmap, p *ScanlinesParams, scan []float32, alpha []u
 			tone[at] = scan[at]
 		}
 	}
-	// 高度：亮度沿每条线模糊（三遍方框，接近高斯），再跨相邻行平滑，于是一张
-	// 脸整体抬起成圆丘，而不是它下面像素的阶梯。
+	// The height: the brightness is blurred along each line (three box passes,
+	// near enough to a Gaussian) and smoothed across neighbouring rows, so a face
+	// lifts as one rounded hill rather than as the staircase of the pixels under it.
 	smoothness := ditherClamp01(p.Smoothness)
 	radius := int64(math.Round(float64(smoothness * float32(spacing) * 2)))
 	copy(lift, tone)
@@ -260,7 +269,8 @@ func scanlinesDrawLines(b *Bitmap, p *ScanlinesParams, scan []float32, alpha []u
 			cover[y] = 0
 		}
 		along := float32(math.Mod(float64(x)+0.5, float64(spacing))) - middle
-		// 这一列已经画过的东西的边缘；更靠后的线只在它之外露出。
+		// The edge of what this column has already drawn; lines further back only
+		// show beyond it.
 		horizon := float32(math.Inf(1))
 		if !rising {
 			horizon = float32(math.Inf(-1))
@@ -270,8 +280,9 @@ func scanlinesDrawLines(b *Bitmap, p *ScanlinesParams, scan []float32, alpha []u
 			if rising {
 				line = lines - 1 - step
 			}
-			// 珠点：暗于 Dots 值的线断成一颗颗珠，每行距一颗，各自取它中点的
-			// 调子；刚过该值则断成短划，再亮就闭合成实线。
+			// Beading: a line darker than the Dots level breaks into beads, one per
+			// spacing, each taking the tone at its middle; just above the level it
+			// breaks into dashes, and brighter still it closes into a solid line.
 			beading := float32(0)
 			if dots > 0 {
 				beading = ditherClamp01((dots - tone[line*width+x]) / 0.2)
@@ -288,7 +299,8 @@ func scanlinesDrawLines(b *Bitmap, p *ScanlinesParams, scan []float32, alpha []u
 			if lit <= 0 {
 				continue
 			}
-			// 在本列这个高度与上一列的高度之间画，陡坡也不会把线画断。
+			// Drawn between this height and the previous column's, so a steep slope
+			// does not break the line.
 			base := float32(line)*float32(spacing) + middle
 			here := base - displace*lift[i]
 			before := here
@@ -297,7 +309,8 @@ func scanlinesDrawLines(b *Bitmap, p *ScanlinesParams, scan []float32, alpha []u
 			}
 			lo := float32(math.Min(float64(here), float64(before)))
 			hi := float32(math.Max(float64(here), float64(before)))
-			// 黑位：线的最低亮度，画面全黑处它也还看得见。
+			// Black level: the line's floor brightness, still visible where the
+			// picture is fully black.
 			level := blackLevel + (1-blackLevel)*t
 			var c [3]float32
 			for k := 0; k < 3; k++ {
@@ -307,7 +320,7 @@ func scanlinesDrawLines(b *Bitmap, p *ScanlinesParams, scan []float32, alpha []u
 					c[k] = screen[k] + (phosphor[k]-screen[k])*level
 				}
 			}
-			// 线高的一半：画面暗的地方更细。
+			// Half the line's height: thinner where the picture is dark.
 			beam := middle * thickness * (0.29 + 0.71*float32(math.Sqrt(float64(ditherClamp01(level)))))
 			var top, bottom int64
 			if rising {
@@ -358,7 +371,8 @@ func scanlinesDrawLines(b *Bitmap, p *ScanlinesParams, scan []float32, alpha []u
 			if alpha[y*width+x] == 0 {
 				continue
 			}
-			// 电子束比画面本身更亮，补上黑屏幕吃掉的那部分。
+			// The beam is brighter than the picture itself, making up for what the
+			// dark screen swallows.
 			shown := cover[y]
 			ditherWritePixel(b.Pix[(y*width+x)*4:],
 				screen[0]+(color[y*3]*1.35-screen[0])*shown,
@@ -372,28 +386,28 @@ func scanlinesDrawLines(b *Bitmap, p *ScanlinesParams, scan []float32, alpha []u
 // ScanlinesSettings is Scanlines.swift's filter form: the Filter panel's
 // sliders, with its ranges and defaults.
 type ScanlinesSettings struct {
-	// 线条间距，图层像素。
+	// How far apart the lines are, in layer pixels.
 	LineSpacing float64 `json:"lineSpacing"`
-	// 满亮的线填满行距的百分比，5–100。
+	// How much of the gap a full-bright line fills, 5-100%.
 	Thickness float64 `json:"thickness"`
-	// 0–100%：线周围的光晕。
+	// 0-100%: light blooming around the lines.
 	Glow float64 `json:"glow"`
-	// 0–100%：暗于该值的调子把线拆成圆点。
+	// 0-100%: tones darker than this break the lines into round dots.
 	Dots float64 `json:"dots"`
-	// 线左右摇摆的像素数。
+	// Pixels the lines waver sideways.
 	Wobble float64 `json:"wobble"`
-	// 画面亮处把线抬起（负值下沉）的像素数。
+	// Pixels a line rises where the picture is bright (or falls, negative).
 	Displace float64 `json:"displace"`
-	// 0–100%：抬线前亮度被平滑多远。
+	// 0-100%: how far the brightness is smoothed before it displaces the lines.
 	Smoothness float64 `json:"smoothness"`
-	// 0–100%：暗于该值的调子不画线。
+	// 0-100%: tones darker than this draw no line.
 	Threshold float64 `json:"threshold"`
-	// 红蓝分开的像素数。
+	// Pixels the red and blue are moved apart.
 	Split float64 `json:"split"`
-	// −100…100：先压暗/提亮、变平/变冲，再画线。
+	// -100...100: darker or lighter, flatter or punchier, before the lines are drawn.
 	Density  float64 `json:"density"`
 	Contrast float64 `json:"contrast"`
-	// 0–100%：画面全黑处线还留多亮。
+	// 0-100%: how bright the lines stay where the picture is fully black.
 	BlackLevel float64    `json:"blackLevel"`
 	Colors     int        `json:"colors"`
 	Dark       [3]float64 `json:"dark"`
@@ -435,6 +449,40 @@ func (s ScanlinesSettings) Normalized() ScanlinesSettings {
 	return r
 }
 
+// glowSigmaAndShrink is Scanlines.glowing's arithmetic (Scanlines.swift:84):
+// the glow is wide and soft, so it is blurred at a fraction of the size and
+// scaled back up — "the same light for a small part of the work".
+func glowSigmaAndShrink(lineSpacing float64) (sigma, shrink float64) {
+	sigma = lineSpacing*3 + 3
+	shrink = math.Max(1, math.Floor(sigma/4))
+	return sigma, shrink
+}
+
+// glowBloom is the phosphor bloom the glow adds back: the raster is shrunk by
+// `shrink`, blurred there with sigma/shrink, and grown again
+// (Scanlines.swift:85-90) — "the same light for a small part of the work".
+//
+// One deliberate difference: the original wraps the image in clampedToExtent()
+// first, so the blur sees edge-replicated pixels; here the blur samples
+// transparent outside the frame, as every other blur in this package does. A
+// clamped wide blur on a small fixture averages to the picture's mean and fills
+// the dark gaps, which fails the original's own assertion that lines and gaps
+// survive a full glow (ScanlinesTests.linesShowOnSolidWhiteAndBlack) — so the
+// clamp is left off until the Core Image numerics can be matched exactly.
+func glowBloom(b *Bitmap, lineSpacing float64) *Bitmap {
+	sigma, shrink := glowSigmaAndShrink(lineSpacing)
+	if shrink <= 1 {
+		bloom := b.Clone()
+		ApplyGaussianBlur(bloom, sigma)
+		return bloom
+	}
+	smallW := int(math.Max(1, math.Round(float64(b.W)/shrink)))
+	smallH := int(math.Max(1, math.Round(float64(b.H)/shrink)))
+	small := ResampleBitmap(b, smallW, smallH)
+	ApplyGaussianBlur(small, sigma/shrink)
+	return ResampleBitmap(small, b.W, b.H)
+}
+
 // ApplyScanlinesFilter is ScanlinesSettings.apply: the kernel draws the
 // lines, then the phosphor glow is blurred across a few line spacings and
 // added back over them.
@@ -470,12 +518,6 @@ func ApplyScanlinesFilter(b *Bitmap, settings ScanlinesSettings) {
 		return
 	}
 	if s.Glow > 0 {
-		// 线的光：跨几个行距模糊后加回去——CRT 荧光粉的辉光。原版在缩小到
-		// 1/shrink 的图上做高斯再放大；这里沿用本仓 Dither 的同一近似（整幅
-		// 高斯），保持两条滤镜的辉光观感一致。
-		sigma := s.LineSpacing*3 + 3
-		bloom := b.Clone()
-		ApplyGaussianBlur(bloom, sigma)
-		DitherGlow(b, bloom, float32(s.Glow/100*2.5))
+		DitherGlow(b, glowBloom(b, s.LineSpacing), float32(s.Glow/100*2.5))
 	}
 }

@@ -1,4 +1,4 @@
-import { writable } from "svelte/store";
+import { get, writable } from "svelte/store";
 import {
   CloseTab as CloseTabRPC,
   NewDocument as NewDocumentRPC,
@@ -21,7 +21,7 @@ import {
   TransferLayer as TransferLayerRPC,
 } from "../../../wailsjs/go/bridge/Service";
 import { rasterizeSVG, uploadRaster } from "./svg";
-import { applyDocumentSnapshot, clearDocument, loadDocument } from "./document";
+import { applyDocumentSnapshot, clearDocument, document, loadDocument } from "./document";
 import type { NewCanvasBackgroundId } from "./newCanvas";
 
 /**
@@ -33,6 +33,15 @@ import type { NewCanvasBackgroundId } from "./newCanvas";
  * document store (layers/render): they keep the two in sync around the
  * commands that create, switch, close, open or save documents.
  */
+/**
+ * 这个标签是否仍是「当前」的：工作区选中的是它，而且文档 store 也正持有它。
+ * 迟到的 RPC 回复必须过这道判据才能落地，否则会把别的文档的状态盖上去。
+ * 原先这段判据在 layerMask / layerTarget / filters 等处各写了一遍。
+ */
+export function isCurrentTab(tabId: string): boolean {
+  return !!tabId && get(workspace).activeId === tabId && get(document).docId === tabId;
+}
+
 export interface DocTab {
   id: string;
   name: string;
