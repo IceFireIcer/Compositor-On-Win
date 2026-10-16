@@ -785,6 +785,13 @@ int main(int argc, char **argv) {
         set_alt_output(out, out_length);
         free(out);
         free(tables);
+    } else if (!strcmp(command, "camera_raw_stats")) {
+        // argv: none. The three brightness measures Camera Raw's adaptive
+        // sliders read, as three float64.
+        if (argc < argi) die("camera_raw_stats takes no arguments");
+        double stats[3];
+        camera_raw_statistics(pixels, (size_t)width, (size_t)height, (size_t)width * 4, stats);
+        set_alt_output(stats, sizeof stats);
     } else if (!strcmp(command, "dither")) {
         if (argc < argi + 17) die("dither needs 17 parameters");
         DitherParams params;
