@@ -38,6 +38,50 @@ func hdrLayerForExport(t *testing.T, svc *Service) {
 	sess.bitmaps[*l.ImageFile].Deep = deep
 }
 
+// 票 85 验收 2：无超白值的 EXR 按原版规则作为 16 位层处理，带超白值的重新导入为 HDR。
+//
+// 这条规则在 bitmapFromDeep 里（hdrWithinWhite = 1.001），本轮核对时发现它**没有测试** ——
+// 只有读代码得出的结论。补上，走真实的导入入口 decodeProjectAsset。
+func TestEXRImportClassifiesByPeak(t *testing.T) {
+	build := func(v float32) *render.DeepRaster {
+		d := render.NewDeep(2, 1, true)
+		for i := 0; i < len(d.Pix); i += 4 {
+			d.Pix[i] = render.FloatToHalf(v)
+			d.Pix[i+1] = render.FloatToHalf(v)
+			d.Pix[i+2] = render.FloatToHalf(v)
+			d.Pix[i+3] = render.FloatToHalf(1)
+		}
+		return d
+	}
+	for _, tc := range []struct {
+		name    string
+		value   float32
+		wantHDR bool
+	}{
+		{"白内", 0.5, false},
+		{"恰好白", 1.0, false},
+		{"略高于白但在阈值内", 1.0005, false},
+		{"超白", 4.0, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			data, err := hdrio.EncodeEXR(build(tc.value))
+			if err != nil {
+				t.Fatal(err)
+			}
+			bmp, err := decodeProjectAsset("x.exr", data)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if bmp.Deep == nil {
+				t.Fatal("EXR 应当带深层栅格")
+			}
+			if bmp.Deep.HDR != tc.wantHDR {
+				t.Fatalf("峰值 %v：HDR = %v，想要 %v", tc.value, bmp.Deep.HDR, tc.wantHDR)
+			}
+		})
+	}
+}
+
 // 超白值必须原样出去：解码回来比一半还亮，才说明没有被截断到白。
 func TestExportAsEXRKeepsLightBrighterThanWhite(t *testing.T) {
 	svc, _ := newTestService(t, 4, 1)
