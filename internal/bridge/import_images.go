@@ -118,6 +118,22 @@ func (s *Service) PickImageImport() ([]string, error) {
 	return paths, nil
 }
 
+// PickImageFolder shows the folder picker for Import Images; an empty result
+// means the user cancelled. What comes back goes through the same
+// BeginImageImport as picked files — beginImport expands a folder into the
+// images directly inside it (ticket 77) — so a folder imports identically
+// however it arrived: dialog, canvas drop, tab bar or shell.
+func (s *Service) PickImageFolder() (string, error) {
+	if s.runtimeCtx() == nil {
+		return "", fmt.Errorf("运行时尚未就绪")
+	}
+	path, err := runtime.OpenDirectoryDialog(s.runtimeCtx(), runtime.OpenDialogOptions{Title: "导入文件夹"})
+	if err != nil {
+		return "", fmt.Errorf("导入文件夹对话框失败: %w", err)
+	}
+	return path, nil
+}
+
 // BeginImageImport decodes every raster file into a buffer (the reply stays
 // decodable while big JPEGs still stream in — the binding runs off the UI
 // thread) and hands SVG bytes to the frontend, which rasterizes them with
@@ -287,7 +303,20 @@ func (s *Service) beginImport(paths []string) (importBegin, error) {
 	if hasDoc {
 		remaining -= s.ws.activeUsedPixels()
 	}
-	items := make([]importItem, 0, len(paths))
+	// A plain folder stands for the images directly inside it (ticket 77).
+	// Expanding here, at the single pass every entry point shares, is what
+	// keeps the dialog, the canvas, the tab bar and a shell drop agreeing.
+	paths, emptyFolders := expandImportFolders(paths)
+	items := make([]importItem, 0, len(paths)+len(emptyFolders))
+	for _, folder := range emptyFolders {
+		// A folder with no importable image is reported like any other file
+		// that could not be read, so a mixed drop still imports the rest.
+		items = append(items, importItem{
+			Path:   folder,
+			Status: "error",
+			Error:  fmt.Sprintf("文件夹里没有可导入的图像：%s", filepath.Base(folder)),
+		})
+	}
 	for _, path := range paths {
 		item := importItem{Path: path}
 		if strings.EqualFold(filepath.Ext(path), ".svg") {

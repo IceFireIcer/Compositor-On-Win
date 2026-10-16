@@ -7,7 +7,7 @@
     filterSession,
   } from "../state/filters";
   import { document, layerOps } from "../state/document";
-  import { importImages, saveProjectAs } from "../state/workspace";
+  import { importFolder, importImages, saveProjectAs } from "../state/workspace";
   import { copyMerged, exportPNG, openExportAs, openExportJPEG } from "../state/export";
   import { geometrySheet } from "../state/geometry";
   import {
@@ -278,17 +278,26 @@
   // 导入图像…: the batch lands as one undo step; per-file failures gather
   // into one alert exactly as the original's importError did. RAW items
   // queue into the develop sheet (one at a time) after the commit.
-  async function runImportImages(): Promise<void> {
+  async function runImport(run: () => Promise<{ failures: string[]; raws: string[] } | null>, what: string): Promise<void> {
     try {
-      const result = await importImages();
+      const result = await run();
       if (result && result.failures.length > 0) {
         window.alert(`导入未能完成\n\n${result.failures.join("\n\n")}`);
       }
     } catch (err) {
-      console.warn("导入图像失败", err);
+      console.warn(`${what}失败`, err);
       window.alert(`导入未能完成：${err instanceof Error ? err.message : String(err)}`);
     }
     close();
+  }
+
+  function runImportImages(): Promise<void> {
+    return runImport(importImages, "导入图像");
+  }
+
+  // 导入文件夹…（票 77）：Go 侧展开直接子级图像，与「导入图像…」同一条批次路径。
+  function runImportFolder(): Promise<void> {
+    return runImport(importFolder, "导入文件夹");
   }
 
   const menus = $derived<Menu[]>([
@@ -365,6 +374,7 @@
           },
         },
         { label: "导入图像…", disabled: dialogOpen, run: () => void runImportImages() },
+        { label: "导入文件夹…", disabled: dialogOpen, run: () => void runImportFolder() },
         { label: "另存为…", disabled: !hasLayer || dialogOpen, run: () => { close(); void saveProjectAs().catch((error) => window.alert(`另存为失败：${error instanceof Error ? error.message : String(error)}`)); } },
         {
           label: "导出 PNG…",

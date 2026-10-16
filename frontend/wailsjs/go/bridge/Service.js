@@ -286,6 +286,10 @@ export function Paste() {
   return window['go']['bridge']['Service']['Paste']();
 }
 
+export function PickImageFolder() {
+  return window['go']['bridge']['Service']['PickImageFolder']();
+}
+
 export function PickImageImport() {
   return window['go']['bridge']['Service']['PickImageImport']();
 }

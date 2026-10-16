@@ -145,6 +145,8 @@ export function PaintStrokePoint(arg1:string,arg2:number,arg3:number):Promise<vo
 
 export function Paste():Promise<string>;
 
+export function PickImageFolder():Promise<string>;
+
 export function PickImageImport():Promise<Array<string>>;
 
 export function PlaceLayer(arg1:string,arg2:string,arg3:string,arg4:string):Promise<string>;

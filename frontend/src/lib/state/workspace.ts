@@ -16,6 +16,7 @@ import {
   ImportDroppedPathsAsNewProject,
   OpenProjectDialog,
   OpenPath as OpenPathRPC,
+  PickImageFolder,
   PickImageImport,
   SaveProjectDialog,
   SaveProjectAsDialog,
@@ -176,6 +177,18 @@ export async function importImages(): Promise<{ failures: string[]; raws: string
   const paths = await PickImageImport();
   if (!paths || paths.length === 0) return null;
   const begin = JSON.parse(await BeginImageImport(paths)) as ImportBegin;
+  return runImportBatch(begin);
+}
+
+/**
+ * 导入文件夹…（票 77）：选目录 → Go 在 beginImport 里展开成**直接子级**图像 → 与
+ * 「导入图像…」同一条批次路径。展开放在 Go 那一个汇聚点上，所以导入对话框、画布拖放、
+ * 标签栏拖放与外壳（Dock/命令行）四条入口对文件夹的行为天然一致。取消返回 null。
+ */
+export async function importFolder(): Promise<{ failures: string[]; raws: string[] } | null> {
+  const folder = await PickImageFolder();
+  if (!folder) return null;
+  const begin = JSON.parse(await BeginImageImport([folder])) as ImportBegin;
   return runImportBatch(begin);
 }
 

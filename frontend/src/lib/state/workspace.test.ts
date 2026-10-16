@@ -8,6 +8,7 @@ import {
   importDroppedBlobs,
   importDroppedBlobsAsNewProject,
   importDroppedPaths,
+  importFolder,
   routeDroppedPaths,
   importImages,
   newDocument,
@@ -38,6 +39,7 @@ vi.mock("../../../wailsjs/go/bridge/Service", () => ({
   LayerOp: vi.fn(),
   OpenProjectDialog: vi.fn(),
   OpenPath: vi.fn(),
+  PickImageFolder: vi.fn(),
   PickImageImport: vi.fn(),
   SaveProjectDialog: vi.fn(),
   SaveProjectAsDialog: vi.fn(),
@@ -59,6 +61,7 @@ import {
   ImportDroppedPaths,
   OpenProjectDialog,
   OpenPath,
+  PickImageFolder,
   PickImageImport,
   SaveProjectDialog,
   SaveProjectAsDialog,
@@ -96,6 +99,7 @@ const mockedSaveDialog = vi.mocked(SaveProjectDialog);
 const mockedSaveAsDialog = vi.mocked(SaveProjectAsDialog);
 const mockedDocSnapshot = vi.mocked(DocumentSnapshot);
 const mockedPickImages = vi.mocked(PickImageImport);
+const mockedPickFolder = vi.mocked(PickImageFolder);
 const mockedBeginImport = vi.mocked(BeginImageImport);
 const mockedFinishImport = vi.mocked(FinishImageImport);
 const mockedDroppedPaths = vi.mocked(ImportDroppedPaths);
@@ -268,6 +272,40 @@ describe("workspace ↔ document glue (ticket 04 wiring)", () => {
     expect(mockedSaveDialog).not.toHaveBeenCalled();
     expect(activeTab(get(workspace))?.dirty).toBe(false);
     expect(get(document).rev).toBe(10);
+  });
+});
+
+// 票 77：文件夹入口把选到的目录交给同一条 BeginImageImport —— Go 侧在 beginImport
+// 里展开直接子级图像，所以对话框、画布、标签栏、外壳四条入口的行为一致。
+describe("importFolder (ticket 77)", () => {
+  beforeEach(() => {
+    mockedPickFolder.mockReset();
+    mockedBeginImport.mockReset();
+  });
+
+  it("取消选择返回 null，不过桥", async () => {
+    mockedPickFolder.mockResolvedValue("");
+    expect(await importFolder()).toBeNull();
+    expect(mockedBeginImport).not.toHaveBeenCalled();
+  });
+
+  it("把目录交给同一条 BeginImageImport，而不是自己列文件", async () => {
+    mockedPickFolder.mockResolvedValue("C:/pics/一组图");
+    mockedBeginImport.mockResolvedValue(
+      JSON.stringify({
+        items: [{ path: "C:/pics/一组图/2 Two.png", status: "ok", name: "2 Two" }],
+        hasDocument: true,
+        canvasW: 64,
+        canvasH: 48,
+      }),
+    );
+    mockedGetSnapshot.mockResolvedValue(snapshot([{ id: "t1" }], "t1"));
+    mockedDocSnapshot.mockResolvedValue('{"rev":2,"filterRev":0,"doc":null}');
+
+    const result = await importFolder();
+    expect(mockedBeginImport).toHaveBeenCalledWith(["C:/pics/一组图"]);
+    expect(mockedFinishImport).toHaveBeenCalledTimes(1);
+    expect(result).toEqual({ failures: [], raws: [] });
   });
 });
 
