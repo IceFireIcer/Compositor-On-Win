@@ -31,6 +31,10 @@ func TestBlendChannelFormulas(t *testing.T) {
 		{domain.BlendLinearDodge, 0.25, 0.25, 0.5},
 		{domain.BlendOverlay, 0.25, 0.5, 0.25},
 		{domain.BlendOverlay, 0.75, 0.5, 0.75},
+		// 上面两条**分辨不出「两个分支接反」**：s=0.5 时两支算出同一个值。下面两条用 s≠0.5，
+		// 才是 Overlay 这个模式的**定义性**测试 —— 变异审计：把两支对调，加上这两条之前全部通过。
+		{domain.BlendOverlay, 0.25, 0.25, 0.125},
+		{domain.BlendOverlay, 0.75, 0.25, 0.625},
 		{domain.BlendSoftLight, 0.5, 0.25, 0.375},
 		{domain.BlendSoftLight, 0.25, 0.75, 0.375},
 		{domain.BlendHardLight, 0.5, 0.25, 0.25},
@@ -77,6 +81,27 @@ func TestNonSeparableModes(t *testing.T) {
 	_, _, _, a := BlendPixel(domain.BlendSaturation, 0.2, 0.4, 0.6, 1, 1, 1, 1, 1)
 	if a != 1 {
 		t.Fatalf("saturation alpha = %v", a)
+	}
+}
+
+// 不可分模式里的 Hue：把源的色相+饱和度配到背景的明度上。背景是灰（饱和度 0）时，结果就是那片灰。
+// 此前 Luminosity/Color/Saturation 各有用例，**Hue 一条都没有**（变异审计翻出来的）。
+func TestBlendPixelHueKeepsTheBackdropsLuminance(t *testing.T) {
+	// 源是纯红，背景是中灰 —— 背景饱和度 0，所以源的饱和度被压到 0，结果回到那片灰。
+	r, g, b, a := BlendPixel(domain.BlendHue, 0.5, 0.5, 0.5, 1, 1, 0, 0, 1)
+	if math.Abs(r-0.5) > 1e-9 || math.Abs(g-0.5) > 1e-9 || math.Abs(b-0.5) > 1e-9 {
+		t.Errorf("灰背景上的 Hue 混合应当保持那片灰，得到 (%.6f, %.6f, %.6f)", r, g, b)
+	}
+	if math.Abs(a-1) > 1e-9 {
+		t.Errorf("不透明源叠不透明背景，alpha 应当是 1，得到 %.6f", a)
+	}
+
+	// 背景有色相时，源只贡献色相与饱和度，明度仍取背景的。
+	dR, dG, dB := 0.2, 0.4, 0.6
+	wantLum := lum(dR, dG, dB)
+	r2, g2, b2, _ := BlendPixel(domain.BlendHue, dR, dG, dB, 1, 1, 0.5, 0, 1)
+	if got := lum(r2, g2, b2); math.Abs(got-wantLum) > 1e-9 {
+		t.Errorf("结果的明度应当等于背景的 %.6f，得到 %.6f", wantLum, got)
 	}
 }
 
