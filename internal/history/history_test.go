@@ -366,6 +366,47 @@ func TestUndoBlockedDuringTransactionAndUnbalancedCalls(t *testing.T) {
 	}
 }
 
+// 事务进行中不仅不能撤销，也**不能重做** —— `CanRedo` 里 `h.depth == 0` 那一半。
+//
+// 这条是变异审计查出来的：把 `CanRedo` 的 `h.depth == 0` 去掉，全部测试照样通过（上面那条只测撤销）。
+// 允许重做插进一次还没结束的编辑里，会把这个编辑的前后快照顺序弄乱。
+func TestRedoBlockedDuringTransaction(t *testing.T) {
+	h := New()
+	h.Begin("New Document", domain.Document{}, nil)
+	doc := newDoc(10, 10)
+	h.End(doc, nil)
+	h.Begin("Add Layer", doc, nil)
+	doc.Layers = append(doc.Layers, rasterLayer("layer-1", "Layer 1", ""))
+	h.End(doc, nil)
+
+	// 先撤销一次，让 future 里有东西 —— 否则 CanRedo 本来就是假，测不出 depth 那一半。
+	if _, ok := h.Undo(); !ok {
+		t.Fatal("撤销应当成功")
+	}
+	if !h.CanRedo() {
+		t.Fatal("撤销之后应当可以重做")
+	}
+	name := h.RedoName()
+	rev := h.Revision()
+
+	h.Begin("Batch", doc, nil)
+	if h.CanRedo() {
+		t.Fatal("事务进行中不得重做")
+	}
+	if _, ok := h.Redo(); ok {
+		t.Fatal("事务进行中的 Redo 必须失败")
+	}
+	if h.Revision() != rev || h.RedoName() != name {
+		t.Fatalf("事务中被拒的 Redo 不该动状态：revision %q→%q、RedoName %q→%q", rev, h.Revision(), name, h.RedoName())
+	}
+
+	// 这次事务是空操作，结束后重做链应当还原样 —— 空提交不截断 future。
+	h.End(doc, nil)
+	if !h.CanRedo() || h.RedoName() != name {
+		t.Fatalf("事务结束后应当恢复可重做，得到 CanRedo=%v RedoName=%q", h.CanRedo(), h.RedoName())
+	}
+}
+
 // TestBatchImportIsOneEntryAndFailuresAddNothing ports HistoryTests'
 // batchImportIsOneEntryAndFailuresDoNotAddHistory (minus the image decoder):
 // a many-layer import commits as one entry, a failed import adds nothing, and
