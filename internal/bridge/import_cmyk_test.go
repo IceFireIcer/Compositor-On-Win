@@ -62,6 +62,90 @@ func TestImportingACMykTIFFAdoptsItsEmbeddedProfile(t *testing.T) {
 	}
 }
 
+// 票 86：CMYK PSD 走的是 project_io 的 loadPhotoshop，**不经过** rasterio.Decode —— 所以
+// 「内嵌配置留进会话」这条原来对它不生效。这里钉住补上的那一步。
+func TestLoadingACMykPSDAdoptsItsProfile(t *testing.T) {
+	t.Setenv("COMPOSITOR_COLORIO_DATA_DIR", t.TempDir())
+	colorio.ClearProofCache()
+	if err := colorio.SetChosen(""); err != nil {
+		t.Fatal(err)
+	}
+	// 取一份**不是回退**的配置：Chosen() 没选过时会回退到 Generic 或第一份，只有挑一份别的
+	// 才能分辨「采纳了内嵌的」与「回退到默认」。
+	all := colorio.Installed()
+	var target colorio.Profile
+	for i := len(all) - 1; i >= 0; i-- {
+		if colorio.IsCMYKProfile(all[i].Data) {
+			target = all[i]
+			break
+		}
+	}
+	if target.Path == "" {
+		t.Skip("本机没有可用的 CMYK 配置")
+	}
+	if before := colorio.Chosen(); before != nil && before.Name == target.Name {
+		t.Skip("回退恰好就是目标配置，这条测试分辨不出采纳")
+	}
+	data, err := os.ReadFile(target.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	path := filepath.Join(dir, "cmyk.psd")
+	if err := os.WriteFile(path, bridgeCMYKPSD(data), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	svc, _ := newTestService(t, 4, 4)
+	if _, _, _, err := svc.loadPhotoshop(path); err != nil {
+		t.Fatalf("加载 CMYK PSD: %v", err)
+	}
+	chosen := colorio.Chosen()
+	if chosen == nil {
+		t.Fatal("加载后应当有一份被选中的 CMYK 配置")
+	}
+	if chosen.Name != target.Name {
+		t.Fatalf("选中的是 %q，想要被采纳的那份 %q", chosen.Name, target.Name)
+	}
+}
+
+// bridgeCMYKPSD 拼一份 2×1 的拼合 CMYK PSD（内嵌给定配置）：左纸白、右满墨，四通道反相。
+func bridgeCMYKPSD(profile []byte) []byte {
+	var out []byte
+	be := func(v uint32, n int) {
+		for i := n - 1; i >= 0; i-- {
+			out = append(out, uint8(v>>(8*uint(i))))
+		}
+	}
+	str := func(s string) { out = append(out, s...) }
+	str("8BPS")
+	be(1, 2)
+	out = append(out, make([]byte, 6)...)
+	be(4, 2) // 通道数
+	be(1, 4) // 高
+	be(2, 4) // 宽
+	be(8, 2)
+	be(4, 2) // 模式 4 = CMYK
+	be(0, 4) // 色彩模式数据
+
+	var res []byte
+	res = append(res, []byte("8BIM")...)
+	res = append(res, 0x04, 0x0F) // 资源 id 1039
+	res = append(res, 0, 0)       // 名字长度 0 + 偶数字节填充
+	res = append(res, byte(len(profile)>>24), byte(len(profile)>>16), byte(len(profile)>>8), byte(len(profile)))
+	res = append(res, profile...)
+	if len(profile)%2 == 1 {
+		res = append(res, 0)
+	}
+	be(uint32(len(res)), 4)
+	out = append(out, res...)
+	be(0, 4) // 图层段 0 → 拼合
+	be(0, 2) // 图像数据：无压缩
+	for c := 0; c < 4; c++ {
+		out = append(out, 255, 0) // 左：不上墨；右：满墨
+	}
+	return out
+}
+
 // bridgeCMYKProfile 找一份可用的系统 CMYK 配置，找不到就跳过。
 func bridgeCMYKProfile(t *testing.T) []byte {
 	t.Helper()

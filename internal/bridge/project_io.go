@@ -6,11 +6,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"image/png"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
+
+	"compositor-win/internal/colorio"
 
 	"compositor-win/internal/domain"
 	"compositor-win/internal/hdrio"
@@ -238,6 +241,14 @@ func (s *Service) loadPhotoshop(path string) (*domain.Document, map[string]*rend
 	parsed, err := psd.Read(data, domain.MaxSurfacePixels)
 	if err != nil {
 		return nil, nil, nil, err
+	}
+	// 票 86：CMYK PSD 内嵌的配置要留进会话，与 rasterio 那条路一致 —— 校样与 CMYK 导出
+	// 靠它回到这份文件当初针对的油墨。留存失败只记日志，不影响导入。
+	if len(parsed.ICCProfile) > 0 && colorio.IsCMYKProfile(parsed.ICCProfile) {
+		name := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+		if _, err := colorio.AdoptEmbedded(parsed.ICCProfile, name); err != nil {
+			log.Printf("CMYK 配置未能留存（校样将沿用当前配置）: %v", err)
+		}
 	}
 	built, err := psd.Build(parsed)
 	if err != nil {

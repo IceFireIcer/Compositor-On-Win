@@ -7,7 +7,6 @@ package psd
 
 import (
 	"bytes"
-	"encoding/binary"
 	"os"
 	"path/filepath"
 	"strings"
@@ -672,17 +671,106 @@ func TestFlattenedCMYKPSDWithoutAProfileIsRefused(t *testing.T) {
 	}
 }
 
-// 分层 CMYK 仍未做：通道解码与 assemble 还是 RGB 形状的。这里钉住「明确拒绝」而不是猜着解。
+// layeredCMYKPSD 拼一份 2×1、单图层的 CMYK PSD：左纸白、右满黑墨，四通道反相存储。
 //
-// （上游在 decodeChannels 里按通道做转换，所以它能吃分层 CMYK —— 那是下一步的锚点：
-// PSDReader.swift:310 的 unpackedCMYKChannelIDs 与 :334-340 的转换。）
-func TestLayeredCMYKPSDIsStillRefused(t *testing.T) {
+// 图层记录照 readRecord 的读序拼：矩形 → 通道表 → 混合签名/键 → 不透明度/剪贴/标志/填充 →
+// 额外数据长度（掩版长度 + 混合范围长度 + Pascal 名字，名字补齐到 4 字节）。
+func layeredCMYKPSD(profile []byte) []byte {
+	w, h := 2, 1
+
+	// 每个通道：压缩方式 0 + 两个像素（左不上墨 255、右满墨 0）。
+	channel := &buf{}
+	for c := 0; c < 4; c++ {
+		channel.u16(0)
+		channel.raw([]byte{255, 0})
+	}
+	channelLength := 2 + w*h // 一个通道的字节数（压缩字 + 像素）
+
+	record := &buf{}
+	record.i32(0)        // top
+	record.i32(0)        // left
+	record.i32(int32(h)) // bottom
+	record.i32(int32(w)) // right
+	record.u16(4)        // 通道数
+	for id := 0; id < 4; id++ {
+		record.i16(int16(id))
+		record.u32(uint32(channelLength))
+	}
+	record.str("8BIM")
+	record.str("norm")
+	record.u8(255) // 不透明度
+	record.u8(0)   // 剪贴
+	record.u8(0)   // 标志
+	record.u8(0)   // 填充
+
+	extra := &buf{}
+	extra.u32(0)               // 没有掩版
+	extra.u32(0)               // 没有混合范围
+	extra.u8(0)                // 名字长度 0
+	extra.raw(make([]byte, 3)) // 名字补齐到 4 字节
+	record.u32(uint32(len(extra.data)))
+	record.raw(extra.data)
+
+	info := &buf{}
+	info.i16(1) // 一个图层
+	info.raw(record.data)
+	info.raw(channel.data)
+
+	section := &buf{}
+	section.u32(uint32(len(info.data)))
+	section.raw(info.data)
+	section.u32(0) // 全局图层掩版信息：没有
+
+	file := &buf{}
+	file.str("8BPS")
+	file.u16(1)
+	file.raw(make([]byte, 6))
+	file.u16(4) // 合成通道数：C M Y K
+	file.u32(uint32(h))
+	file.u32(uint32(w))
+	file.u16(8)
+	file.u16(4) // 色彩模式 4 = CMYK
+	file.u32(0) // 色彩模式数据
+	resources := &buf{}
+	resources.str("8BIM")
+	resources.u16(1039)
+	resources.u8(0)
+	resources.u8(0)
+	resources.u32(uint32(len(profile)))
+	resources.raw(profile)
+	if len(profile)%2 == 1 {
+		resources.u8(0)
+	}
+	file.u32(uint32(len(resources.data)))
+	file.raw(resources.data)
+	file.u32(uint32(len(section.data)))
+	file.raw(section.data)
+	return file.data
+}
+
+func TestLayeredCMYKPSDConvertsThroughItsProfile(t *testing.T) {
 	profile := cmykProfileFixture(t)
-	data, layerSectionAt := flattenedCMYKPSDAt(profile)
-	// 图层段长度改成 4，读取器就会走进分层那条路，随即因分层 CMYK 未实现而拒绝。
-	binary.BigEndian.PutUint32(data[layerSectionAt:], 4)
+	doc, err := Read(layeredCMYKPSD(profile), 1<<30)
+	if err != nil {
+		t.Fatalf("分层 CMYK PSD 应当读得出来: %v", err)
+	}
+	if len(doc.Layers) != 1 || doc.Layers[0].Image == nil {
+		t.Fatalf("应当读出一个图层，得到 %+v", doc.Layers)
+	}
+	pix := doc.Layers[0].Image.Pix
+	if pix[0] < 235 {
+		t.Errorf("不上墨的像素应当接近白，得到 %v", pix[:4])
+	}
+	if pix[4] > 90 {
+		t.Errorf("满墨的像素应当明显偏暗，得到 %v", pix[4:8])
+	}
+}
+
+// 分层 CMYK 没有可用配置时也要明确拒绝，而不是把它当 RGB 解。
+func TestLayeredCMYKPSDWithoutAProfileIsRefused(t *testing.T) {
+	data := layeredCMYKPSD(nil)
 	if _, err := Read(data, 1<<30); err != ErrUnsupportedColorMode {
-		t.Fatalf("分层 CMYK 应当被拒绝，得到 %v", err)
+		t.Fatalf("没有配置的分层 CMYK 应当被拒绝，得到 %v", err)
 	}
 }
 

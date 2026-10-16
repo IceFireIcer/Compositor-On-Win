@@ -6,6 +6,7 @@ package psd
 import (
 	crand "crypto/rand"
 
+	"compositor-win/internal/colorio"
 	"compositor-win/internal/domain"
 	"compositor-win/internal/render"
 )
@@ -145,6 +146,10 @@ var psbLargeAdditionalInfoKeys = map[string]bool{
 // UnpackedChannelIDs: transparency, R, G, B and the user mask; spot and
 // other extra IDs are skipped before decode.
 var unpackedChannelIDs = map[int]bool{-1: true, 0: true, 1: true, 2: true, -2: true}
+
+// unpackedCMYKChannelIDs adds the key channel: CMYK layers carry C, M, Y and K
+// (PSDReader.swift:235).
+var unpackedCMYKChannelIDs = map[int]bool{-1: true, 0: true, 1: true, 2: true, 3: true, -2: true}
 
 // Read parses a Photoshop file (PSDReader.read). remainingPixels bounds the
 // pixel budget; layers that overshoot it are cropped to the canvas before
@@ -291,9 +296,17 @@ func Read(data []byte, remainingPixels int) (Document, error) {
 			}},
 		}, nil
 	}
+	cmykProfile := []byte(nil)
 	if mode == 4 {
-		// 分层 CMYK：通道解码与 assemble 都按 RGBA 建，还没有油墨通道那条路。
-		return doc, ErrUnsupportedColorMode
+		// 配置选择照上游（PSDReader.swift:73-76）：内嵌配置 → 回退通用配置 → 否则拒绝。
+		// 我们这边**没有随包通用配置**（ADR-0008 §4），所以退化为「内嵌或拒绝」。
+		if len(doc.ICCProfile) > 0 && colorio.IsCMYKProfile(doc.ICCProfile) {
+			cmykProfile = doc.ICCProfile
+		} else if generic, ok := colorio.Generic(); ok && len(generic.Data) > 0 {
+			cmykProfile = generic.Data
+		} else {
+			return doc, ErrUnsupportedColorMode
+		}
 	}
 	if _, err := checkedLength(c, isPSB); err != nil { // layer info length
 		return doc, err
@@ -327,7 +340,7 @@ func Read(data []byte, remainingPixels int) (Document, error) {
 	}
 	usedPixels := 0
 	for i := range raw {
-		if err := decodeChannels(c, &raw[i], remainingPixels-usedPixels, isPSB); err != nil {
+		if err := decodeChannels(c, &raw[i], remainingPixels-usedPixels, isPSB, cmykProfile); err != nil {
 			return doc, err
 		}
 		if raw[i].image != nil {
@@ -645,7 +658,7 @@ func cropRect(left, top, right, bottom, canvasWidth, canvasHeight int) psdCrop {
 	return psdCrop{x: cl - left, y: ct - top, width: cr - cl, height: cb - ct}
 }
 
-func decodeChannels(c *cursor, layer *rawLayer, remainingPixels int, isPSB bool) error {
+func decodeChannels(c *cursor, layer *rawLayer, remainingPixels int, isPSB bool, cmyk []byte) error {
 	planes := map[int][]uint8{}
 	width := max(0, layer.right-layer.left)
 	height := max(0, layer.bottom-layer.top)
@@ -663,7 +676,11 @@ func decodeChannels(c *cursor, layer *rawLayer, remainingPixels int, isPSB bool)
 		// Advance past this channel before the next iteration — Go defers
 		// run at function exit, unlike Swift's per-iteration defer here.
 		advance := func() { c.offset = start + max(0, channel.length) }
-		if !unpackedChannelIDs[channel.id] || channel.length < 2 {
+		wanted := unpackedChannelIDs
+		if len(cmyk) > 0 {
+			wanted = unpackedCMYKChannelIDs
+		}
+		if !wanted[channel.id] || channel.length < 2 {
 			advance()
 			continue
 		}
@@ -712,6 +729,30 @@ func decodeChannels(c *cursor, layer *rawLayer, remainingPixels int, isPSB bool)
 	red := orPlane(planes, 0, black)
 	green := orPlane(planes, 1, black)
 	blue := orPlane(planes, 2, black)
+	if len(cmyk) > 0 {
+		// 反相存储（PSDReader.swift:335「Inks are stored inverted」）：缺失的通道是**不上墨**，
+		// 也就是 255。
+		none := opaque
+		cyan := orPlane(planes, 0, none)
+		magenta := orPlane(planes, 1, none)
+		yellow := orPlane(planes, 2, none)
+		key := orPlane(planes, 3, none)
+		if len(cyan) < width*height || len(magenta) < width*height || len(yellow) < width*height || len(key) < width*height {
+			return ErrTruncated
+		}
+		ink := make([]uint8, width*height*4)
+		for i := 0; i < width*height; i++ {
+			ink[i*4], ink[i*4+1], ink[i*4+2], ink[i*4+3] = 255-cyan[i], 255-magenta[i], 255-yellow[i], 255-key[i]
+		}
+		rgb, err := colorio.ConvertToRGB(ink, width, height, cmyk)
+		if err != nil {
+			return err
+		}
+		red, green, blue = make([]uint8, width*height), make([]uint8, width*height), make([]uint8, width*height)
+		for i := 0; i < width*height; i++ {
+			red[i], green[i], blue[i] = rgb[i*3], rgb[i*3+1], rgb[i*3+2]
+		}
+	}
 	alpha := orPlane(planes, -1, opaque)
 	if len(red) < width*height || len(green) < width*height || len(blue) < width*height || len(alpha) < width*height {
 		return ErrTruncated
