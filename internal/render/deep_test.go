@@ -122,6 +122,46 @@ func TestDeepToBitmapIsTheDitheredCopy(t *testing.T) {
 	}
 }
 
+// 票 83 验收 2 的后半：显示副本是**派生**，不是共享 —— 推导它不动深层，改它也不回写深层。
+// 这类「两个对象其实是同一块内存」的假设最容易悄悄错，所以单独钉一条。
+func TestTheDisplayCopyNeverWritesBackIntoTheDeepRaster(t *testing.T) {
+	d := NewDeep(8, 4, false)
+	for i := range d.Pix {
+		d.Pix[i] = uint16((i * 4111) % 65536)
+	}
+	before := append([]uint16(nil), d.Pix...)
+
+	first := d.ToBitmap()
+	for i := range d.Pix {
+		if d.Pix[i] != before[i] {
+			t.Fatalf("推导显示副本改动了深层：下标 %d", i)
+		}
+	}
+
+	// 再推导一次必须逐字节相同：缩放与平移会反复走这条路，带种子的噪声会闪。
+	second := d.ToBitmap()
+	for i := range first.Pix {
+		if first.Pix[i] != second.Pix[i] {
+			t.Fatalf("两次推导不同（缩放平移会闪）：下标 %d", i)
+		}
+	}
+
+	// 改副本不能影响深层 —— 它们必须是两块内存。
+	for i := range first.Pix {
+		first.Pix[i] ^= 0xFF
+	}
+	for i := range d.Pix {
+		if d.Pix[i] != before[i] {
+			t.Fatalf("改显示副本回写了深层：下标 %d", i)
+		}
+	}
+
+	// 副本本身不挂 Deep：8 位消费者拿不到深层，也就无从写回。
+	if first.Deep != nil {
+		t.Fatal("ToBitmap 的副本不该挂 Deep")
+	}
+}
+
 func TestDeepPeakReadsUnpremultipliedColors(t *testing.T) {
 	// Two pixels at half alpha: premultiplied 0.5 stands for a color of 1.
 	d := NewDeep(2, 1, false)
