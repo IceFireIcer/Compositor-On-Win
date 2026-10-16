@@ -8,19 +8,65 @@ package psd
 // 图像数据段的布局与图层通道不同：一个压缩方式字，然后**按通道平面**排（不是交错），
 // 每个平面自上而下。所以这里单独读，不复用 decodeChannels（那条与图层记录绑定）。
 
-import "compositor-win/internal/render"
+import (
+	"compositor-win/internal/colorio"
+	"compositor-win/internal/render"
+)
 
 const (
 	compressionRaw = 0
 	compressionRLE = 1
 )
 
+// modeCMYK is Photoshop's colour mode 4.
+const modeCMYK = 4
+
+// mergedCMYK converts four ink planes to sRGB through the file's profile.
+//
+// **Inks are stored inverted**: upstream says so outright ("Inks are stored inverted: a missing
+// channel is no ink", PSDReader.swift:335), so a full-ink pixel reads 0 and paper reads 255. The
+// inversion happens here; colorio.ConvertToRGB wants the ICC/PDF convention (0 = no ink).
+func mergedCMYK(planes [][]uint8, width, height, channels int, profile []byte) (*render.Bitmap, error) {
+	if channels < 4 {
+		return nil, ErrTruncated
+	}
+	if len(profile) == 0 || !colorio.IsCMYKProfile(profile) {
+		// Upstream falls back to the generic profile here (CMYK.generic); we have no bundled one
+		// (ADR-0008 §4), so a file with no usable profile is refused rather than converted as if
+		// it were sRGB.
+		return nil, ErrUnsupportedColorMode
+	}
+	ink := make([]uint8, width*height*4)
+	for i := 0; i < width*height; i++ {
+		for c := 0; c < 4; c++ {
+			ink[i*4+c] = 255 - planes[c][i]
+		}
+	}
+	rgb, err := colorio.ConvertToRGB(ink, width, height, profile)
+	if err != nil {
+		return nil, err
+	}
+	out := render.NewBitmap(width, height)
+	for i := 0; i < width*height; i++ {
+		a := uint8(255)
+		if channels >= 5 {
+			a = planes[4][i]
+		}
+		o := i * 4
+		out.Pix[o] = uint8(uint32(rgb[i*3]) * uint32(a) / 255)
+		out.Pix[o+1] = uint8(uint32(rgb[i*3+1]) * uint32(a) / 255)
+		out.Pix[o+2] = uint8(uint32(rgb[i*3+2]) * uint32(a) / 255)
+		out.Pix[o+3] = a
+	}
+	return out, nil
+}
+
 // mergedImage reads the image data section into a premultiplied RGBA bitmap.
 //
 // channels is the header's composite channel count: 3 for RGB, 4 when there is an
 // alpha channel. A CMYK file never reaches this point — the colour-mode gate
 // refuses it first (ticket 86's remaining work).
-func mergedImage(c *cursor, width, height, channels int, isPSB bool) (*render.Bitmap, error) {
+func mergedImage(c *cursor, width, height, channels int, isPSB bool, mode uint16, profile []byte) (*render.Bitmap, error) {
 	if width < 1 || height < 1 || channels < 1 {
 		return nil, ErrTruncated
 	}
@@ -72,6 +118,10 @@ func mergedImage(c *cursor, width, height, channels int, isPSB bool) (*render.Bi
 		default:
 			return nil, ErrUnsupportedCompress
 		}
+	}
+
+	if mode == modeCMYK {
+		return mergedCMYK(planes, width, height, channels, profile)
 	}
 
 	out := render.NewBitmap(width, height)

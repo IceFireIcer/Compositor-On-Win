@@ -195,7 +195,9 @@ func Read(data []byte, remainingPixels int) (Document, error) {
 	if depth != 8 {
 		return doc, ErrUnsupportedDepth
 	}
-	if mode != 3 {
+	// 模式 4（CMYK）只在**拼合**这条路上支持：见下面图层段为空的分支。分层 CMYK 的通道与建层
+	// 路径还是 RGB 形状的（assemble 按 RGBA 建层），所以那里照旧拒绝，而不是猜着解。
+	if mode != 3 && mode != 4 {
 		return doc, ErrUnsupportedColorMode
 	}
 	if skipLen, err := c.u32(); err != nil {
@@ -277,7 +279,7 @@ func Read(data []byte, remainingPixels int) (Document, error) {
 		// 空图层段：文件里那张拼合图就是全部内容（见 merged.go）。此前这里直接返回零图层，
 		// 于是打开一个正常的拼合 PSD 会得到一个空文档且不报错。
 		c.offset = layerSectionEnd
-		bitmap, err := mergedImage(c, canvasWidth, canvasHeight, channels, isPSB)
+		bitmap, err := mergedImage(c, canvasWidth, canvasHeight, channels, isPSB, mode, doc.ICCProfile)
 		if err != nil {
 			return doc, err
 		}
@@ -288,6 +290,10 @@ func Read(data []byte, remainingPixels int) (Document, error) {
 				Width: canvasWidth, Height: canvasHeight, Image: bitmap,
 			}},
 		}, nil
+	}
+	if mode == 4 {
+		// 分层 CMYK：通道解码与 assemble 都按 RGBA 建，还没有油墨通道那条路。
+		return doc, ErrUnsupportedColorMode
 	}
 	if _, err := checkedLength(c, isPSB); err != nil { // layer info length
 		return doc, err

@@ -7,6 +7,9 @@ package psd
 
 import (
 	"bytes"
+	"encoding/binary"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -565,12 +568,132 @@ func TestFlattenedPSDWithRLECompression(t *testing.T) {
 	}
 }
 
+// cmykProfileFixture 找一份本机的 CMYK ICC 配置：ICC 头偏移 16 处的色彩空间字段写着 CMYK。
+func cmykProfileFixture(t *testing.T) []byte {
+	t.Helper()
+	dir := `C:\Windows\System32\spool\drivers\color`
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Skip("本机没有 ICC 配置目录")
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		ext := strings.ToLower(filepath.Ext(e.Name()))
+		if ext != ".icc" && ext != ".icm" {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(dir, e.Name()))
+		if err != nil || len(data) < 20 {
+			continue
+		}
+		if string(data[16:20]) == "CMYK" {
+			return data
+		}
+	}
+	t.Skip("本机没有可用的 CMYK ICC 配置")
+	return nil
+}
+
+// flattenedCMYKPSD 拼一份 2×1 的拼合 CMYK PSD：左纸白、右满黑墨，内嵌给定配置。
+//
+// **油墨反相存储**（上游 PSDReader.swift:335「Inks are stored inverted」）：纸白是 255，
+// 满墨是 0。所以纸白四通道全 255，黑墨四通道全 0。
+func flattenedCMYKPSD(profile []byte) []byte {
+	data, _ := flattenedCMYKPSDAt(profile)
+	return data
+}
+
+// flattenedCMYKPSDAt 同时给出图层段长度字段的偏移，好让分层那条测试把它改成非 0。
+func flattenedCMYKPSDAt(profile []byte) ([]byte, int) {
+	file := &buf{}
+	file.str("8BPS")
+	file.u16(1)
+	file.raw(make([]byte, 6))
+	file.u16(4) // 通道数：C M Y K
+	file.u32(1) // 高
+	file.u32(2) // 宽
+	file.u16(8)
+	file.u16(4) // 色彩模式 4 = CMYK
+	file.u32(0) // 色彩模式数据
+	if profile == nil {
+		file.u32(0)
+	} else {
+		resources := &buf{}
+		resources.str("8BIM")
+		resources.u16(1039)
+		resources.u8(0)
+		resources.u8(0)
+		resources.u32(uint32(len(profile)))
+		resources.raw(profile)
+		if len(profile)%2 == 1 {
+			resources.u8(0)
+		}
+		file.u32(uint32(len(resources.data)))
+		file.raw(resources.data)
+	}
+	layerSectionAt := len(file.data)
+	file.u32(0) // 图层段 0 → 拼合
+	file.u16(0) // 图像数据：无压缩
+	for c := 0; c < 4; c++ {
+		file.raw([]byte{255, 0}) // 左：不上墨；右：满墨
+	}
+	return file.data, layerSectionAt
+}
+
+func TestFlattenedCMYKPSDConvertsThroughItsProfile(t *testing.T) {
+	profile := cmykProfileFixture(t)
+	doc, err := Read(flattenedCMYKPSD(profile), 1<<30)
+	if err != nil {
+		t.Fatalf("拼合 CMYK PSD 应当读得出来: %v", err)
+	}
+	if len(doc.Layers) != 1 || doc.Layers[0].Image == nil {
+		t.Fatalf("应当读成一个背景层，得到 %+v", doc.Layers)
+	}
+	if !bytes.Equal(doc.ICCProfile, profile) {
+		t.Fatalf("内嵌配置应当随文档带出来（%d 字节 vs %d）", len(doc.ICCProfile), len(profile))
+	}
+	pix := doc.Layers[0].Image.Pix
+	// 左：不上墨 → 接近白；右：满墨 → 明显偏暗。具体值取决于配置的黑点，只做结构性断言。
+	if pix[0] < 235 {
+		t.Errorf("不上墨的像素应当接近白，得到 %v", pix[:4])
+	}
+	if pix[4] > 90 {
+		t.Errorf("满墨的像素应当明显偏暗，得到 %v", pix[4:8])
+	}
+}
+
+// 没有可用配置时必须**明确拒绝** —— 上游会回退到通用配置，我们这边没有随包的那一份
+// （ADR-0008 §4），所以宁可拒绝也不把它当 sRGB 转。
+func TestFlattenedCMYKPSDWithoutAProfileIsRefused(t *testing.T) {
+	if _, err := Read(flattenedCMYKPSD(nil), 1<<30); err != ErrUnsupportedColorMode {
+		t.Fatalf("没有配置的 CMYK PSD 应当被拒绝，得到 %v", err)
+	}
+}
+
+// 分层 CMYK 仍未做：通道解码与 assemble 还是 RGB 形状的。这里钉住「明确拒绝」而不是猜着解。
+//
+// （上游在 decodeChannels 里按通道做转换，所以它能吃分层 CMYK —— 那是下一步的锚点：
+// PSDReader.swift:310 的 unpackedCMYKChannelIDs 与 :334-340 的转换。）
+func TestLayeredCMYKPSDIsStillRefused(t *testing.T) {
+	profile := cmykProfileFixture(t)
+	data, layerSectionAt := flattenedCMYKPSDAt(profile)
+	// 图层段长度改成 4，读取器就会走进分层那条路，随即因分层 CMYK 未实现而拒绝。
+	binary.BigEndian.PutUint32(data[layerSectionAt:], 4)
+	if _, err := Read(data, 1<<30); err != ErrUnsupportedColorMode {
+		t.Fatalf("分层 CMYK 应当被拒绝，得到 %v", err)
+	}
+}
+
 func TestUnsupportedHeadersAreRejected(t *testing.T) {
 	if _, err := Read(header(3, 8, 3, 10, 10), 1<<30); err != ErrUnsupportedVersion {
 		t.Fatalf("version 3: %v", err)
 	}
-	if _, err := Read(header(1, 8, 4, 10, 10), 1<<30); err != ErrUnsupportedColorMode {
-		t.Fatalf("CMYK: %v", err)
+	// 模式 4（CMYK）现在是**支持**的（拼合路径，见下），所以拿真正不支持的模式来测这道闸门：
+	// 9 是 Lab。
+	if _, err := Read(header(1, 8, 9, 10, 10), 1<<30); err != ErrUnsupportedColorMode {
+		t.Fatalf("Lab: %v", err)
 	}
 	if _, err := Read(header(1, 16, 3, 10, 10), 1<<30); err != ErrUnsupportedDepth {
 		t.Fatalf("16-bit: %v", err)

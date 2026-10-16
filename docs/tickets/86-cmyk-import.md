@@ -29,7 +29,22 @@
       会把颜色弄错」/「内嵌的配置不是 CMYK 配置」）。上游的「让用户选一份」属于 UI，未做；
       **拒绝**是安全的那一半。
 - [ ] 打开、保存重开和校样显示与 `CMYKTests` 语义一致。
-      **PSD 的 CMYK 变体：本轮做了前提，主体仍未做**（2026-10-16）。
+      **PSD 的 CMYK 变体：拼合这条已通**（2026-10-16）。
+
+      `mode 4` 通过头部闸门；拼合（没有图层段）的 CMYK PSD 按 4 个油墨通道解码，**反相**后交
+      `colorio.ConvertToRGB`，用的配置来自图像资源 1039。
+
+      **反相是照上游抄的**：`PSDReader.swift:335` 写着「Inks are stored inverted: a missing channel is
+      no ink」—— 满墨存 0、纸白存 255。变异验证过：去掉反相，测试立刻失败（白变暗、黑变白）。
+
+      **配置选择照上游**（`PSDReader.swift:73-76`）：内嵌配置 → 通用配置 → 否则拒绝。我们这边**没有
+      随包通用配置**（ADR-0008 §4），所以退化到「内嵌或拒绝」，与票 86 第二条一致（宁拒绝不猜 sRGB）。
+
+      **分层 CMYK 仍未做**：通道解码与 `assemble` 还是 RGB 形状的，所以分层 CMYK 明确拒绝。上游是在
+      `decodeChannels` 里逐通道转的（`PSDReader.swift:310` 的 `unpackedCMYKChannelIDs`、`:334-340`
+      的转换），那是下一步的锚点。
+
+      —— 上一轮记录的前提（ICC 从资源 1039 带出）本轮用上了。
 
       已落地并验证：`psd.Read` 现在把图像资源 **1039** 的 ICC 配置带进 `Document.ICCProfile`
       （`TestReadCarriesTheEmbeddedICCProfile` / `TestReadWithoutAnICCProfileLeavesItEmpty`）。
