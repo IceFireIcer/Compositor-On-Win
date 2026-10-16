@@ -235,6 +235,7 @@ const (
 	cameraRawContrastStart    = 138
 	cameraRawHighlightsStart  = 187
 	cameraRawShadowsStart     = 236
+	cameraRawMixerStart       = 285
 	cameraRawCalibrationStart = 405
 	cameraRawParametricStart  = 435
 )
@@ -438,6 +439,23 @@ func applyCameraRawTable(b *Bitmap, s CameraRawSettings, clipping int) bool {
 	// A nil table is still meaningful: the clipping previews run without a grade.
 	cameraRawApplyTable(b, table, cameraRawGrid, clipping)
 	return true
+}
+
+// cameraRawMixerStages is CameraRawTables.mixerStages: the Color Mixer's eight
+// colors, luminance first, then saturation, then hue — the order that composes
+// like Photoshop's. Each slider is a five-table run at −100…100 by 50, and a
+// slider at zero contributes nothing. Expects normalized settings, as
+// upstream's caller passes (CameraRawColor.swift:282).
+func cameraRawMixerStages(set *cameraRawTableSet, m *CameraRawMixerSettings) []cameraRawStage {
+	var stages []cameraRawStage
+	for kind, values := range [3][8]float64{m.Luminance, m.Saturation, m.Hue} {
+		for color, value := range values {
+			if value != 0 {
+				stages = append(stages, cameraRawFifty(set, cameraRawMixerStart+(kind*8+color)*5, value))
+			}
+		}
+	}
+	return stages
 }
 
 // cameraRawFifty is CameraRawTables.fifty: a slider on a run of five tables

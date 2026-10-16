@@ -176,6 +176,40 @@ func TestTableStagesOrderAndEmptiness(t *testing.T) {
 	}
 }
 
+// 混色器：八色 × 亮度/饱和/色相，每档五张表 −100…100 步长 50。
+//
+//	亮度·红 25 → fifty(285, 25) → position 2.5 → 表 287/288，各 0.5
+//	色相·绿（color 3）−25 → 起点 285 + (2*8+3)*5 = 380 → position 1.5 → 表 385/386，各 0.5
+func TestMixerStagesPickTheRightRunsInOrder(t *testing.T) {
+	set, err := CameraRawTables()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stages := cameraRawMixerStages(set, &CameraRawMixerSettings{}); len(stages) != 0 {
+		t.Fatalf("全为 0 时应当是空链，得到 %d 段", len(stages))
+	}
+	mixer := &CameraRawMixerSettings{}
+	mixer.Luminance[0] = 25
+	mixer.Hue[3] = -25
+	stages := cameraRawMixerStages(set, mixer)
+	if len(stages) != 2 {
+		t.Fatalf("应当有 2 段，得到 %d", len(stages))
+	}
+	// 亮度在色相之前（上游的 kind 顺序）。
+	lum := stageIndices(set, &stages[0])
+	if lum[0] != cameraRawMixerStart+2 || lum[1] != cameraRawMixerStart+3 {
+		t.Errorf("亮度段表 %v，想要 [%d %d]", lum[:2], cameraRawMixerStart+2, cameraRawMixerStart+3)
+	}
+	if math.Abs(stages[0].weights[0]-0.5) > 1e-12 || math.Abs(stages[0].weights[1]-0.5) > 1e-12 {
+		t.Errorf("亮度段权重 %v，想要 0.5/0.5", stages[0].weights[:2])
+	}
+	hueStart := cameraRawMixerStart + (2*8+3)*5
+	hue := stageIndices(set, &stages[1])
+	if hue[0] != hueStart+1 || hue[1] != hueStart+2 {
+		t.Errorf("色相段表 %v，想要 [%d %d]", hue[:2], hueStart+1, hueStart+2)
+	}
+}
+
 // 参数曲线的分割点被改过时，那张表不再适用，这一段就不出现。
 func TestTableStagesSkipTheParametricCurveWithMovedDividers(t *testing.T) {
 	set, err := CameraRawTables()
