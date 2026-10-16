@@ -19,13 +19,46 @@ import (
 
 // sixteenBitExportRaster is the raster an Export As at 16 bits a channel writes:
 // the active document's own deep pixels, when the flattened result *is* that
-// raster.
+// raster and it is not an HDR one (an HDR raster goes out as EXR, ticket 85).
+func (w *Workspace) sixteenBitExportRaster() (*render.DeepRaster, error) {
+	deep, err := w.flattenIsTheDeepRaster()
+	if err != nil {
+		return nil, err
+	}
+	if deep.HDR {
+		return nil, fmt.Errorf("HDR 栅格走 EXR（16 位 PNG/TIFF 装不下超白值）")
+	}
+	return deep, nil
+}
+
+// hdrExportRaster is the raster an EXR export writes when the flattened result is
+// a layer's own HDR raster, so light brighter than white survives. A nil raster
+// with a nil error means "no HDR raster here": the caller writes the 8-bit
+// flattened result as half floats instead, which is what upstream's
+// `hdrRaster ?? raster` does (ExportAsSheet.swift:211). That fallback is honest
+// — the values really are the 8-bit ones — unlike claiming 16 bits for an 8-bit
+// composite.
+func (w *Workspace) hdrExportRaster() (*render.DeepRaster, error) {
+	deep, err := w.flattenIsTheDeepRaster()
+	if err != nil {
+		// A document this gate cannot describe is not an error for EXR: fall back
+		// to the flattened raster rather than refusing the format.
+		return nil, nil
+	}
+	if !deep.HDR {
+		return nil, nil
+	}
+	return deep, nil
+}
+
+// flattenIsTheDeepRaster is the shared gate: the active document's own deep
+// pixels, but only when the flattened result *is* that raster.
 //
-// The gate is deliberately narrow, and every branch says why: one visible image
+// It is deliberately narrow, and every branch says why: one visible image
 // layer, a deep raster at the canvas size, an identity transform, no mask, no
 // clipping, no effects, normal blending, full opacity. Anything else needs a
-// 16-bit composite, which this pipeline does not have.
-func (w *Workspace) sixteenBitExportRaster() (*render.DeepRaster, error) {
+// composite at that depth, which this pipeline does not have.
+func (w *Workspace) flattenIsTheDeepRaster() (*render.DeepRaster, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	sess := w.activeSessionLocked()
@@ -73,10 +106,7 @@ func (w *Workspace) sixteenBitExportRaster() (*render.DeepRaster, error) {
 		return nil, fmt.Errorf("活动图层没有 16 位栅格")
 	}
 	if bmp.Deep.W != doc.Width || bmp.Deep.H != doc.Height {
-		return nil, fmt.Errorf("16 位栅格尺寸与画布不一致")
-	}
-	if bmp.Deep.HDR {
-		return nil, fmt.Errorf("HDR 栅格走 EXR（票 85）")
+		return nil, fmt.Errorf("深层栅格尺寸与画布不一致")
 	}
 	return bmp.Deep, nil
 }

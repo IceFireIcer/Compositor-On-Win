@@ -102,10 +102,12 @@ describe("等比缩放数学（原版 ExportAsSheet.setWidth/setHeight）", () =
 });
 
 describe("格式集合（首要格式 vs 更多格式）", () => {
-  it("JPEG/PNG 为首要格式，TIFF/PDF 在更多格式区", () => {
+  it("JPEG/PNG 为首要格式，TIFF/EXR/PDF 在更多格式区", () => {
     expect(PRIMARY_EXPORT_FORMATS).toEqual(["jpeg", "png"]);
-    expect(MORE_EXPORT_FORMATS).toEqual(["tiff", "pdf"]);
+    // 票 85 把 EXR 加进了更多格式区。
+    expect(MORE_EXPORT_FORMATS).toEqual(["tiff", "exr", "pdf"]);
     expect(exportFormatDef("tiff").label).toBe("TIFF");
+    expect(exportFormatDef("exr").extension).toBe("exr");
     expect(exportFormatDef("pdf").extension).toBe("pdf");
     expect(exportFormatDef("jpeg").extension).toBe("jpg");
   });

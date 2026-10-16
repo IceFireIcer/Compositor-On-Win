@@ -16,7 +16,7 @@ import {
  * 记忆对应原版 UserDefaults 的 jpegExportQuality。
  */
 
-export type ExportKind = "png" | "jpeg" | "tiff" | "pdf";
+export type ExportKind = "png" | "exr" | "jpeg" | "tiff" | "pdf";
 
 /** 一种导出格式（原版 ExportFormat 的对话框元数据）。 */
 export interface ExportFormatDef {
@@ -33,14 +33,16 @@ export const EXPORT_FORMATS: readonly ExportFormatDef[] = [
   { id: "jpeg", label: "JPEG", extension: "jpg", keepsAlpha: false },
   { id: "png", label: "PNG", extension: "png", keepsAlpha: true },
   { id: "tiff", label: "TIFF", extension: "tif", keepsAlpha: true },
+  // 票 85：EXR 写 half-float extended sRGB，超白高光不截断。
+  { id: "exr", label: "EXR", extension: "exr", keepsAlpha: true },
   { id: "pdf", label: "PDF", extension: "pdf", keepsAlpha: false },
 ];
 
 /** 首要格式（分段控件里的两个，原版 ExportAsSheet 的日常格式）。 */
 export const PRIMARY_EXPORT_FORMATS: readonly ExportKind[] = ["jpeg", "png"];
 
-/** 更多格式区（原版 "More" 菜单：TIFF 与 PDF；EXR 由 71 号票承担）。 */
-export const MORE_EXPORT_FORMATS: readonly ExportKind[] = ["tiff", "pdf"];
+/** 更多格式区（原版 "More" 菜单：TIFF、EXR 与 PDF）。 */
+export const MORE_EXPORT_FORMATS: readonly ExportKind[] = ["tiff", "exr", "pdf"];
 
 export function exportFormatDef(kind: ExportKind): ExportFormatDef {
   return EXPORT_FORMATS.find((format) => format.id === kind) ?? EXPORT_FORMATS[0];

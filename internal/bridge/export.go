@@ -17,6 +17,7 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
 	"compositor-win/internal/domain"
+	"compositor-win/internal/hdrio"
 	"compositor-win/internal/render"
 )
 
@@ -196,10 +197,12 @@ type exportFormat struct {
 	filter   runtime.FileFilter
 }
 
-// exportFormats is the dialog's format set (EXR, 16-bit and CMYK stay with
-// tickets 71/69/72).
+// exportFormats is the dialog's format set (CMYK stays with ticket 86).
 var exportFormats = []exportFormat{
 	{id: "png", label: "PNG", ext: ".png", accepted: []string{".png"}, filter: pngFilter},
+	// 票 85：EXR 写出 half-float extended sRGB，超白值不截断。
+	{id: "exr", label: "EXR", ext: ".exr", accepted: []string{".exr"},
+		filter: runtime.FileFilter{DisplayName: "OpenEXR 图像", Pattern: "*.exr"}},
 	{id: "jpeg", label: "JPEG", ext: ".jpg", accepted: []string{".jpg", ".jpeg"}, filter: jpegFilter},
 	{id: "tiff", label: "TIFF", ext: ".tif", accepted: []string{".tif", ".tiff"},
 		filter: runtime.FileFilter{DisplayName: "TIFF 图像", Pattern: "*.tif;*.tiff"}},
@@ -213,7 +216,7 @@ func exportFormatFor(id string) (exportFormat, error) {
 			return f, nil
 		}
 	}
-	return exportFormat{}, fmt.Errorf("不支持的导出格式 %q（可用：png、jpeg、tiff、pdf）", id)
+	return exportFormat{}, fmt.Errorf("不支持的导出格式 %q（可用：png、exr、jpeg、tiff、pdf）", id)
 }
 
 // parseExportAsRequest normalizes the wire payload and rejects the requests
@@ -367,6 +370,19 @@ func (s *Service) ExportAs(requestJSON string) (string, error) {
 	format, _ := exportFormatFor(req.Format)
 	// 16 位先在这里定下来：拿不到就在**弹保存对话框之前**报错，用户不必先选路径再被拒。
 	// 失败不碰文档、历史与脏标记（导出本来就是只读）。
+	// 票 85：EXR 优先写 HDR 栅格（超白值不截断）；没有就退回 8 位拼合结果的 half 展开，
+	// 与上游的 `hdrRaster ?? raster` 一致 —— 那份回退是诚实的（值本来就是 8 位的）。
+	var hdrRaster *render.DeepRaster
+	if format.id == "exr" {
+		if hdrRaster, err = s.ws.hdrExportRaster(); err != nil {
+			return "", err
+		}
+		if hdrRaster != nil && req.Width > 0 && req.Height > 0 &&
+			(req.Width != hdrRaster.W || req.Height != hdrRaster.H) {
+			return "", fmt.Errorf("HDR 的 EXR 导出不支持改变尺寸（%d×%d → %d×%d）",
+				hdrRaster.W, hdrRaster.H, req.Width, req.Height)
+		}
+	}
 	var deep16 *render.DeepRaster
 	if req.SixteenBit {
 		if format.id != "png" && format.id != "tiff" {
@@ -386,6 +402,17 @@ func (s *Service) ExportAs(requestJSON string) (string, error) {
 	br, bg, bb := parseBackground(req.Background)
 	return s.writeExport("导出 "+format.label, name, []runtime.FileFilter{format.filter}, format.accepted, format.ext,
 		func(bmp *render.Bitmap, res int) ([]byte, error) {
+			if format.id == "exr" {
+				if hdrRaster != nil {
+					return hdrio.EncodeEXR(hdrRaster)
+				}
+				w, h := req.targetSize(bmp.W, bmp.H)
+				sized := bmp
+				if w != bmp.W || h != bmp.H {
+					sized = render.ResampleBitmap(bmp, w, h)
+				}
+				return hdrio.EncodeEXR(render.DeepFromBitmap(sized))
+			}
 			if deep16 != nil {
 				if format.id == "png" {
 					return render.EncodePNG16WithDPI(deep16, res)

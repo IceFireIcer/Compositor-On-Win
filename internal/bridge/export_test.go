@@ -650,8 +650,9 @@ func TestExportAsDoesNotTouchDocumentOrDirtyState(t *testing.T) {
 func TestExportAsRejectsBadRequests(t *testing.T) {
 	svc, _ := newTestService(t, 4, 4)
 	stubExportSaveDialog(t, filepath.Join(t.TempDir(), "out"))
-	if _, err := svc.ExportAs(`{"format":"exr"}`); err == nil {
-		t.Fatal("本票不支持的格式应报错")
+	// EXR 自票 85 起是支持的了；这里换一个仍然不支持的格式。
+	if _, err := svc.ExportAs(`{"format":"webp"}`); err == nil {
+		t.Fatal("不支持的格式应报错")
 	}
 	if _, err := svc.ExportAs(`{"format":"png","width":30001,"height":1}`); err == nil {
 		t.Fatal("超长边应报错")
