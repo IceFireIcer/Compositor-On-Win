@@ -428,8 +428,10 @@ func TestRenderColorOverlayDefaultsToEnabled(t *testing.T) {
 }
 
 func TestRenderColorOverlayCoverage(t *testing.T) {
-	// Literal expectations from the source-over coverage fill in Swift
-	// LayerEffects.swift and MetalLayerEffects.swift (no linear-light blend).
+	// Literal expectations from the recolor in MetalLayerEffects.effects_compose
+	// (:369-374, no linear-light blend): the overlay mixes the pixel's own RGB
+	// toward its color premultiplied by the pixel's alpha, and leaves the alpha
+	// alone. Half-transparent black under white is half-transparent white.
 	for _, tc := range []struct {
 		name    string
 		enabled *bool
@@ -441,7 +443,10 @@ func TestRenderColorOverlayCoverage(t *testing.T) {
 		{"explicit enabled", ptr(true), 1, [4]uint8{0, 0, 255, 255}, [4]uint8{255, 0, 0, 255}},
 		{"zero opacity", nil, 0, [4]uint8{0, 0, 128, 128}, [4]uint8{0, 0, 128, 128}},
 		{"opaque half overlay", nil, 0.5, [4]uint8{0, 0, 255, 255}, [4]uint8{128, 0, 128, 255}},
-		{"soft edge half overlay", nil, 0.5, [4]uint8{0, 0, 128, 128}, [4]uint8{64, 0, 96, 160}},
+		// alpha 0.502: target = red × 0.502 = 0.502, mixed 50/50 with the pixel's
+		// own 0 and 0.502, so R = 64 and B = 64; alpha stays 128. The old
+		// source-over form mixed by alpha × opacity and raised alpha to 160.
+		{"soft edge half overlay", nil, 0.5, [4]uint8{0, 0, 128, 128}, [4]uint8{64, 0, 64, 128}},
 		{"transparent", nil, 1, [4]uint8{}, [4]uint8{}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -472,8 +477,11 @@ func TestRenderColorOverlayMaskBeforeEffectAndOpacity(t *testing.T) {
 		opacity     float64
 		want        [4]uint8
 	}{
-		{"soft mask", 128, nil, 1, [4]uint8{128, 0, 64, 192}},
-		{"soft mask and layer opacity", 128, nil, 0.5, [4]uint8{64, 0, 32, 96}},
+		// The mask halves the layer to alpha 128 (B premultiplied to 128); at
+		// opacity 1 the overlay's target is red × 0.502, so R = 128 and B = 0.
+		{"soft mask", 128, nil, 1, [4]uint8{128, 0, 0, 128}},
+		// Layer opacity 0.5 on top of that halves it again to 64.
+		{"soft mask and layer opacity", 128, nil, 0.5, [4]uint8{64, 0, 0, 64}},
 		{"hidden", 0, nil, 1, [4]uint8{}},
 		{"disabled mask", 0, ptr(false), 1, [4]uint8{255, 0, 0, 255}},
 	} {
@@ -548,8 +556,10 @@ func TestRenderColorOverlaySourceGridBeforeSmoothPlacement(t *testing.T) {
 		l.Effects = &domain.Effects{ColorOverlay: &domain.OverlayEffect{Red: 1, Opacity: 1}}
 	}))
 	out := renderDoc(t, doc, map[string]*Bitmap{"image.png": image})
-	if got := px(out, 1, 0); got != [4]uint8{96, 0, 48, 144} {
-		t.Fatalf("scaled source-grid overlay = %v, want [96 0 48 144]", got)
+	// Same recolor as above: alpha 96 is kept, and the overlay's target is red ×
+	// 96/255, so R = 96 and the blue goes to 0.
+	if got := px(out, 1, 0); got != [4]uint8{96, 0, 0, 96} {
+		t.Fatalf("scaled source-grid overlay = %v, want [96 0 0 96]", got)
 	}
 }
 

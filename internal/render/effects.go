@@ -111,22 +111,32 @@ func effectsMargin(effects *domain.Effects) int {
 	return int(math.Ceil(margin)) + 2
 }
 
-// applyColorOverlay ports LayerEffectsRenderer.render's coverage fill and
-// MetalLayerEffects.effects_compose. The source is already masked, in layer
-// pixels, before placement and layer/group opacity. This is source-over, not
-// an RGB replacement: on a soft edge it also increases alpha. Keep this math
-// in premultiplied sRGB, matching the original rather than linear light.
+// applyColorOverlay ports MetalLayerEffects.effects_compose's color overlay
+// (MetalLayerEffects.swift:369-374): it recolors the layer's own pixels and
+// keeps their alpha, so a half-transparent black pixel under a white overlay
+// turns half-transparent white. Laid over the composite instead — which is what
+// this used to do — it only covered as much as the pixel did and let the old
+// color show through, and it added coverage the pixel never had.
+//
+// The target is the overlay color premultiplied by the pixel's alpha, mixed in
+// by the overlay's opacity. Keep this math in premultiplied sRGB, matching the
+// original rather than linear light.
 func applyColorOverlay(shown *Bitmap, overlay *domain.OverlayEffect) {
+	amount := overlay.Opacity
+	if amount <= 0 {
+		return
+	}
 	for i := 0; i < len(shown.Pix); i += 4 {
-		alpha := float64(shown.Pix[i+3])
-		coverage := alpha / 255 * overlay.Opacity
-		if coverage == 0 {
+		alpha := float64(shown.Pix[i+3]) / 255
+		if alpha == 0 {
 			continue
 		}
-		shown.Pix[i] = uint8(overlay.Red*coverage*255 + float64(shown.Pix[i])*(1-coverage) + 0.5)
-		shown.Pix[i+1] = uint8(overlay.Green*coverage*255 + float64(shown.Pix[i+1])*(1-coverage) + 0.5)
-		shown.Pix[i+2] = uint8(overlay.Blue*coverage*255 + float64(shown.Pix[i+2])*(1-coverage) + 0.5)
-		shown.Pix[i+3] = uint8(coverage*255 + alpha*(1-coverage) + 0.5)
+		target := [3]float64{overlay.Red * alpha, overlay.Green * alpha, overlay.Blue * alpha}
+		for ch := 0; ch < 3; ch++ {
+			value := float64(shown.Pix[i+ch]) / 255
+			shown.Pix[i+ch] = uint8(cameraClamp(value*(1-amount)+target[ch]*amount)*255 + 0.5)
+		}
+		// Alpha is unchanged: the overlay recolors, it does not add coverage.
 	}
 }
 
@@ -143,18 +153,29 @@ func invertCoverage(levels []uint8) []uint8 {
 	return out
 }
 
-// effectRecolorAtop is LayerEffectsRenderer.recolor (LayerEffects.swift:541-549):
-// source-atop, so the color lands only where the layer shows and the pixels keep
-// their own alpha. dst is the layer's own buffer, so its alpha is the gate.
+// effectRecolorAtop ports the inner glow and inner shadow recoloring in
+// MetalLayerEffects.effects_compose (:375-384). dst is the layer's own
+// premultiplied buffer, so its alpha is the gate and stays as it is.
+//
+// The target is the effect's color premultiplied by the pixel's alpha, mixed in
+// by the effect's coverage. Mixing toward the straight color instead — which is
+// what this used to do, with the mix amount multiplied by the alpha a second
+// time — took only part of a translucent pixel, made it more opaque and tinted
+// the effects beneath. Opaque pixels came out the same either way, which is why
+// only translucent ones showed it.
 func effectRecolorAtop(dst *[4]float64, red, green, blue, opacity float64, coverage uint8) {
-	amount := opacity * float64(coverage) / 255 * dst[3]
+	amount := opacity * float64(coverage) / 255
 	if amount <= 0 {
 		return
 	}
-	dst[0] = red*amount + dst[0]*(1-amount)
-	dst[1] = green*amount + dst[1]*(1-amount)
-	dst[2] = blue*amount + dst[2]*(1-amount)
-	// dst[3] is unchanged: source-atop keeps the destination's alpha.
+	if amount > 1 {
+		amount = 1
+	}
+	target := [3]float64{red * dst[3], green * dst[3], blue * dst[3]}
+	dst[0] = target[0]*amount + dst[0]*(1-amount)
+	dst[1] = target[1]*amount + dst[1]*(1-amount)
+	dst[2] = target[2]*amount + dst[2]*(1-amount)
+	// dst[3] is unchanged.
 }
 
 // applyInPlaceEffects draws the effects that need no room around the layer: the
