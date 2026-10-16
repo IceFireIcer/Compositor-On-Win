@@ -1398,8 +1398,18 @@ func (s *Service) CameraRawDefringeSample(x, y int, settingsJSON string) (string
 			optics.GreenAmount = 50
 		}
 	}
-	p.CameraRaw.Optics = optics.Normalized()
-	out, err := json.Marshal(p)
+	// The reply carries only the solved fields, named the way the panel reads
+	// them. Marshalling the whole filterParams would put Go's own field names on
+	// the wire ("Optics", not "optics"), and the panel would read undefined —
+	// which is what it used to do, throwing instead of applying the range.
+	out, err := json.Marshal(map[string]map[string]float64{"optics": {
+		"purpleAmount":  optics.PurpleAmount,
+		"purpleHueLow":  optics.PurpleHueLow,
+		"purpleHueHigh": optics.PurpleHueHigh,
+		"greenAmount":   optics.GreenAmount,
+		"greenHueLow":   optics.GreenHueLow,
+		"greenHueHigh":  optics.GreenHueHigh,
+	}})
 	if err != nil {
 		return "", err
 	}

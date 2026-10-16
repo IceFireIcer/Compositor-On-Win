@@ -991,6 +991,36 @@ func TestCameraRawPanelPipeline(t *testing.T) {
 	if wb.Temperature >= 0 {
 		t.Fatalf("偏红的暖色场应解出负色温（降温回中性）: %v", wb.Temperature)
 	}
+
+	// The defringe eyedropper replies with the panel's own field names. It used
+	// to marshal the whole params blob, which put Go's names on the wire
+	// ("Optics", not "optics"); the panel read undefined and threw instead of
+	// applying the solved range.
+	defringeRaw, err := svc.CameraRawDefringeSample(16, 16, `{"cameraRaw":{}}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The key must be spelled exactly like this: the panel reads it with
+	// JSON.parse and property access, which is case-sensitive. Unmarshalling
+	// into a Go struct would not catch a wrong case — encoding/json matches
+	// field names case-insensitively — so assert on the raw text.
+	if !strings.Contains(defringeRaw, `"optics"`) || strings.Contains(defringeRaw, `"Optics"`) {
+		t.Fatalf("去紫边回包的键名不对（前端按 optics 读）: %s", defringeRaw)
+	}
+	defringe := parseJSON[struct {
+		Optics map[string]float64 `json:"optics"`
+	}](t, defringeRaw)
+	if defringe.Optics == nil {
+		t.Fatalf("去紫边回包缺少 optics: %s", defringeRaw)
+	}
+	for _, key := range []string{
+		"purpleAmount", "purpleHueLow", "purpleHueHigh",
+		"greenAmount", "greenHueLow", "greenHueHigh",
+	} {
+		if _, ok := defringe.Optics[key]; !ok {
+			t.Errorf("去紫边回包缺少 %s: %s", key, defringeRaw)
+		}
+	}
 }
 
 // parseJSON is the shared generic JSON helper for endpoint replies.

@@ -596,13 +596,14 @@ export function eyedropperClick(docX: number, docY: number): boolean {
   BridgeService.CameraRawDefringeSample(x, y, JSON.stringify(session.settings))
     .then((raw: string) => {
       if (!isCurrentFilterSession(session) || get(armedEyedropper) !== mode) return;
-      const params = JSON.parse(raw) as { cameraRaw: Record<string, unknown> };
+      // Only the defringe fields come back, keyed the way this panel reads them.
+      // The endpoint used to echo the whole settings blob under Go's own field
+      // names ("Optics", not "optics"), so this read was undefined and the line
+      // below threw instead of applying the solved range.
+      const solved = (JSON.parse(raw) as { optics: Record<string, unknown> }).optics;
       const current = get(filterSession)!;
-      // Only the defringe fields are solved; the endpoint echoes many unrelated
-      // settings, which may already have changed while this call was in flight.
       const before = session.settings.cameraRaw.optics as Record<string, unknown> | undefined;
       const latest = current.settings.cameraRaw.optics as Record<string, unknown> | undefined;
-      const solved = params.cameraRaw.optics as Record<string, unknown>;
       const optics = { ...latest };
       for (const key of ["purpleAmount", "purpleHueLow", "purpleHueHigh", "greenAmount", "greenHueLow", "greenHueHigh"]) {
         if (latest?.[key] === before?.[key]) optics[key] = solved[key];
