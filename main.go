@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"compositor-win/internal/render"
+
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
@@ -67,6 +69,11 @@ func init() {
 func main() {
 	// 启动基准（票 52 / P10）：从 main 的第一条语句开始量到"界面可用"。
 	bridge.MarkLaunchStart()
+	// Camera Raw 的测量表随包打进二进制（票 78）。开窗口之前解码一次：资源缺失或几何
+	// 不符时在启动日志里说清楚，而不是等用户第一次拖 Camera Raw 滑杆才静默失效。
+	if err := render.ValidateCameraRawTables(); err != nil {
+		log.Printf("Camera Raw 查表不可用，相关滑杆将退回解析近似: %v", err)
+	}
 	workspace := bridge.NewWorkspace()
 	service := bridge.NewService(workspace)
 	windowStore, err := bridge.DefaultWindowStore()
