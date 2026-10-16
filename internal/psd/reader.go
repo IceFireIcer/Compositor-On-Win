@@ -166,9 +166,11 @@ func Read(data []byte, remainingPixels int) (Document, error) {
 	if err := c.skip(6); err != nil {
 		return doc, err
 	}
-	if _, err := c.u16(); err != nil { // channels of the composite
+	channels64, err := c.u16() // channels of the composite
+	if err != nil {
 		return doc, err
 	}
+	channels := int(channels64)
 	canvasHeight64, err := c.u32()
 	if err != nil {
 		return doc, err
@@ -272,7 +274,20 @@ func Read(data []byte, remainingPixels int) (Document, error) {
 	}
 	layerSectionEnd := c.offset + layerSection
 	if layerSection < 4 {
-		return Document{Width: canvasWidth, Height: canvasHeight, Resolution: resolution, Layers: nil, ICCProfile: doc.ICCProfile}, nil
+		// 空图层段：文件里那张拼合图就是全部内容（见 merged.go）。此前这里直接返回零图层，
+		// 于是打开一个正常的拼合 PSD 会得到一个空文档且不报错。
+		c.offset = layerSectionEnd
+		bitmap, err := mergedImage(c, canvasWidth, canvasHeight, channels, isPSB)
+		if err != nil {
+			return doc, err
+		}
+		return Document{
+			Width: canvasWidth, Height: canvasHeight, Resolution: resolution, ICCProfile: doc.ICCProfile,
+			Layers: []Record{{
+				ID: newID(), Name: "Background", IsVisible: true, Opacity: 1, BlendKey: "norm",
+				Width: canvasWidth, Height: canvasHeight, Image: bitmap,
+			}},
+		}, nil
 	}
 	if _, err := checkedLength(c, isPSB); err != nil { // layer info length
 		return doc, err

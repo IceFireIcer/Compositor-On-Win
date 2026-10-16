@@ -436,7 +436,10 @@ func TestReadCarriesTheEmbeddedICCProfile(t *testing.T) {
 	file.u32(0) // 色彩模式数据
 	file.u32(uint32(len(resources.data)))
 	file.raw(resources.data)
-	file.u32(0) // 图层段长度 0（< 4）→ 读取器提前返回
+	file.u32(0) // 图层段长度 0（< 4）→ 拼合
+	// 图像数据段：PSD 必须有，夹具此前漏了它（读取器当时提前返回，读不到那里）。
+	file.u16(0)
+	file.raw(make([]byte, 4*4*3))
 
 	doc, err := Read(file.data, 1<<30)
 	if err != nil {
@@ -461,12 +464,104 @@ func TestReadWithoutAnICCProfileLeavesItEmpty(t *testing.T) {
 	file.u32(0)
 	file.u32(0)
 	file.u32(0)
+	file.u16(0) // 图像数据段：无压缩
+	file.raw(make([]byte, 4*4*3))
 	doc, err := Read(file.data, 1<<30)
 	if err != nil {
 		t.Fatalf("Read: %v", err)
 	}
 	if len(doc.ICCProfile) != 0 {
 		t.Fatalf("没有 1039 资源时应当是空的，得到 %d 字节", len(doc.ICCProfile))
+	}
+}
+
+// 拼合 PSD（没有图层段）此前会**静默变成空文档** —— 打开一个正常的文件，用户看到的是
+// 「打开了但什么都没有」。这条测试是那个 bug 的回归钉子：图像数据段必须被读成一个背景层。
+func TestFlattenedPSDBecomesABackgroundLayer(t *testing.T) {
+	// 2×2：左上红、右上绿、左下蓝、右下白。
+	r := []byte{255, 0, 0, 255}
+	g := []byte{0, 255, 0, 255}
+	b := []byte{0, 0, 255, 255}
+
+	file := &buf{}
+	file.str("8BPS")
+	file.u16(1)
+	file.raw(make([]byte, 6))
+	file.u16(3) // 通道数
+	file.u32(2) // 高
+	file.u32(2) // 宽
+	file.u16(8) // 位深
+	file.u16(3) // 色彩模式：RGB
+	file.u32(0) // 色彩模式数据
+	file.u32(0) // 图像资源
+	file.u32(0) // 图层段：0（< 4）→ 拼合
+	file.u16(0) // 图像数据：无压缩
+	file.raw(r)
+	file.raw(g)
+	file.raw(b)
+
+	doc, err := Read(file.data, 1<<30)
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	if len(doc.Layers) != 1 {
+		t.Fatalf("拼合 PSD 应当读成一个背景层，得到 %d 层", len(doc.Layers))
+	}
+	layer := doc.Layers[0]
+	if !layer.IsVisible || layer.Image == nil {
+		t.Fatalf("背景层应当可见且有像素：%+v", layer)
+	}
+	if layer.Image.W != 2 || layer.Image.H != 2 {
+		t.Fatalf("背景层尺寸 = %d×%d", layer.Image.W, layer.Image.H)
+	}
+	// 四个像素都是不透明的，预乘后与通道值相同。
+	want := []uint8{255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 255}
+	for i := range want {
+		if layer.Image.Pix[i] != want[i] {
+			t.Fatalf("像素 %d = %d，想要 %d（整块 %v）", i, layer.Image.Pix[i], want[i], layer.Image.Pix)
+		}
+	}
+}
+
+// 同样的文件用 RLE 压缩：行字节数表 + PackBits 打包。
+func TestFlattenedPSDWithRLECompression(t *testing.T) {
+	r := []byte{10, 20}
+	g := []byte{30, 40}
+	b := []byte{50, 60}
+	w, h := 2, 1
+
+	file := &buf{}
+	file.str("8BPS")
+	file.u16(1)
+	file.raw(make([]byte, 6))
+	file.u16(3)
+	file.u32(uint32(h))
+	file.u32(uint32(w))
+	file.u16(8)
+	file.u16(3)
+	file.u32(0)
+	file.u32(0)
+	file.u32(0)
+	file.u16(1) // 图像数据：RLE
+	for _, plane := range [][]byte{r, g, b} {
+		// 每行一个 literal 包：0x01 后面跟两个字节。
+		file.u16(3) // 该行的字节数
+		file.u8(1)  // PackBits：literal，n+1 = 2 字节
+		file.raw(plane)
+	}
+
+	doc, err := Read(file.data, 1<<30)
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	if len(doc.Layers) != 1 || doc.Layers[0].Image == nil {
+		t.Fatalf("拼合 RLE PSD 应当读成一个背景层，得到 %+v", doc.Layers)
+	}
+	want := []uint8{10, 30, 50, 255, 20, 40, 60, 255}
+	for i := range want {
+		if doc.Layers[0].Image.Pix[i] != want[i] {
+			t.Fatalf("像素 %d = %d，想要 %d（整块 %v）", i, doc.Layers[0].Image.Pix[i], want[i], doc.Layers[0].Image.Pix)
+		}
 	}
 }
 
