@@ -41,7 +41,7 @@ func (s *Service) SetLayerMask(tabID, layerID, operation, selectionJSON string) 
 	if sess == nil || sess.doc == nil {
 		return "", errNoDocument
 	}
-	if sess.stroke != nil || sess.filter != nil || sess.heal != nil || sess.saving {
+	if sess.stroke != nil || sess.filter != nil || sess.heal != nil {
 		return "", errDocumentBusy
 	}
 	layer, err := layerByID(sess.doc, layerID)

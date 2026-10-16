@@ -201,7 +201,7 @@
 | I05 | PSD/PSB 导入：层/组/蒙版/混合/`levl``curv``hue2`/填充形状/水平文本；超大层裁剪；转换报告 | `PSD/*` | 47 | M7 | ☑ 票38+39：解析/调整/蒙版/剪贴/裁剪/报告 + 可编辑文本与活形状 + 应用前确认 |
 | I06 | 导出 PNG/JPEG + JPEG 实时预览 | `ImageExporter` | 48 | M7 | ☑ 票42（DPI 元数据 pHYs/JFIF） |
 | I07 | `.comp` v11 读写/校验/原子保存/包内预览图 | `ProjectStore`（ADR-0002） | 1/49 | M1 | ☑ 票05：.comp v11 读写/校验/原子保存/包内预览图全套（`internal/project/*`、`internal/fsatomic`、`project/store_test.go`、`project/validate_test.go`）；唯一未闭环是真实 macOS 1.4.5 夹具缺失（双向互开未实测） |
-| I08 | 保存不阻塞编辑（后台写） | `finishWriting` | 49 | M1 | ☐ 保存仍是同步前台写（`internal/bridge/project_io.go` / SaveProjectDialog 无 goroutine），无后台写 |
+| I08 | 保存不阻塞编辑（后台写） | `finishWriting` | 49 | M1 | ☑ 快照（doc 克隆 + 位图克隆）在锁内完成，编码与文件 I/O 在锁外；**编辑入口不再查 `sess.saving`**（11 处：笔触/重绘/渐变/蒙版/变换/填充/绘制），所以写在后台跑时编辑照常。上游 `ProjectController.save` 也是「只在快照与保存面板期间 isProjectBusy，写之前放开」（`ProjectController.swift:33-35`）。`saving` 仍gate**文档替换**（关闭/切换/重载）。用例：`TestEditingContinuesWhileASaveIsWriting`（在 `savePackage` 里停住，期间走完一次笔触，并断言标签仍脏）、`TestFillLayerMaskIsNotBlockedByASaveInFlight` |
 
 ## J. 视图/交互/性能
 

@@ -606,6 +606,12 @@ func (w *Workspace) RedoActive() (string, error) {
 // referenced asset is encoded from the in-memory bitmap library, the store
 // commits the package, and the session records its path and saved state.
 // Returns the revision captured for disk, even if editing advanced while writing.
+//
+// Editing goes on during the write (ticket I08): the document and its bitmaps
+// are cloned under the lock, so the encode and the file I/O never touch the live
+// session. Upstream sets isProjectBusy for the snapshot and the save panel only
+// and clears it before writing (ProjectController.swift:33-35); the saving flag
+// left on the session therefore gates replacing the document, not editing it.
 func (w *Workspace) SaveActive(path string) (int, error) {
 	return w.saveTab(w.activeID(), path)
 }

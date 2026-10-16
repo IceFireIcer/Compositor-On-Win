@@ -292,7 +292,9 @@ func TestFillLayerMaskClipsToCanvas(t *testing.T) {
 }
 
 func TestFillLayerMaskRejectsInvalidAndBusyRequests(t *testing.T) {
-	for _, name := range []string{"tab", "layer", "empty layer", "mode", "selection", "color", "missing mask", "missing asset", "invalid asset", "disabled", "transform", "stroke", "filter", "heal", "saving"} {
+	// I08 之后 "saving" 不再属于这一组：写在后台进行时不挡编辑，见
+	// TestFillLayerMaskIsNotBlockedByASaveInFlight。
+	for _, name := range []string{"tab", "layer", "empty layer", "mode", "selection", "color", "missing mask", "missing asset", "invalid asset", "disabled", "transform", "stroke", "filter", "heal"} {
 		t.Run(name, func(t *testing.T) {
 			svc, tab, sess, id, key := maskPaintingFixture(t)
 			l := mustLayerByID(t, sess.doc, id)
@@ -327,8 +329,6 @@ func TestFillLayerMaskRejectsInvalidAndBusyRequests(t *testing.T) {
 				sess.filter = &filterSession{}
 			case "heal":
 				sess.heal = &healBrush{}
-			case "saving":
-				sess.saving = true
 			}
 			before := payloadJSON(t, sess.doc)
 			original := sess.bitmaps[key]
@@ -342,5 +342,16 @@ func TestFillLayerMaskRejectsInvalidAndBusyRequests(t *testing.T) {
 	}
 	if _, err := (&Service{}).FillLayerMask("tab", "layer", "", "foreground", ""); err != errNoDocument {
 		t.Fatalf("service without workspace: %v", err)
+	}
+}
+
+// I08：写在后台进行时不该把编辑挡在门外。上游在写之前就放开 isProjectBusy
+// （ProjectController.swift:33-35），本仓的编辑入口不该再查 sess.saving。
+func TestFillLayerMaskIsNotBlockedByASaveInFlight(t *testing.T) {
+	svc, tab, sess, id, _ := maskPaintingFixture(t)
+	sess.saving = true
+	defer func() { sess.saving = false }()
+	if _, err := svc.FillLayerMask(tab, id, "", "foreground", ""); err != nil {
+		t.Fatalf("保存写入期间 FillLayerMask 被挡住了: %v", err)
 	}
 }

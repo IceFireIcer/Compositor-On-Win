@@ -50,7 +50,7 @@ func (s *Service) FillLayerMask(tabID, layerID, selectionJSON, mode, colorJSON s
 	if !w.hasLocked(tabID) || sess == nil || sess.doc == nil {
 		return "", errNoDocument
 	}
-	if sess.stroke != nil || sess.filter != nil || sess.heal != nil || sess.saving {
+	if sess.stroke != nil || sess.filter != nil || sess.heal != nil {
 		return "", errDocumentBusy
 	}
 	target, err := resolveRasterPaintTarget(sess, layerID, true)

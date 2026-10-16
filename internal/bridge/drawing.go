@@ -305,7 +305,7 @@ func (w *Workspace) editDrawingTabFor(tabID string, name func(*session) string, 
 	if sess == nil || sess.doc == nil {
 		return "", errNoDocument
 	}
-	if sess.stroke != nil || sess.filter != nil || sess.heal != nil || sess.saving {
+	if sess.stroke != nil || sess.filter != nil || sess.heal != nil {
 		return "", errDocumentBusy
 	}
 	before := cloneDocForEdit(sess.doc)

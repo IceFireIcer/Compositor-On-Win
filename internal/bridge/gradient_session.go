@@ -123,7 +123,7 @@ func retireGradientSessionLocked(w *Workspace, token string, p *gradientSession)
 
 func validateGradientTarget(p *gradientSession) error {
 	sess := p.owner
-	if sess.stroke != p.marker || sess.filter != nil || sess.heal != nil || sess.saving {
+	if sess.stroke != p.marker || sess.filter != nil || sess.heal != nil {
 		return errDocumentBusy
 	}
 	l, err := layerByID(sess.doc, p.layerID)
@@ -177,7 +177,7 @@ func (s *Service) BeginGradientEdit(tabID, settingsJSON, selectionJSON string, x
 	if sess == nil || sess.doc == nil {
 		return "", errNoDocument
 	}
-	if sess.stroke != nil || sess.filter != nil || sess.heal != nil || sess.saving {
+	if sess.stroke != nil || sess.filter != nil || sess.heal != nil {
 		return "", errDocumentBusy
 	}
 	target, err := resolveRasterPaintTarget(sess, settings.LayerID, settings.TargetMask)

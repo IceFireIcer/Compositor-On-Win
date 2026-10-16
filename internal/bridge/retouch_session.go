@@ -148,7 +148,7 @@ func (s *Service) BeginRetouchStroke(tabID, settingsJSON, selectionJSON string, 
 	if sess == nil || sess.doc == nil {
 		return "", errNoDocument
 	}
-	if sess.stroke != nil || sess.filter != nil || sess.heal != nil || sess.saving {
+	if sess.stroke != nil || sess.filter != nil || sess.heal != nil {
 		return "", errDocumentBusy
 	}
 	l, base, err := resolveFilterTarget(sess, settings.LayerID)
@@ -271,7 +271,7 @@ func retireRetouchSessionLocked(w *Workspace, token string, p *retouchSession) {
 
 func validateRetouchTarget(p *retouchSession) error {
 	sess := p.owner
-	if sess.stroke != p.marker || sess.filter != nil || sess.heal != nil || sess.saving {
+	if sess.stroke != p.marker || sess.filter != nil || sess.heal != nil {
 		return errDocumentBusy
 	}
 	l, err := layerByID(sess.doc, p.layerID)

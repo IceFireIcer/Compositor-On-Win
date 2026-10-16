@@ -121,8 +121,10 @@ func TestPlaceLayerRejectsCycleBadTargetBusyWithoutMutationAndNoOpKeepsRedo(t *t
 	if panelOrder(mustDocumentSnapshot(t, svc).Doc)[0] != base {
 		t.Fatal("no-op discarded redo")
 	}
+	// I08：写在后台进行时编辑不该被挡住 —— 只有未完成的笔画/会话才算忙。
 	svc.ws.sessions[tab].saving = true
-	if _, err := svc.PlaceLayer(tab, base, folder, "after"); err != errDocumentBusy {
-		t.Fatalf("busy error = %v", err)
+	defer func() { svc.ws.sessions[tab].saving = false }()
+	if _, err := svc.PlaceLayer(tab, base, folder, "after"); err == errDocumentBusy {
+		t.Fatal("保存写入期间 PlaceLayer 不该报 DOCUMENT_BUSY")
 	}
 }

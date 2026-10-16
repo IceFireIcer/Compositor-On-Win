@@ -33,9 +33,14 @@ type session struct {
 	hist     *history.History
 	path     string
 	bitmaps  map[string]*render.Bitmap
-	rev      int  // frontend revision: bumped on every observable change
-	layerSeq int  // names the next 图层 N
-	saving   bool // package snapshot is being encoded/written outside the edit lock
+	rev      int // frontend revision: bumped on every observable change
+	layerSeq int // names the next 图层 N
+	// saving marks a package write in flight. Editing does not consult it: the
+	// snapshot was already cloned under the lock, so the document stays editable
+	// while the bytes go out (upstream ProjectController.save clears isProjectBusy
+	// before the write). It only gates replacing the document — close, switch and
+	// reload — which would otherwise race the write's completion.
+	saving bool
 
 	// Brush state: at most one stroke in flight per document. The stroke
 	// paints into its own tile grid (render.Stroke never touches the base),

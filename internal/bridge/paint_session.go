@@ -179,7 +179,7 @@ func (s *Service) BeginPaintStroke(tabID, settingsJSON, selectionJSON string, x,
 	if sess == nil {
 		return "", errNoDocument
 	}
-	if sess.stroke != nil || sess.filter != nil || sess.heal != nil || sess.saving {
+	if sess.stroke != nil || sess.filter != nil || sess.heal != nil {
 		return "", errDocumentBusy
 	}
 	target, err := resolveRasterPaintTarget(sess, p.LayerID, p.TargetMask)

@@ -24,7 +24,7 @@ func (s *Service) PlaceLayer(tabID, layerID, targetID, placement string) (string
 	if sess == nil || sess.doc == nil {
 		return "", errNoDocument
 	}
-	if sess.stroke != nil || sess.filter != nil || sess.heal != nil || sess.saving {
+	if sess.stroke != nil || sess.filter != nil || sess.heal != nil {
 		return "", errDocumentBusy
 	}
 	candidate := cloneDocForEdit(sess.doc)

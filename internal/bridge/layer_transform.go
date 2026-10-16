@@ -109,7 +109,7 @@ func (w *Workspace) editTransformTab(tabID string, expectedRev *uint64, name str
 	if expectedRev != nil && (sess.rev < 0 || uint64(sess.rev) != *expectedRev) {
 		return "", fmt.Errorf("TRANSFORM_STALE: 文档 revision 已变化 (expected %d, current %d)", *expectedRev, sess.rev)
 	}
-	if sess.stroke != nil || sess.filter != nil || sess.heal != nil || sess.saving {
+	if sess.stroke != nil || sess.filter != nil || sess.heal != nil {
 		return "", errDocumentBusy
 	}
 

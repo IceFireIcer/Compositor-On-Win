@@ -33,7 +33,7 @@ func (s *Service) serveTransformPreview(w http.ResponseWriter, r *http.Request, 
 		http.Error(w, "变换预览已过期", http.StatusConflict)
 		return
 	}
-	if sess.stroke != nil || sess.filter != nil || sess.heal != nil || sess.saving {
+	if sess.stroke != nil || sess.filter != nil || sess.heal != nil {
 		http.Error(w, errDocumentBusy.Error(), http.StatusConflict)
 		return
 	}
