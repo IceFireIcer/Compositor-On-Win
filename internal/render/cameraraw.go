@@ -2417,7 +2417,11 @@ func ApplyCameraRawFilter(b *Bitmap, settings CameraRawSettings, opts CameraRawO
 				c.GreenHue, c.GreenSaturation, c.BlueHue, c.BlueSaturation, c.Process)
 		}
 	}
-	if s.adjustsLight() || s.adjustsColor() || opts.Clipping != 0 {
+	// Calibration is part of the same gate: its primaries live in the measured
+	// tables, so a picture whose only Camera Raw edit is a calibration slider has
+	// to reach the table path — upstream's gate is simply "the stages are not
+	// empty" (CameraRaw.swift:234-238), and those stages carry calibration.
+	if s.adjustsLight() || s.adjustsColor() || s.Calibration.Adjusts() || opts.Clipping != 0 {
 		if !useTables || !applyCameraRawTable(src, s, opts.Clipping) {
 			ApplyCameraRaw(src, gainsR, gainsG, gainsB, s.Exposure, s.Contrast, s.Highlights,
 				s.Shadows, s.Whites, s.Blacks, s.Vibrance, s.Saturation, opts.Clipping)
