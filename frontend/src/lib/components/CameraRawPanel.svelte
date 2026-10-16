@@ -13,6 +13,7 @@
   import { untrack } from "svelte";
   import CameraRawSlider from "./CameraRawSlider.svelte";
   import CurveEditor from "./CurveEditor.svelte";
+  import { CAMERA_RAW_DEFAULTS as DEF } from "../state/cameraRawDefaults";
 
   /**
    * The Camera Raw panel (CameraRawControls.swift): ten disclosure sections
@@ -497,7 +498,7 @@
                 <div class="row">
                   <span class="row-label">白平衡</span>
                   <select
-                    value={String(cr.whiteBalance ?? "Custom")}
+                    value={String(cr.whiteBalance ?? DEF.whiteBalance)}
                     onchange={(e) => setCR({ whiteBalance: e.currentTarget.value })}
                   >
                     <option value="Custom">自定义</option>
@@ -534,12 +535,12 @@
                   oninput={(v) => setCurve({ lights: v })} onreset={() => setCurve({ lights: 0 })} />
                 <CameraRawSlider label="高光" value={c.highlights ?? 0} min={-100} max={100}
                   oninput={(v) => setCurve({ highlights: v })} onreset={() => setCurve({ highlights: 0 })} />
-                <CameraRawSlider label="阴影分割" value={c.shadowSplit ?? 25} min={5} max={90} reset={25}
-                  oninput={(v) => setCurve({ shadowSplit: v })} onreset={() => setCurve({ shadowSplit: 25 })} />
-                <CameraRawSlider label="中间分割" value={c.darkSplit ?? 50} min={7} max={95} reset={50}
-                  oninput={(v) => setCurve({ darkSplit: v })} onreset={() => setCurve({ darkSplit: 50 })} />
-                <CameraRawSlider label="高光分割" value={c.lightSplit ?? 75} min={9} max={98} reset={75}
-                  oninput={(v) => setCurve({ lightSplit: v })} onreset={() => setCurve({ lightSplit: 75 })} />
+                <CameraRawSlider label="阴影分割" value={c.shadowSplit ?? DEF.curve.shadowSplit} min={5} max={90} reset={DEF.curve.shadowSplit}
+                  oninput={(v) => setCurve({ shadowSplit: v })} onreset={() => setCurve({ shadowSplit: DEF.curve.shadowSplit })} />
+                <CameraRawSlider label="中间分割" value={c.darkSplit ?? DEF.curve.darkSplit} min={7} max={95} reset={DEF.curve.darkSplit}
+                  oninput={(v) => setCurve({ darkSplit: v })} onreset={() => setCurve({ darkSplit: DEF.curve.darkSplit })} />
+                <CameraRawSlider label="高光分割" value={c.lightSplit ?? DEF.curve.lightSplit} min={9} max={98} reset={DEF.curve.lightSplit}
+                  oninput={(v) => setCurve({ lightSplit: v })} onreset={() => setCurve({ lightSplit: DEF.curve.lightSplit })} />
                 <CameraRawSlider label="精修饱和" value={c.refineSaturation ?? 0} min={-100} max={100}
                   help="复合曲线附带多少饱和度变化。"
                   oninput={(v) => setCurve({ refineSaturation: v })}
@@ -613,10 +614,10 @@
                     oninput={(v) => setWheel(key, { luminance: v })}
                     onreset={() => setWheel(key, { luminance: 0 })} />
                 {/each}
-                <CameraRawSlider label="混合" value={cr.grading?.blending ?? 50} min={0} max={100} reset={50}
+                <CameraRawSlider label="混合" value={cr.grading?.blending ?? DEF.grading.blending} min={0} max={100} reset={DEF.grading.blending}
                   help="三个色调轮的重叠程度。"
                   oninput={(v) => setCR({ grading: { ...(cr.grading ?? {}), blending: v } })}
-                  onreset={() => setCR({ grading: { ...(cr.grading ?? {}), blending: 50 } })} />
+                  onreset={() => setCR({ grading: { ...(cr.grading ?? {}), blending: DEF.grading.blending } })} />
                 <CameraRawSlider label="平衡" value={cr.grading?.balance ?? 0} min={-100} max={100}
                   help="负值偏阴影，正值偏高光。"
                   oninput={(v) => setCR({ grading: { ...(cr.grading ?? {}), balance: v } })}
@@ -659,28 +660,28 @@
                     <option value="2">绘画叠加</option>
                   </select>
                 </div>
-                <CameraRawSlider label="中点" value={cr.vignetteMidpoint ?? 50} min={0} max={100} reset={50}
+                <CameraRawSlider label="中点" value={cr.vignetteMidpoint ?? DEF.vignetteMidpoint} min={0} max={100} reset={DEF.vignetteMidpoint}
                   oninput={(v) => setCR({ vignetteMidpoint: v })} onreset={() => setCR({ vignetteMidpoint: 50 })} />
                 <CameraRawSlider label="圆度" value={cr.vignetteRoundness ?? 0} min={-100} max={100}
                   oninput={(v) => setCR({ vignetteRoundness: v })} onreset={() => setCR({ vignetteRoundness: 0 })} />
-                <CameraRawSlider label="羽化" value={cr.vignetteFeather ?? 50} min={0} max={100} reset={50}
+                <CameraRawSlider label="羽化" value={cr.vignetteFeather ?? DEF.vignetteFeather} min={0} max={100} reset={DEF.vignetteFeather}
                   oninput={(v) => setCR({ vignetteFeather: v })} onreset={() => setCR({ vignetteFeather: 50 })} />
                 <CameraRawSlider label="高光保护" value={cr.vignetteHighlights ?? 0} min={0} max={100}
                   oninput={(v) => setCR({ vignetteHighlights: v })} onreset={() => setCR({ vignetteHighlights: 0 })} />
                 <CameraRawSlider label="颗粒" value={cr.grainAmount ?? 0} min={0} max={100}
                   oninput={(v) => setCR({ grainAmount: v })} onreset={() => setCR({ grainAmount: 0 })} />
-                <CameraRawSlider label="颗粒大小" value={cr.grainSize ?? 25} min={0} max={100} reset={25}
+                <CameraRawSlider label="颗粒大小" value={cr.grainSize ?? DEF.grainSize} min={0} max={100} reset={DEF.grainSize}
                   oninput={(v) => setCR({ grainSize: v })} onreset={() => setCR({ grainSize: 25 })} />
-                <CameraRawSlider label="粗糙度" value={cr.grainRoughness ?? 50} min={0} max={100} reset={50}
+                <CameraRawSlider label="粗糙度" value={cr.grainRoughness ?? DEF.grainRoughness} min={0} max={100} reset={DEF.grainRoughness}
                   oninput={(v) => setCR({ grainRoughness: v })} onreset={() => setCR({ grainRoughness: 50 })} />
               {:else if section === "detail"}
                 {@const d = cr.detail ?? {}}
                 <CameraRawSlider label="锐化数量" value={num(d, "sharpenAmount", 0)} min={0} max={150}
                   oninput={(v) => setDetail({ sharpenAmount: v })} onreset={() => setDetail({ sharpenAmount: 0 })} />
-                <CameraRawSlider label="锐化半径" value={num(d, "sharpenRadius", 10)} min={0} max={100} reset={10}
-                  oninput={(v) => setDetail({ sharpenRadius: v })} onreset={() => setDetail({ sharpenRadius: 10 })} />
-                <CameraRawSlider label="锐化细节" value={num(d, "sharpenDetail", 25)} min={0} max={100} reset={25}
-                  oninput={(v) => setDetail({ sharpenDetail: v })} onreset={() => setDetail({ sharpenDetail: 25 })} />
+                <CameraRawSlider label="锐化半径" value={num(d, "sharpenRadius", DEF.detail.sharpenRadius)} min={0} max={100} reset={DEF.detail.sharpenRadius}
+                  oninput={(v) => setDetail({ sharpenRadius: v })} onreset={() => setDetail({ sharpenRadius: DEF.detail.sharpenRadius })} />
+                <CameraRawSlider label="锐化细节" value={num(d, "sharpenDetail", DEF.detail.sharpenDetail)} min={0} max={100} reset={DEF.detail.sharpenDetail}
+                  oninput={(v) => setDetail({ sharpenDetail: v })} onreset={() => setDetail({ sharpenDetail: DEF.detail.sharpenDetail })} />
                 <CameraRawSlider label="锐化蒙版" value={num(d, "sharpenMasking", 0)} min={0} max={100}
                   help="按住 Option 预览蒙版（白=锐化，黑=保护）。"
                   onalt={(_, c) => updateFilterSettings({ sharpenMask: c === 1 })}
@@ -688,16 +689,16 @@
                   onreset={() => setDetail({ sharpenMasking: 0 })} />
                 <CameraRawSlider label="亮度降噪" value={num(d, "noiseLuminance", 0)} min={0} max={100}
                   oninput={(v) => setDetail({ noiseLuminance: v })} onreset={() => setDetail({ noiseLuminance: 0 })} />
-                <CameraRawSlider label="亮度细节" value={num(d, "noiseLuminanceDetail", 50)} min={0} max={100} reset={50}
-                  oninput={(v) => setDetail({ noiseLuminanceDetail: v })} onreset={() => setDetail({ noiseLuminanceDetail: 50 })} />
+                <CameraRawSlider label="亮度细节" value={num(d, "noiseLuminanceDetail", DEF.detail.noiseLuminanceDetail)} min={0} max={100} reset={DEF.detail.noiseLuminanceDetail}
+                  oninput={(v) => setDetail({ noiseLuminanceDetail: v })} onreset={() => setDetail({ noiseLuminanceDetail: DEF.detail.noiseLuminanceDetail })} />
                 <CameraRawSlider label="亮度对比" value={num(d, "noiseLuminanceContrast", 0)} min={0} max={100}
                   oninput={(v) => setDetail({ noiseLuminanceContrast: v })} onreset={() => setDetail({ noiseLuminanceContrast: 0 })} />
                 <CameraRawSlider label="颜色降噪" value={num(d, "noiseColor", 0)} min={0} max={100}
                   oninput={(v) => setDetail({ noiseColor: v })} onreset={() => setDetail({ noiseColor: 0 })} />
-                <CameraRawSlider label="颜色细节" value={num(d, "noiseColorDetail", 50)} min={0} max={100} reset={50}
-                  oninput={(v) => setDetail({ noiseColorDetail: v })} onreset={() => setDetail({ noiseColorDetail: 50 })} />
-                <CameraRawSlider label="颜色平滑" value={num(d, "noiseColorSmoothness", 50)} min={0} max={100} reset={50}
-                  oninput={(v) => setDetail({ noiseColorSmoothness: v })} onreset={() => setDetail({ noiseColorSmoothness: 50 })} />
+                <CameraRawSlider label="颜色细节" value={num(d, "noiseColorDetail", DEF.detail.noiseColorDetail)} min={0} max={100} reset={DEF.detail.noiseColorDetail}
+                  oninput={(v) => setDetail({ noiseColorDetail: v })} onreset={() => setDetail({ noiseColorDetail: DEF.detail.noiseColorDetail })} />
+                <CameraRawSlider label="颜色平滑" value={num(d, "noiseColorSmoothness", DEF.detail.noiseColorSmoothness)} min={0} max={100} reset={DEF.detail.noiseColorSmoothness}
+                  oninput={(v) => setDetail({ noiseColorSmoothness: v })} onreset={() => setDetail({ noiseColorSmoothness: DEF.detail.noiseColorSmoothness })} />
               {:else if section === "optics"}
                 {@const o = cr.optics ?? {}}
                 <label class="check">
@@ -710,10 +711,10 @@
                     onchange={(e) => setOptics({ enableLensProfile: e.currentTarget.checked })} />
                   启用镜头配置文件
                 </label>
-                <CameraRawSlider label="配置扭曲" value={num(o, "profileDistortion", 100)} min={0} max={100} reset={100}
-                  oninput={(v) => setOptics({ profileDistortion: v })} onreset={() => setOptics({ profileDistortion: 100 })} />
-                <CameraRawSlider label="配置暗角" value={num(o, "profileVignetting", 100)} min={0} max={100} reset={100}
-                  oninput={(v) => setOptics({ profileVignetting: v })} onreset={() => setOptics({ profileVignetting: 100 })} />
+                <CameraRawSlider label="配置扭曲" value={num(o, "profileDistortion", DEF.optics.profileDistortion)} min={0} max={100} reset={DEF.optics.profileDistortion}
+                  oninput={(v) => setOptics({ profileDistortion: v })} onreset={() => setOptics({ profileDistortion: DEF.optics.profileDistortion })} />
+                <CameraRawSlider label="配置暗角" value={num(o, "profileVignetting", DEF.optics.profileVignetting)} min={0} max={100} reset={DEF.optics.profileVignetting}
+                  oninput={(v) => setOptics({ profileVignetting: v })} onreset={() => setOptics({ profileVignetting: DEF.optics.profileVignetting })} />
                 <CameraRawSlider label="扭曲" value={num(o, "distortion", 0)} min={-100} max={100}
                   oninput={(v) => setOptics({ distortion: v })} onreset={() => setOptics({ distortion: 0 })} />
                 <div class="row">
@@ -726,33 +727,33 @@
                 </div>
                 <CameraRawSlider label="紫边量" value={num(o, "purpleAmount", 0)} min={0} max={100}
                   oninput={(v) => setOptics({ purpleAmount: v })} onreset={() => setOptics({ purpleAmount: 0 })} />
-                <CameraRawSlider label="紫边低" value={num(o, "purpleHueLow", 270)} min={0} max={360} reset={270}
-                  oninput={(v) => setOptics({ purpleHueLow: v })} onreset={() => setOptics({ purpleHueLow: 270 })} />
-                <CameraRawSlider label="紫边高" value={num(o, "purpleHueHigh", 310)} min={0} max={360} reset={310}
-                  oninput={(v) => setOptics({ purpleHueHigh: v })} onreset={() => setOptics({ purpleHueHigh: 310 })} />
+                <CameraRawSlider label="紫边低" value={num(o, "purpleHueLow", DEF.optics.purpleHueLow)} min={0} max={360} reset={DEF.optics.purpleHueLow}
+                  oninput={(v) => setOptics({ purpleHueLow: v })} onreset={() => setOptics({ purpleHueLow: DEF.optics.purpleHueLow })} />
+                <CameraRawSlider label="紫边高" value={num(o, "purpleHueHigh", DEF.optics.purpleHueHigh)} min={0} max={360} reset={DEF.optics.purpleHueHigh}
+                  oninput={(v) => setOptics({ purpleHueHigh: v })} onreset={() => setOptics({ purpleHueHigh: DEF.optics.purpleHueHigh })} />
                 <CameraRawSlider label="绿边量" value={num(o, "greenAmount", 0)} min={0} max={100}
                   oninput={(v) => setOptics({ greenAmount: v })} onreset={() => setOptics({ greenAmount: 0 })} />
-                <CameraRawSlider label="绿边低" value={num(o, "greenHueLow", 60)} min={0} max={360} reset={60}
-                  oninput={(v) => setOptics({ greenHueLow: v })} onreset={() => setOptics({ greenHueLow: 60 })} />
-                <CameraRawSlider label="绿边高" value={num(o, "greenHueHigh", 120)} min={0} max={360} reset={120}
-                  oninput={(v) => setOptics({ greenHueHigh: v })} onreset={() => setOptics({ greenHueHigh: 120 })} />
+                <CameraRawSlider label="绿边低" value={num(o, "greenHueLow", DEF.optics.greenHueLow)} min={0} max={360} reset={DEF.optics.greenHueLow}
+                  oninput={(v) => setOptics({ greenHueLow: v })} onreset={() => setOptics({ greenHueLow: DEF.optics.greenHueLow })} />
+                <CameraRawSlider label="绿边高" value={num(o, "greenHueHigh", DEF.optics.greenHueHigh)} min={0} max={360} reset={DEF.optics.greenHueHigh}
+                  oninput={(v) => setOptics({ greenHueHigh: v })} onreset={() => setOptics({ greenHueHigh: DEF.optics.greenHueHigh })} />
                 <CameraRawSlider label="镜头暗角" value={num(o, "vignetteAmount", 0)} min={-100} max={100}
                   help="校正镜头暗角（正提亮，负压暗）。"
                   oninput={(v) => setOptics({ vignetteAmount: v })} onreset={() => setOptics({ vignetteAmount: 0 })} />
-                <CameraRawSlider label="暗角中点" value={num(o, "vignetteMidpoint", 50)} min={0} max={100} reset={50}
-                  oninput={(v) => setOptics({ vignetteMidpoint: v })} onreset={() => setOptics({ vignetteMidpoint: 50 })} />
+                <CameraRawSlider label="暗角中点" value={num(o, "vignetteMidpoint", DEF.optics.vignetteMidpoint)} min={0} max={100} reset={DEF.optics.vignetteMidpoint}
+                  oninput={(v) => setOptics({ vignetteMidpoint: v })} onreset={() => setOptics({ vignetteMidpoint: DEF.optics.vignetteMidpoint })} />
               {:else if section === "geometry"}
                 {@const g = cr.geometry ?? {}}
                 <div class="row">
                   <span class="row-label">Upright</span>
-                  <select value={String(g.upright ?? "Off")} onchange={(e) => setGeometry({ upright: e.currentTarget.value })}>
+                  <select value={String(g.upright ?? DEF.geometry.upright)} onchange={(e) => setGeometry({ upright: e.currentTarget.value })}>
                     <option value="Off">关闭</option>
                     <option value="Guided">引导线</option>
                   </select>
                 </div>
                 <div class="row">
                   <span class="row-label">投影</span>
-                  <select value={String(g.projection ?? "Perspective")} onchange={(e) => setGeometry({ projection: e.currentTarget.value })}>
+                  <select value={String(g.projection ?? DEF.geometry.projection)} onchange={(e) => setGeometry({ projection: e.currentTarget.value })}>
                     <option value="Perspective">透视</option>
                     <option value="Rectilinear"> rectilinear</option>
                   </select>
@@ -781,7 +782,7 @@
                 {@const c = cr.calibration ?? {}}
                 <div class="row">
                   <span class="row-label">进程版本</span>
-                  <select value={String(num(c, "process", 6))} onchange={(e) => setCalibration({ process: +e.currentTarget.value })}>
+                  <select value={String(num(c, "process", DEF.calibration.process))} onchange={(e) => setCalibration({ process: +e.currentTarget.value })}>
                     {#each [1, 2, 3, 4, 5, 6] as v (v)}
                       <option value={v}>Version {v}</option>
                     {/each}
