@@ -155,6 +155,19 @@ C 的「先乘 255 再除回来」写法以保逐位一致）→ 查合成表 �
 `ApplyCameraRawFilter`，且触及票 90 的曲线/色彩路径（上游给 `applyCurveColor` 的 mixer/grade
 公式参数**传零**，因为八色与分级都来自测量表）。这一步留给票 90。
 
+### 接线引入的回归（同日修掉）
+
+闸门一开始写成 `adjustsLight() || adjustsColor() || clipping != 0`，而这两个谓词都**不含**
+calibration。于是「只调校准滑杆、不碰 light/color」时，原色被交给测量表（`ApplyCameraRawCalibration`
+只传 Shadow Tint），但表路径的闸门不成立 —— **原色一次都没被应用**。
+
+上游的闸门其实是「阶段非空」（`CameraRaw.swift:234-238`），校准原色就在阶段里。已把
+`s.Calibration.Adjusts()` 纳入闸门，并加钉子测试（夹具自身断言既不触发 `adjustsLight` 也不触发
+`adjustsColor`）。**反向验证过**：临时改回旧闸门，测试立刻失败。
+
+教训：接线改变的不只是数值，还有**闸门**。谓词集合与阶段集合必须一致，否则会出现「某个滑杆
+单独调时整条路径都不跑」。
+
 ## 还剩什么
 
 1. 把各滑杆的阶段接上：白平衡 9×9 混四张、对比/高光/阴影按亮度自适应（含
