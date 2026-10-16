@@ -199,10 +199,11 @@ func decodeCMYKImport(path string, data []byte, remainingPixels int) (*Result, e
 	}
 	bmp := render.BitmapFromImage(nrgba)
 	return &Result{
-		Name:   strings.TrimSuffix(filepath.Base(path), filepath.Ext(path)),
-		Bitmap: bmp,
-		Width:  bmp.W,
-		Height: bmp.H,
+		Name:          strings.TrimSuffix(filepath.Base(path), filepath.Ext(path)),
+		Bitmap:        bmp,
+		Width:         bmp.W,
+		Height:        bmp.H,
+		SourceProfile: img.Profile,
 	}, nil
 }
 

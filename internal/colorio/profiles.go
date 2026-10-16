@@ -185,6 +185,32 @@ func Load(path string) (Profile, error) {
 	return profile, nil
 }
 
+// AdoptEmbedded takes in a profile that arrived inside an image file (a CMYK
+// TIFF today; PSD and JPEG with ticket 86's remaining work): named as it names
+// itself, kept like Load keeps one, and **chosen**, so proofing and CMYK export
+// go back to the inks that file was made for — upstream's
+// `CMYKProfile.embedded(in:)` followed by `adopt` (CMYK.swift:64-80).
+//
+// fallbackName is used when the profile carries no description of its own; an
+// empty one still gets a name, because an unnamed profile cannot be chosen.
+func AdoptEmbedded(data []byte, fallbackName string) (Profile, error) {
+	if !IsCMYKProfile(data) {
+		return Profile{}, ErrNotCMYK
+	}
+	// The description can carry newlines and runs of spaces (a real one reads
+	// "Coated FOGRA27 (ISO\n 12647-2:2004)"), and this name becomes a file name.
+	// Collapsing the whitespace is the one thing we do that upstream does not;
+	// upstream only ever shows the name, while adopt() writes it to disk.
+	name := strings.Join(strings.Fields(ProfileDescription(data)), " ")
+	if name == "" {
+		name = strings.Join(strings.Fields(fallbackName), " ")
+	}
+	if name == "" {
+		name = "Embedded CMYK"
+	}
+	return adopt(Profile{Name: name, Data: append([]byte(nil), data...)}), nil
+}
+
 // adopt keeps a profile that arrived inside an image file, as Load keeps
 // one, and chooses it: proofing and CMYK export then go back to the inks
 // that file was made for. A profile already installed is reused as it is,

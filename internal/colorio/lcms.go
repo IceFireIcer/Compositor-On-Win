@@ -42,6 +42,15 @@ static const char *go_cmyk_last_message(void) {
     return go_cmyk_last_error;
 }
 
+// go_cmyk_profile_description fills buf with the profile's own description
+// (the ICC 'desc' tag), which is how a profile that arrived inside an image
+// file names itself — upstream reads the same tag through ColorSync
+// (CMYK.swift:64-72). Returns 0 when the profile carries none.
+static cmsUInt32Number go_cmyk_profile_description(cmsHPROFILE profile, char *buf,
+                                                cmsUInt32Number size) {
+    return cmsGetProfileInfoASCII(profile, cmsInfoDescription, "en", "US", buf, size);
+}
+
 // The transforms are built here rather than in Go so the profile handles
 // live and die inside one call: lcms2 keeps the cmsHPROFILE it is handed
 // alive for as long as the transform exists, and no cmsHPROFILE ever
@@ -73,6 +82,7 @@ import "C"
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"unsafe"
 )
@@ -185,6 +195,26 @@ func ConvertToInk(rgb []uint8, w, h int, profile []byte, matte [3]uint8) ([]uint
 		C.cmsDoTransform(transform, unsafe.Pointer(&flat[0]), unsafe.Pointer(&ink[0]), C.cmsUInt32Number(w*h))
 	}
 	return ink, nil
+}
+
+// ProfileDescription is the profile's own name: the ICC 'desc' tag, which is
+// how a profile embedded in an image file names itself (upstream reads the
+// same tag through ColorSync, CMYK.swift:64-72). Empty when it carries none.
+func ProfileDescription(data []byte) string {
+	if len(data) == 0 {
+		return ""
+	}
+	profile := C.cmsOpenProfileFromMem(unsafe.Pointer(&data[0]), C.cmsUInt32Number(len(data)))
+	if profile == nil {
+		return ""
+	}
+	defer C.cmsCloseProfile(profile)
+	buf := make([]byte, 512)
+	n := C.go_cmyk_profile_description(profile, (*C.char)(unsafe.Pointer(&buf[0])), C.cmsUInt32Number(len(buf)))
+	if n == 0 {
+		return ""
+	}
+	return strings.TrimRight(string(buf[:n]), "\x00")
 }
 
 // ConvertToRGB converts 8-bit CMYK (w*h*4 bytes) back to 8-bit sRGB through

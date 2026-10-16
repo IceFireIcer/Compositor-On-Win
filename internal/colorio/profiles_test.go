@@ -3,6 +3,7 @@ package colorio
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -51,6 +52,59 @@ func TestLoadCopiesAndChooses(t *testing.T) {
 	}
 	if !containsName(Installed(), src.Name) {
 		t.Fatalf("loaded profile %q is not installed", src.Name)
+	}
+}
+
+// 票 86：文件带进来的配置被留存并**选为当前配置**（上游 CMYKProfile.embedded + adopt），
+// 于是校样与 CMYK 导出能回到那份文件当初针对的油墨。
+func TestAdoptEmbeddedKeepsAndChoosesTheProfile(t *testing.T) {
+	useTempAppData(t)
+	src := firstCMYKProfile(t)
+	data, err := os.ReadFile(src.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := SetChosen(""); err != nil {
+		t.Fatalf("SetChosen(empty): %v", err)
+	}
+
+	profile, err := AdoptEmbedded(data, "fallback-name")
+	if err != nil {
+		t.Fatalf("AdoptEmbedded: %v", err)
+	}
+	// 名字取自配置自己的 desc 标签（不是回退名），且不含换行 —— 它会变成文件名。
+	if profile.Name == "" || profile.Name == "fallback-name" {
+		t.Errorf("名字应当取自配置本身，得到 %q", profile.Name)
+	}
+	if strings.ContainsAny(profile.Name, "\r\n") {
+		t.Errorf("名字不该带换行：%q", profile.Name)
+	}
+	// 复制进了应用自己的目录，所以留得住。
+	if profile.Path == "" {
+		t.Fatal("应当复制到应用目录")
+	}
+	if _, err := os.Stat(profile.Path); err != nil {
+		t.Fatalf("留存的副本不可读: %v", err)
+	}
+	// 并且被选为当前配置。
+	if chosen := Chosen(); chosen == nil || chosen.Name != profile.Name {
+		t.Fatalf("Chosen() = %v，想要 %q", chosen, profile.Name)
+	}
+	// 再采纳一次同样的字节：复用已装的那份，不堆两个名字。
+	again, err := AdoptEmbedded(data, "another-name")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.Name != profile.Name {
+		t.Errorf("同样的字节应当复用已装的配置：%q ≠ %q", again.Name, profile.Name)
+	}
+}
+
+// 不是 CMYK 配置的一律拒绝，与 Load 一致。
+func TestAdoptEmbeddedRejectsNonCMYK(t *testing.T) {
+	useTempAppData(t)
+	if _, err := AdoptEmbedded([]byte("not a profile"), "x"); err == nil {
+		t.Fatal("非配置数据应当被拒绝")
 	}
 }
 

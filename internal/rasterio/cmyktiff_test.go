@@ -114,6 +114,10 @@ func TestCMYKTIFFImportsThroughItsEmbeddedProfile(t *testing.T) {
 	if result.Width != 2 || result.Height != 1 {
 		t.Fatalf("尺寸 = %d×%d", result.Width, result.Height)
 	}
+	// 来源配置必须跟着结果出来，调用方（桥接）才能留存它供校样使用。
+	if !bytes.Equal(result.SourceProfile, profile) {
+		t.Fatalf("SourceProfile 应当是文件内嵌的那份配置（%d 字节 vs %d）", len(result.SourceProfile), len(profile))
+	}
 	white := result.Bitmap.Pix[0]
 	if white < 240 {
 		t.Errorf("白墨应当转成接近白，得到 %d", white)

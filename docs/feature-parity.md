@@ -307,7 +307,7 @@
 | U30 | 16 位与 HDR 屏幕抖动预览 | 83 | M2/M7 | ✅ 16 位走 `ToBitmap` → `Quantize16`、HDR 走 `Wide16()`（高光夹白并按 alpha 钳制），都是纯函数；噪声是**位置哈希**而非随机数，所以缩放平移不闪；与 C 的 `dither_quantize16` 及三份 HDR 黄金对拍。本轮补上「不写回源层」的钉子 |
 | U31 | 16 位 PNG/TIFF 导出 | 84 | M7 | ◐ 票 84：编码器（`EncodePNG16WithDPI`/`EncodeTIFF16WithDPI`）与 Export As 的 `sixteenBit` 已落地，PNG/TIFF 两条端到端与分辨率都有测试，**导出→解码逐像素核验**。闸门只放「拼合结果就是某层深层栅格」这一种（单图层/恒等变换/无蒙版特效/正常混合），其余明确报错而非静默降 8 位。**仍缺**：多图层的 16 位合成（需要平行的 16 位合成器） |
 | U32 | HDR EXR 导出 | 85 | M7 | ✅ 票 85：Export As 加 EXR；拼合结果是 HDR 深层栅格时直接写它（超白不截断，解码回来峰值仍约 4），否则退回 8 位 half 展开（上游 `hdrRaster ?? raster`）。「无超白→16 位层 / 有超白→HDR」的导入规则此前已由 `bitmapFromDeep` 落地（`hdrWithinWhite = 1.001`）。HDR 的 EXR 拒绝改尺寸 |
-| U33 | CMYK 文件导入与配置保留 | 86 | M7 | ◐ **TIFF 已通**：`x/image/tiff` 不认 CMYK（photometric 5 直接 UnsupportedError），自写读取器取油墨平面 + ICC 标签 34675，交 `colorio.ConvertToRGB` 转 sRGB；`rasterio.Decode` 嗅探后走它，导入路径本来就调 `Decode`。缺配置/非 CMYK 配置**明确拒绝**而非猜。**仍缺**：PSD/JPEG 的 CMYK 变体、来源配置留进会话供校样 |
+| U33 | CMYK 文件导入与配置保留 | 86 | M7 | ◐ **TIFF 已通**：`x/image/tiff` 不认 CMYK（photometric 5 直接 UnsupportedError），自写读取器取油墨平面 + ICC 标签 34675，交 `colorio.ConvertToRGB` 转 sRGB；`rasterio.Decode` 嗅探后走它，导入路径本来就调 `Decode`。缺配置/非 CMYK 配置**明确拒绝**而非猜。**配置也留进会话了**：`colorio.AdoptEmbedded`（上游 `CMYKProfile.embedded` + `adopt`）把文件内嵌配置留存并**选为当前配置**，校样回到那份文件当初针对的油墨。**仍缺**：PSD/JPEG 的 CMYK 变体 |
 | U34 | CMYK JPEG/TIFF/PDF 导出 | 87 | M7 | ☐ 决策门槛 |
 | U35 | 画布选层后揭示图层 | 88 | M3 | ☐ |
 | U36 | 更新窗口发行说明 | 89 | M9 | ☐ |

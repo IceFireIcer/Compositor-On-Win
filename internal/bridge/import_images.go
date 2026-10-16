@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"image/png"
+	"log"
 	"math"
 	"os"
 	"path/filepath"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
+	"compositor-win/internal/colorio"
 	"compositor-win/internal/domain"
 	"compositor-win/internal/heicio"
 	"compositor-win/internal/rasterio"
@@ -380,6 +382,14 @@ func (s *Service) beginImport(paths []string) (importBegin, error) {
 			item.Error = err.Error()
 			items = append(items, item)
 			continue
+		}
+		// 票 86：CMYK 文件带进来的配置被**留存并选为当前配置**（上游 CMYKProfile.embedded +
+		// adopt），于是校样与 CMYK 导出能回到那份文件当初针对的油墨。留存失败不影响导入：
+		// 像素已经转好了，配置只是让校样能跟回去。
+		if len(res.SourceProfile) > 0 {
+			if _, err := colorio.AdoptEmbedded(res.SourceProfile, res.Name); err != nil {
+				log.Printf("CMYK 配置未能留存（校样将沿用当前配置）: %v", err)
+			}
 		}
 		remaining -= res.Width * res.Height
 		item.Status = "ok"

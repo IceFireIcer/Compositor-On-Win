@@ -58,6 +58,10 @@ type Result struct {
 	Bitmap *render.Bitmap
 	Width  int
 	Height int
+	// SourceProfile is the CMYK ICC the file carried, when the import converted
+	// from CMYK. The caller adopts it so proofing can go back to the inks the
+	// file was made for (ticket 86). Nil for every other format.
+	SourceProfile []byte
 }
 
 // Decode reads one image file into a premultiplied bitmap, refusing files
