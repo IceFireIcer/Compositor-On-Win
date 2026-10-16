@@ -152,9 +152,9 @@
 | E01 | Stroke（描边，形态学膨胀） | 41 | M2/M5 | ☑ **已实现**：`render.renderStrokeEffects`（`internal/render/effects.go:61`）+ 形态学 `strokeRingCoverage`/`extremeCoverage`（`:137,155`），里/外描边、分数半径、宽描边、蒙版与独立蒙版 placement、旋转翻转、剪贴、组不透明度、活形状都覆盖（`effects_render_test.go` 11 条）。**上一版状态行写「没有任何特效渲染」是我 grep 被截断后的误判，已纠正** |
 | E02 | Drop Shadow（投影） | 41 | M2/M5 | ☑ **已实现**：`render.effectsMargin`（余量 `distance + blur*3`）+ `effectCoverage`（按 `blur/2` 做高斯，`LayerEffects.swift:588-596`）+ `renderLayerEffects` 把影子画在图层**下面**；偏移 `shadowOffset` 照抄 `(-cos(angle), sin(angle)) * distance`（90° 垂直向下）。用例：`TestRenderDropShadowFallsStraightDownAtNinetyDegrees`（逐像素网格）、`TestRenderDisabledShadowDrawsNothing`（关掉即与无特效逐字节相同） |
 | E03 | Color Overlay（颜色叠加） | 41 | M2/M5 | ☑ **已实现**：`render.applyColorOverlay`（`effects.go:42`）+ `colorOverlayOf`（`:26`，缺 enabled 即视为可见），source-over 语义与蒙版先于特效、组不透明度、源栅格 placement、活形状都覆盖（`effects_render_test.go` 8 条） |
-| E04 | Inner Shadow（内阴影） | 41 | M2/M5 | ☐ **仍未实现**：数据模型与校验在，渲染缺。上游 `innerCoverage` = 偏移后覆盖取 `1 - level`，再 `recolor(layer, …)`（source-atop，保留原 alpha）；`renderLayerEffects` 现在按上游把图层单独放在一个缓冲里，接它只差这一段 |
+| E04 | Inner Shadow（内阴影） | 41 | M2/M5 | ☑ **已实现**：`invertCoverage`（`1 - level`）+ `effectRecolorAtop`（source-atop，保留原 alpha）+ `renderLayerEffects` 在**图层缓冲**上着色，所以内阴影不会盖到投影上。用例：`TestRenderInnerShadowTintsTheInsideEdgeAndKeepsAlpha`（90° 时落在上缘内侧、中心不变、图层 alpha 与外围透明都不变）、`TestRenderDisabledInnerShadowDrawsNothing` |
 | E05 | Outer Glow（外发光） | 41 | M2/M5 | ☑ **已实现**：`outerGlowOf` + `effectsMargin`（`size*3`）+ `renderLayerEffects` 里的 `soft * (1 - shape)`（对应上游 `outerGlowCoverage` 的 `levels[i] * (1 - mask[i])`），画在图层下面。用例：`TestRenderOuterGlowLightsTheRoomAndNotTheLayer`（照亮四周、不盖图层）、`TestRenderOuterGlowStaysWithinItsMargin` |
-| E06 | Inner Glow（内发光） | 41 | M2/M5 | ☐ **仍未实现**：数据模型与校验在，渲染缺。上游 `innerGlowCoverage` = 模糊后取 `1 - level` 再 `recolor`（source-atop）——注意 `GuidedMatte.levels` 只是「画进 8 位灰度上下文再读回」，对这些已是目标尺寸的覆盖图是恒等，所以不需要引导滤波 |
+| E06 | Inner Glow（内发光） | 41 | M2/M5 | ☑ **已实现**：`effectCoverage(blur=size)` 取 `1 - level` 后 `effectRecolorAtop`。**`GuidedMatte.levels` 只是「画进 8 位灰度上下文再读回」**，对这些已是目标尺寸的覆盖图是恒等，所以不需要引导滤波。用例：`TestRenderInnerGlowTintsTheInsideEdgeAndKeepsAlpha` |
 
 ## F. 文档模型与图层系统能力
 
@@ -300,7 +300,7 @@
 | U23 | Snap 总开关与命令状态 | 76 | M3/M9 | ✅ |
 | U24 | 文件夹直接子图像批量导入 | 77 | M7 | ☐ |
 | U25 | Camera Raw 查表与预览性能 | 78 | M5/M10 | ☐ |
-| U26 | 半透明像素的图层特效着色 | 79 | M5 | ◐ 描边（E01）与颜色叠加（E03）早已实现；**投影（E02）与外发光（E05）本轮实现**；内阴影（E04）与内发光（E06）仍未接。半透明像素上的着色语义（source-atop 保留 alpha）随 E04/E06 一起落 |
+| U26 | 半透明像素的图层特效着色 | 79 | M5 | ☑ 六种图层特效全部实现：描边（E01）与颜色叠加（E03）早已有；投影（E02）、外发光（E05）、内阴影（E04）、内发光（E06）本轮补齐。半透明像素的着色语义按上游 source-atop（保留原 alpha） |
 | U27 | Camera Raw 分区重置 | 80 | M5 | ☐ |
 | U28 | 快捷键清除与旧配置迁移 | 81 | M9 | ☐ |
 | U29 | 16 位图层绘画与调整精度 | 82 | M5/M7 | ✅ 滤镜走 `RunDeep`（`deep_split`/`deep_merge` 与 C 逐字节对拍）；笔触/重绘/渐变/填充折深层 —— 其中**四处原先会丢掉深层**，本轮修掉 |

@@ -129,21 +129,99 @@ func applyColorOverlay(shown *Bitmap, overlay *domain.OverlayEffect) {
 	}
 }
 
-// renderStrokeEffects ports LayerEffectsRenderer.render's CPU compose order:
-// outside stroke, shown pixels, color overlay, then inside stroke. The
-// morphology input is the shown source alpha before the overlay changes it.
-// It returns the padded raster and the symmetric inset used to compensate
-// the layer transform in document space.
+// invertCoverage is the "1 - level" the inner effects read: strongest at the
+// layer's edge and fading inward (LayerEffects.swift:518-523,560-566).
+func invertCoverage(levels []uint8) []uint8 {
+	if levels == nil {
+		return nil
+	}
+	out := make([]uint8, len(levels))
+	for i, v := range levels {
+		out[i] = 255 - v
+	}
+	return out
+}
+
+// effectRecolorAtop is LayerEffectsRenderer.recolor (LayerEffects.swift:541-549):
+// source-atop, so the color lands only where the layer shows and the pixels keep
+// their own alpha. dst is the layer's own buffer, so its alpha is the gate.
+func effectRecolorAtop(dst *[4]float64, red, green, blue, opacity float64, coverage uint8) {
+	amount := opacity * float64(coverage) / 255 * dst[3]
+	if amount <= 0 {
+		return
+	}
+	dst[0] = red*amount + dst[0]*(1-amount)
+	dst[1] = green*amount + dst[1]*(1-amount)
+	dst[2] = blue*amount + dst[2]*(1-amount)
+	// dst[3] is unchanged: source-atop keeps the destination's alpha.
+}
+
+// applyInPlaceEffects draws the effects that need no room around the layer: the
+// color overlay and the two inner effects, in LayerEffectsRenderer.render's
+// order. The inner effects read the alpha the layer had before the overlay
+// touched it, as upstream's separate layer buffer does.
+func applyInPlaceEffects(shown *Bitmap, overlay *domain.OverlayEffect, innerGlow *domain.GlowEffect, innerShadow *domain.ShadowEffect) {
+	needsInner := (innerGlow != nil && innerGlow.Opacity > 0) || (innerShadow != nil && innerShadow.Opacity > 0)
+	var shape []uint8
+	if needsInner && shown.W > 0 && shown.H > 0 {
+		shape = make([]uint8, shown.W*shown.H)
+		for i := range shape {
+			shape[i] = shown.Pix[i*4+3]
+		}
+	}
+	if overlay != nil {
+		applyColorOverlay(shown, overlay)
+	}
+	if innerGlow != nil && innerGlow.Opacity > 0 {
+		plane := invertCoverage(effectCoverage(shape, shown.W, shown.H, 0, 0, innerGlow.Size))
+		recolorAtopBitmap(shown, plane, innerGlow.Red, innerGlow.Green, innerGlow.Blue, innerGlow.Opacity)
+	}
+	if innerShadow != nil && innerShadow.Opacity > 0 {
+		dx, dy := shadowOffset(innerShadow)
+		plane := invertCoverage(effectCoverage(shape, shown.W, shown.H, dx, dy, innerShadow.Blur))
+		recolorAtopBitmap(shown, plane, innerShadow.Red, innerShadow.Green, innerShadow.Blue, innerShadow.Opacity)
+	}
+}
+
+func recolorAtopBitmap(shown *Bitmap, plane []uint8, red, green, blue, opacity float64) {
+	if plane == nil {
+		return
+	}
+	for i := range plane {
+		j := i * 4
+		var dst [4]float64
+		for ch := 0; ch < 4; ch++ {
+			dst[ch] = float64(shown.Pix[j+ch]) / 255
+		}
+		effectRecolorAtop(&dst, red, green, blue, opacity, plane[i])
+		for ch := 0; ch < 4; ch++ {
+			shown.Pix[j+ch] = uint8(max(0, min(1, dst[ch]))*255 + 0.5)
+		}
+	}
+}
+
+// renderLayerEffects ports LayerEffectsRenderer.render's CPU compose order:
+// beneath the layer the drop shadow, the outer glow and an outside stroke; on
+// the layer its own pixels, the color overlay, the inner glow and the inner
+// shadow; on top an inside stroke. The morphology and coverage inputs are the
+// shown source alpha before the overlay changes it. It returns the padded
+// raster and the symmetric inset used to compensate the layer transform in
+// document space.
+//
+// The effects beneath and the layer itself go into separate buffers because an
+// inner effect is source-atop on the *layer's* alpha, not on the composite's:
+// composing layer-over-under afterwards is the same arithmetic the single-pass
+// form used, and it stops an inner glow from painting over the drop shadow.
 func renderLayerEffects(shown *Bitmap, effects *domain.Effects) (*Bitmap, int, error) {
 	overlay := colorOverlayOf(effects)
 	stroke := strokeOf(effects)
 	shadow := shadowOf(effects)
 	glow := outerGlowOf(effects)
+	innerGlow := innerGlowOf(effects)
+	innerShadow := innerShadowOf(effects)
 	inset := effectsMargin(effects)
 	if inset == 0 {
-		if overlay != nil {
-			applyColorOverlay(shown, overlay)
-		}
+		applyInPlaceEffects(shown, overlay, innerGlow, innerShadow)
 		return shown, 0, nil
 	}
 	if shown.W <= 0 || shown.H <= 0 || shown.W > int(^uint(0)>>1)-2*inset || shown.H > int(^uint(0)>>1)-2*inset {
@@ -183,6 +261,18 @@ func renderLayerEffects(shown *Bitmap, effects *domain.Effects) (*Bitmap, int, e
 			glowPlane[i] = uint8(float64(soft[i]) * (1 - float64(shape[i])/255))
 		}
 	}
+	// innerGlowCoverage / innerCoverage: 1 - level, strongest at the layer's
+	// edge and fading inward. They recolor the layer's own pixels, never the
+	// effects beneath it.
+	var innerGlowPlane, innerShadowPlane []uint8
+	if innerGlow != nil && innerGlow.Opacity > 0 {
+		soft := effectCoverage(shape, width, height, 0, 0, innerGlow.Size)
+		innerGlowPlane = invertCoverage(soft)
+	}
+	if innerShadow != nil && innerShadow.Opacity > 0 {
+		dx, dy := shadowOffset(innerShadow)
+		innerShadowPlane = invertCoverage(effectCoverage(shape, width, height, dx, dy, innerShadow.Blur))
+	}
 
 	result := NewBitmap(width, height)
 	for y := 0; y < height; y++ {
@@ -221,6 +311,16 @@ func renderLayerEffects(shown *Bitmap, effects *domain.Effects) (*Bitmap, int, e
 				// Overlay uses the shown alpha, not the accumulated outside
 				// stroke/source coverage. Compose before quantizing, as Metal.
 				effectColorOver(&layer, overlay.Red, overlay.Green, overlay.Blue, alpha*overlay.Opacity)
+			}
+			// The inner effects recolor the layer's own pixels (source-atop, so
+			// they keep their alpha and a translucent pixel takes them fully).
+			if innerGlowPlane != nil {
+				effectRecolorAtop(&layer, innerGlow.Red, innerGlow.Green, innerGlow.Blue,
+					innerGlow.Opacity, innerGlowPlane[i])
+			}
+			if innerShadowPlane != nil {
+				effectRecolorAtop(&layer, innerShadow.Red, innerShadow.Green, innerShadow.Blue,
+					innerShadow.Opacity, innerShadowPlane[i])
 			}
 			color := under
 			for ch := range color {
