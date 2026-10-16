@@ -26,7 +26,14 @@ func cameraRawComposeSpec() string {
 	// 后两条由**构造器**生成（见 cameraRawGoldenStages），表号与权重照上游公式手算：
 	//   对比 12、亮度 92 → row 1（down 0.5）、column 3（across 0.48）→ 138+1*7+3 = 148
 	//   白平衡 12/−30   → 行 4（down 0.48）、列 2（across 0.8）→ 4*9+2 = 38
-	return fmt.Sprintf("%d %d 8\n91:0.5 92:0.5\n81:0.25 102:0.75\n-1:0.5 95:0.5\n95:0.4 96:0.3 97:0.3\n148:0.26 149:0.24 155:0.26 156:0.24\n38:0.104 39:0.416 47:0.096 48:0.384\n287:0.5 288:0.5\n381:0.5 382:0.5\n",
+	// 最后一条是颜色分级，**刻意填满八个槽**（两个 Blending 段 × 两个色相 × 两个饱和度）：
+	//   阴影轮盘 Hue 15、Saturation 50、Blending 25、Balance 0
+	//   between(25, [0,50,100]) → blendLow 0、blendUp 0.5 → 段 0 与段 1 各 0.5
+	//   position = 15/30 = 0.5 → first 0、second 1、around 0.5
+	//   between(50, [0,25,50,100]) → level 1、up 1 → 饱和度取 1 与 2
+	//   section(0, 0) = 455；section(1, 0) = 455 + 72 = 527
+	//   非零的是 (hue 0, sat 2) 与 (hue 1, sat 2) 两组，各 0.25
+	return fmt.Sprintf("%d %d 9\n91:0.5 92:0.5\n81:0.25 102:0.75\n-1:0.5 95:0.5\n95:0.4 96:0.3 97:0.3\n148:0.26 149:0.24 155:0.26 156:0.24\n38:0.104 39:0.416 47:0.096 48:0.384\n287:0.5 288:0.5\n381:0.5 382:0.5\n455:0 456:0.25 458:0 459:0.25 527:0 528:0.25 530:0 531:0.25\n",
 		cameraRawGoldenGrid, cameraRawTableSize)
 }
 
@@ -57,6 +64,11 @@ func cameraRawGoldenStages(set *cameraRawTableSet) []cameraRawStage {
 		// hue of green at −25 (run at 380, index 1 → tables 381/382).
 		cameraRawFifty(set, cameraRawMixerStart, 25),
 		cameraRawFifty(set, cameraRawMixerStart+(2*8+3)*5, -25),
+		// Color Grading: the shadows wheel, which fills all eight slots.
+		cameraRawGradingStages(set, &CameraRawGradingSettings{
+			Shadows:  CameraRawGradeWheel{Hue: 15, Saturation: 50},
+			Blending: 25,
+		})[0],
 	}
 }
 

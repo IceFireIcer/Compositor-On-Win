@@ -238,6 +238,9 @@ const (
 	cameraRawMixerStart       = 285
 	cameraRawCalibrationStart = 405
 	cameraRawParametricStart  = 435
+	cameraRawGradingStart     = 455
+	// cameraRawGradingLuminanceStart is the four wheels' luminance runs.
+	cameraRawGradingLuminanceStart = 743
 )
 
 // The adaptive sliders' measuring grid (CameraRawTables.swift:27-28): seven
@@ -464,10 +467,10 @@ func applyCameraRawTable(b *Bitmap, s CameraRawSettings, clipping int, foldColor
 	// The curve and the Color Mixer fold onto the table, so a whole run of Camera
 	// Raw work still costs a pixel one lookup (upstream's foldingColor).
 	//
-	// The caller only asks for this when the fold provably covers everything:
-	// the Color Grading's stages are not ported yet, and refineSaturation is not
-	// part of the fold even upstream — dropping either silently would be worse
-	// than not folding.
+	// The caller only asks for this when the fold provably covers everything.
+	// refineSaturation is the one piece it cannot: upstream's foldingColor calls
+	// camera_raw_table_curves, which carries the tone and channel curves only, so
+	// folding a non-zero refineSaturation would drop it silently.
 	if foldColor && len(stages) == 0 {
 		stages = append(stages, cameraRawIdentityStage())
 	}
@@ -482,7 +485,10 @@ func applyCameraRawTable(b *Bitmap, s CameraRawSettings, clipping int, foldColor
 		green := BuildCameraRawChannelTable(curve.Green)
 		blue := BuildCameraRawChannelTable(curve.Blue)
 		cameraRawTableCurves(table, cameraRawGrid, tone[:], red[:], green[:], blue[:])
-		cameraComposeOnto(table, cameraRawGrid, cameraRawMixerStages(set, &s.Mixer), set.size)
+		// The mixer then the grading, upstream's order (foldingColor).
+		stages := cameraRawMixerStages(set, &s.Mixer)
+		stages = append(stages, cameraRawGradingStages(set, &s.Grading)...)
+		cameraComposeOnto(table, cameraRawGrid, stages, set.size)
 	}
 	// A nil table is still meaningful: the clipping previews run without a grade.
 	cameraRawApplyTable(b, table, cameraRawGrid, clipping)
@@ -502,6 +508,97 @@ func cameraRawMixerStages(set *cameraRawTableSet, m *CameraRawMixerSettings) []c
 				stages = append(stages, cameraRawFifty(set, cameraRawMixerStart+(kind*8+color)*5, value))
 			}
 		}
+	}
+	return stages
+}
+
+// cameraRawGradingStages is CameraRawTables.gradingStages: Color Grading as
+// Photoshop draws it, in the order that composes like its own — the luminance
+// sliders, then the global and midtone wheels, then highlights, then shadows.
+//
+// Each wheel blends the tables either side of its hue and saturation (below 25
+// the lower one is no change), and the shadow and highlight wheels between the
+// Blending values measured; the midtone and global wheels were measured at
+// Photoshop's default Blending and keep to it. Balance strengthens one of those
+// two wheels and weakens the other, which with these tables is a share of
+// saturation, fitted to Photoshop's renders at ±50 (CameraRawTables.swift:186-223).
+func cameraRawGradingStages(set *cameraRawTableSet, g *CameraRawGradingSettings) []cameraRawStage {
+	var stages []cameraRawStage
+	wheels := [4]CameraRawGradeWheel{g.Shadows, g.Midtones, g.Highlights, g.Global}
+	for index, wheel := range wheels {
+		if wheel.Luminance != 0 {
+			stages = append(stages, cameraRawFifty(set, cameraRawGradingLuminanceStart+index*5, wheel.Luminance))
+		}
+	}
+	balance := g.Balance / 100
+	highlightShare := 1 + 2*balance
+	if balance < 0 {
+		highlightShare = 1 + 1.4*balance
+	}
+	if highlightShare < 0 {
+		highlightShare = 0
+	}
+	shadowShare := 1 - 1.4*balance
+	if balance < 0 {
+		shadowShare = 1 - 1.2*balance
+	}
+	if shadowShare < 0 {
+		shadowShare = 0
+	}
+	// Blending 0, 50 and 100, and how far between the two either side.
+	blendLow, blendUp := cameraRawBetweenPoints(g.Blending, []float64{0, 50, 100})
+	section := func(blendIndex, wheel int) int {
+		switch blendIndex {
+		case 0:
+			return cameraRawGradingStart + wheel*36
+		case 1:
+			return cameraRawGradingStart + 72 + wheel*36
+		default:
+			return cameraRawGradingStart + 216 + wheel*36
+		}
+	}
+	type wheelSpec struct {
+		index  int
+		color  CameraRawGradeWheel
+		share  float64
+		blends bool
+	}
+	for _, spec := range []wheelSpec{
+		{3, g.Global, 1, false},
+		{2, g.Midtones, 1, false},
+		{1, g.Highlights, highlightShare, true},
+		{0, g.Shadows, shadowShare, true},
+	} {
+		if spec.color.Saturation*spec.share <= 0 {
+			continue
+		}
+		position := math.Mod(spec.color.Hue, 360) / 30
+		first := int(position) % 12
+		second := (first + 1) % 12
+		around := position - float64(int(position))
+		level, up := cameraRawBetweenPoints(spec.color.Saturation*spec.share, []float64{0, 25, 50, 100})
+		var parts []cameraRawStagePart
+		blendings := [][2]float64{{1, 1}}
+		if spec.blends {
+			blendings = [][2]float64{{float64(blendLow), 1 - blendUp}, {float64(blendLow + 1), blendUp}}
+		}
+		for _, blending := range blendings {
+			base := section(int(blending[0]), spec.index)
+			for _, hue := range [][2]float64{{float64(first), 1 - around}, {float64(second), around}} {
+				for _, saturation := range [][2]float64{{float64(level), 1 - up}, {float64(level + 1), up}} {
+					// Saturation 0 is "no change": a nil table passes the colour through.
+					var table []uint8
+					if saturation[0] != 0 {
+						table = set.tableAt(base + int(hue[0])*3 + int(saturation[0]) - 1)
+					}
+					parts = append(parts, cameraRawStagePart{
+						table:  table,
+						weight: blending[1] * hue[1] * saturation[1],
+					})
+				}
+			}
+		}
+		stages = append(stages, cameraRawBlend(parts...))
 	}
 	return stages
 }

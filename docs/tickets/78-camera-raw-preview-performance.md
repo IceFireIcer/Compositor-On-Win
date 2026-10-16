@@ -204,6 +204,32 @@ alone」）。我们的 `BuildCameraRawToneTable` 两边都做，于是每个色
 | `TestFoldingAgreesWithThePerPixelPass` | 两条路给出接近的结果（折进表会量化到 33³ 网格，用平缓曲线比较） |
 | `TestVisualizeIndexIsMinusOneUnlessAPointAsksForIt` | 没有拾取点、或拾取点都没勾时返回 -1（零值陷阱的钉子） |
 
+## 颜色分级折进表（2026-10-16 第九块）
+
+`cameraRawGradingStages` = `CameraRawTables.gradingStages`（`CameraRawTables.swift:186-223`）：
+
+- 四个轮盘的**亮度滑杆**各走 `fifty(gradingLuminanceStart + index*5, value)`（index 0..3 依次是
+  阴影/中间调/高光/全局）；
+- **Balance** 把份额给一个轮盘、从另一个拿走（`highlightShare = 1 + 2b`（b<0 时 `1 + 1.4b`）、
+  `shadowShare = 1 - 1.4b`（b<0 时 `1 - 1.2b`），都夹在 0 以上）；推到端点时弱的那一侧归零、
+  整段不出现；
+- **Blending** 只在 0/50/100 三档间取值，阴影与高光轮盘在测得的档之间插值，中间调与全局轮盘
+  按 Photoshop 默认档（测得的），不插值；
+- 每个轮盘按色相与饱和度取周围各两张表，**最多八个槽**（2 Blending × 2 色相 × 2 饱和度）；
+  饱和度 0 是「不改」，那一槽用 nil 表直通。
+
+接上之后 `canFold` 去掉了 `!Grading.Adjusts()` —— 分级现在也折进表，与上游一致。剩下唯一不折的
+是 `refineSaturation`（上游的 `foldingColor` 只调 `camera_raw_table_curves`，不含它，折了会静默丢）。
+
+### 验证
+
+| 用例 | 覆盖 |
+| --- | --- |
+| `TestGradingStagesPickTheWheelTables` | 全局轮盘饱和 100 色相 0 的**手算**表号与权重（非零的是槽 1、表 637） |
+| `TestGradingLuminanceSlidersUseTheirOwnRuns` | 两个轮盘的亮度各走自己的 five-table 段（表 746 与 759） |
+| `TestGradingBalanceZeroesTheWeakerWheel` | Balance 推到端点时弱侧归零、整段消失 |
+| 合成对拍夹具里的分级段 | **刻意填满八个槽**的阴影轮盘，与 C 的合成逐字节一致 |
+
 ## 还剩什么
 
 1. 把各滑杆的阶段接上：白平衡 9×9 混四张、对比/高光/阴影按亮度自适应（含

@@ -2487,16 +2487,16 @@ func ApplyCameraRawFilter(b *Bitmap, settings CameraRawSettings, opts CameraRawO
 	}
 	gainsR, gainsG, gainsB := s.Gains()
 	// Upstream folds the curve, mixer and grading onto the table when nothing needs
-	// the per-pixel pass (CameraRaw.swift:217-220). We fold only when the fold
-	// provably covers everything we implement: the Color Grading's stages are not
-	// ported, refineSaturation is not part of the fold even upstream, picked points
-	// need the per-pixel pass, and without the measured tables there is nothing to
-	// fold onto.
+	// the per-pixel pass (CameraRaw.swift:217-220): no clipping view, no sharpen
+	// mask, no point-colour visualization, and no picked points. We fold on the
+	// same terms, minus refineSaturation — upstream's fold carries the tone and
+	// channel curves only, so folding a non-zero one would drop it silently — and
+	// minus the case where there are no measured tables to fold onto.
 	colorAdjusts := s.Curve.Adjusts() || s.Mixer.Adjusts() || s.Grading.Adjusts()
 	useTables := CameraRawTablesAvailable()
 	canFold := useTables && colorAdjusts && opts.Clipping == 0 && !opts.SharpenMask &&
 		opts.VisualizePointColor < 0 && len(s.Mixer.Points) == 0 &&
-		!s.Grading.Adjusts() && s.Curve.RefineSaturation == 0
+		s.Curve.RefineSaturation == 0
 	paintColor := !canFold && opts.Clipping == 0 && !opts.SharpenMask &&
 		(colorAdjusts || opts.VisualizePointColor >= 0)
 	paintEffects := opts.Clipping == 0 && !opts.SharpenMask && s.adjustsEffects()

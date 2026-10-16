@@ -210,6 +210,85 @@ func TestMixerStagesPickTheRightRunsInOrder(t *testing.T) {
 	}
 }
 
+// 颜色分级的阶段构造器。表号与权重照上游公式手算。
+//
+// 全局轮盘、饱和 100、色相 0、Balance 0、Blending 50：
+//
+//		between(50, [0,50,100]) → index 0、frac 1 → blendLow=0、blendUp=1
+//		全局轮盘不按 Blending 分段 → blendings = [(1, 1)] → section(1, 3) = 455 + 72 + 3*36 = 635
+//		position = 0/30 = 0 → first 0、second 1、around 0
+//		between(100, [0,25,50,100]) → index 2、up 1 → 饱和度取 2 与 3
+//	  四个槽按 (hue, sat) 的顺序填：[(0,2), (0,3), (1,2), (1,3)]，权重分别是
+//	  0、1、0、0 —— 所以非零的是**槽 1**，表 635 + 0 + 3 - 1 = 637。
+func TestGradingStagesPickTheWheelTables(t *testing.T) {
+	set, err := CameraRawTables()
+	if err != nil {
+		t.Fatal(err)
+	}
+	g := &CameraRawGradingSettings{
+		Global:   CameraRawGradeWheel{Hue: 0, Saturation: 100},
+		Blending: 50,
+	}
+	stages := cameraRawGradingStages(set, g)
+	if len(stages) != 1 {
+		t.Fatalf("应当有一段，得到 %d", len(stages))
+	}
+	indices := stageIndices(set, &stages[0])
+	if indices[1] != 637 {
+		t.Errorf("槽 1 的表 = %d，想要 637（四个槽 %v）", indices[1], indices[:4])
+	}
+	if stages[0].weights[1] != 1 {
+		t.Errorf("槽 1 的权重 = %v，想要 1", stages[0].weights[1])
+	}
+	for i := 0; i < 8; i++ {
+		if i == 1 {
+			continue
+		}
+		if stages[0].weights[i] != 0 {
+			t.Errorf("槽 %d 的权重应当是 0，得到 %v", i, stages[0].weights[i])
+		}
+	}
+}
+
+// 亮度滑杆走 fifty：四个轮盘各一段，起点是 gradingLuminanceStart + index*5。
+func TestGradingLuminanceSlidersUseTheirOwnRuns(t *testing.T) {
+	set, err := CameraRawTables()
+	if err != nil {
+		t.Fatal(err)
+	}
+	g := &CameraRawGradingSettings{Blending: 50}
+	g.Shadows.Luminance = 50
+	g.Global.Luminance = -50
+	stages := cameraRawGradingStages(set, g)
+	if len(stages) != 2 {
+		t.Fatalf("应当有两段亮度，得到 %d", len(stages))
+	}
+	// 阴影是第 0 个轮盘：fifty(743, 50) → position 3 → 表 746。
+	if got := stageIndices(set, &stages[0])[0]; got != 746 {
+		t.Errorf("阴影亮度表 = %d，想要 746", got)
+	}
+	// 全局是第 3 个：fifty(743 + 15, -50) → position 1 → 表 759。
+	if got := stageIndices(set, &stages[1])[0]; got != 759 {
+		t.Errorf("全局亮度表 = %d，想要 759", got)
+	}
+}
+
+// Balance 把份额给一个轮盘、从另一个拿走；推到端点时弱的那一侧归零、整段不出现。
+func TestGradingBalanceZeroesTheWeakerWheel(t *testing.T) {
+	set, err := CameraRawTables()
+	if err != nil {
+		t.Fatal(err)
+	}
+	g := &CameraRawGradingSettings{Blending: 50, Balance: 100}
+	g.Highlights = CameraRawGradeWheel{Hue: 0, Saturation: 100}
+	g.Shadows = CameraRawGradeWheel{Hue: 0, Saturation: 100}
+	stages := cameraRawGradingStages(set, g)
+	// highlightShare = 1 + 2 = 3（仍在），shadowShare = 1 - 1.4 = -0.4 → 0（整段消失）。
+	if len(stages) != 1 {
+		t.Fatalf("应当只剩高光那一段，得到 %d", len(stages))
+	}
+}
+
 // 参数曲线的分割点被改过时，那张表不再适用，这一段就不出现。
 func TestTableStagesSkipTheParametricCurveWithMovedDividers(t *testing.T) {
 	set, err := CameraRawTables()
