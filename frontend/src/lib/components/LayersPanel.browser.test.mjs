@@ -253,3 +253,59 @@ it("reveals the selected row with the least scrolling, and only when the selecti
   await page.evaluate(() => window.restoreScrollIntoView());
 });
 
+
+// 票 92：窄面板下每个控件都留在边界内 —— 一条宽度扫描，而不是只挑一个宽度。
+//
+// 这条测出过真缺陷：`.mask-row` 的第三方栏原先是 `minmax(88px, auto)`，**硬下限 88px** 加上
+// 26px 缩进，面板压到 148px 以下时整个蒙版菜单被顶出右边界（实测 right 156 > 面板 140）。
+// 改成封顶 88px、允许收缩：宁可截断，不要溢出。
+it("keeps every control inside the panel down to 100px", async () => {
+  for (const width of [200, 160, 140, 120, 100]) {
+    await page.evaluate((w) => { window.document.getElementById("panel").style.width = `${w}px`; }, width);
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    const measured = await page.evaluate(() => {
+      const panel = window.document.getElementById("panel");
+      const rect = panel.getBoundingClientRect();
+      const escaped = [...window.document.querySelectorAll("button, .name, select, input")]
+        .filter((el) => el.getBoundingClientRect().right > rect.right + 1)
+        .map((el) => `${el.tagName}.${el.className}`);
+      return { scrollWidth: panel.scrollWidth, clientWidth: panel.clientWidth, escaped };
+    });
+    expect({ width, ...measured }).toEqual({ width, scrollWidth: width, clientWidth: width, escaped: [] });
+  }
+});
+
+
+it("stays inside its bounds at a narrow width, and rename does not move the row", async () => {
+  // 票 92：窄面板下图层面板保持可操作，按钮与文本不越界，重命名时行高稳定。
+  await page.evaluate(() => { window.document.getElementById("panel").style.width = "180px"; });
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+
+  const overflow = await page.evaluate(() => {
+    const panel = window.document.getElementById("panel");
+    return { scrollWidth: panel.scrollWidth, clientWidth: panel.clientWidth };
+  });
+  // 面板整体不该横向溢出（内部该滚的地方自己滚）。
+  expect(overflow.scrollWidth).toBeLessThanOrEqual(overflow.clientWidth + 1);
+
+  // 底部动作条上的每个按钮都要落在面板右边界内。
+  const escaped = await page.evaluate(() => {
+    const panel = window.document.getElementById("panel").getBoundingClientRect();
+    return [...window.document.querySelectorAll(".panel-actions button")]
+      .map((b) => ({ text: b.textContent.trim(), right: b.getBoundingClientRect().right }))
+      .filter((b) => b.right > panel.right + 1);
+  });
+  expect(escaped).toEqual([]);
+
+  // 重命名：行高不该跳。
+  const heightBefore = await page.evaluate(() =>
+    window.document.querySelector('[data-layer-id="a"]').getBoundingClientRect().height);
+  await page.locator('[data-layer-id="a"] .name').dblclick();
+  await poll(() => page.locator(".rename").count()).toBe(1);
+  const heightDuring = await page.evaluate(() =>
+    window.document.querySelector('[data-layer-id="a"]').getBoundingClientRect().height);
+  expect(Math.abs(heightDuring - heightBefore)).toBeLessThanOrEqual(1);
+  await page.locator(".rename").press("Escape");
+});
+
+

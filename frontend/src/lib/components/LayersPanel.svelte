@@ -825,7 +825,9 @@ function revealSelectedRow(key: string): void {
 
   .mask-row {
     display: grid;
-    grid-template-columns: 22px minmax(0, 1fr) minmax(88px, auto);
+    /* 蒙版菜单希望有 88px 好读，但**不能是下限**：窄面板下第三方栏的硬下限会把整行顶出
+       面板边界（实测 ≤148px 时溢出）。所以封顶 88px、允许收缩 —— 宁可截断，不要溢出。 */
+    grid-template-columns: 22px minmax(0, 1fr) minmax(0, 88px);
     gap: 4px;
     align-items: center;
     min-height: 28px;
