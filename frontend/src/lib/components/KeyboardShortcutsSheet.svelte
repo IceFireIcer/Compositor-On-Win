@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { chordFromEvent, chordLabel, type ShortcutChord } from "../shortcuts/chords";
+  import { chordFromEvent, chordLabel, isNoneChord, type ShortcutChord } from "../shortcuts/chords";
   import {
     SHORTCUTS,
     originalChord,
@@ -117,6 +117,15 @@
     close();
   }
 
+  /**
+   * 录制器上的 ✕：把这一条设为「没有键」（原版 KeyboardShortcuts.swift:293-300）。
+   * 只在**正在录制**的那一行出现，否则整张表会变成一列 ✕。
+   */
+  function clearShortcut(id: string): void {
+    draft = { ...draft, [id]: { key: "", modifiers: 0 } };
+    stopRecording();
+  }
+
   /** 恢复默认：只清草稿（原版 `draft = [:]`），保存时才落盘。 */
   function resetDraft(): void {
     stopRecording();
@@ -180,6 +189,14 @@
             >
               {recording === definition.id ? "按下按键…" : chordLabel(currentChord(definition))}
             </button>
+            {#if recording === definition.id && !isNoneChord(currentChord(definition))}
+              <button
+                class="clear"
+                title="移除这条快捷键"
+                aria-label="移除这条快捷键"
+                onclick={() => clearShortcut(definition.id)}
+              >✕</button>
+            {/if}
           </div>
         {/each}
       {/each}
@@ -281,6 +298,14 @@
 
   .changed {
     color: var(--accent);
+  }
+
+  .clear {
+    background: transparent;
+    border: none;
+    color: var(--muted, #888);
+    font-size: 12px;
+    padding: 0 4px;
   }
 
   .recorder {

@@ -20,6 +20,7 @@ import {
   MOD_SHIFT,
   chordEquals,
   chordLabel,
+  isNoneChord,
   type ShortcutChord,
 } from "./chords";
 import { SHORTCUTS, definitionById, originalChord, type ShortcutDefinition } from "./table";
@@ -65,6 +66,9 @@ export function problemIn(values: Record<string, ShortcutChord>): string | null 
   const assigned = new Map<string, string>();
   for (const definition of SHORTCUTS) {
     const chord = values[definition.id] ?? originalChord(definition);
+    // 0. 没有键的直接跳过（原版 KeyboardShortcuts.swift:202）：清掉的命令既不占键，也不参与
+    //    重复判定，更不该因为「键为空」被判非法 —— 否则清除之后根本存不下去。
+    if (isNoneChord(chord)) continue;
     // 1. 单键 + 位掩码范围（原版：key.count == 1，(0...15).contains(modifiers)）
     if (Array.from(chord.key).length !== 1 || !Number.isInteger(chord.modifiers) || chord.modifiers < 0 || chord.modifiers > 15) {
       return "请使用单个按键加可选修饰键。";
@@ -110,7 +114,18 @@ function readStored(): Record<string, ShortcutChord> {
   }
   const candidates = sanitize(parsed);
   if (candidates === null) return {};
-  return problemIn(candidates) === null ? candidates : {};
+  // 逐条采纳（原版 KeyboardShortcuts.swift:156-167）：按 id 排序后一条条加进已接受的集合，
+  // 只有**它自己**会引入问题时才丢它。一条指向已删除命令的记录、一个被新默认占用的键、一条
+  // 形状不对的记录，都只丢自己，不牵连同一份配置里其他有效的覆盖。
+  //
+  // 排序是为了结果确定：同一份配置在不同机器上得到同一张表。
+  const accepted: Record<string, ShortcutChord> = {};
+  for (const id of Object.keys(candidates).sort()) {
+    const chord = candidates[id]!;
+    const trial = { ...accepted, [id]: chord };
+    if (problemIn(trial) === null) accepted[id] = chord;
+  }
+  return accepted;
 }
 
 /** 只保留已知 id 且形状正确的条目；对象本身不是字典时返回 null。 */
@@ -118,10 +133,10 @@ function sanitize(value: unknown): Record<string, ShortcutChord> | null {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return null;
   const out: Record<string, ShortcutChord> = {};
   for (const [id, chord] of Object.entries(value as Record<string, unknown>)) {
-    if (definitionById(id) === undefined) continue; // 表外的垃圾 id：丢弃
-    if (chord === null || typeof chord !== "object") return null;
+    if (definitionById(id) === undefined) continue; // 表外的垃圾 id（命令已删）：只丢这一条
+    if (chord === null || typeof chord !== "object") continue; // 坏记录：只丢这一条
     const { key, modifiers } = chord as { key?: unknown; modifiers?: unknown };
-    if (typeof key !== "string" || typeof modifiers !== "number") return null;
+    if (typeof key !== "string" || typeof modifiers !== "number") continue; // 形状不对：只丢这一条
     out[id] = { key, modifiers };
   }
   return out;

@@ -48,6 +48,7 @@ import {
   type DocumentState,
 } from "../state/document";
 import { beginFilter, repeatLastFilter } from "../state/filters";
+import { toggleProof } from "../state/cmykProof";
 import { copyMerged, exportPNG, openExportAs, openExportJPEG } from "../state/export";
 import { geometrySheet } from "../state/geometry";
 import {
@@ -725,6 +726,9 @@ export async function flipLayer(axis: "x" | "y"): Promise<void> {
 
 export const shortcutActions: ShortcutActions = {
   // --- Menus ---
+  // 票 81：这两条出厂没有键，用户分配后才可达。动作与菜单共用 toggleProof。
+  "Menus:CMYK Proof Colors": () => void toggleProof("proof"),
+  "Menus:CMYK Gamut Warning": () => void toggleProof("gamut"),
   "Menus:Undo": () => void runUndoRedo("undo"),
   "Menus:Redo": () => void runUndoRedo("redo"),
   "Menus:New Canvas": () => newCanvasSheet.set(true),

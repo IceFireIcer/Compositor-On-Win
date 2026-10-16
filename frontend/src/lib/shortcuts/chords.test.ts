@@ -12,6 +12,7 @@ import {
   chordEquals,
   chordFromEvent,
   chordLabel,
+  isNoneChord,
   normalizeKey,
   type ShortcutChord,
 } from "./chords";
@@ -124,6 +125,15 @@ describe("chordLabel（Windows 标签）", () => {
     expect(label("z", 11)).toBe("Ctrl+Alt+Shift+Z");
     expect(label("s", 11)).toBe("Ctrl+Alt+Shift+S");
     expect(label("i", 3)).toBe("Ctrl+Alt+I");
+  });
+
+  // 票 81：清掉的命令（空键）显示为 None，而不是空串。
+  it("没有键时显示 None", () => {
+    expect(label("", 0)).toBe("None");
+    // 即便带着修饰键，空键仍然是「没有键」—— 原版先判 isNone 再拼修饰键。
+    expect(label("", 1)).toBe("None");
+    expect(isNoneChord({ key: "", modifiers: 0 })).toBe(true);
+    expect(isNoneChord({ key: "z", modifiers: 0 })).toBe(false);
   });
 
   it("特殊键用名字/箭头", () => {

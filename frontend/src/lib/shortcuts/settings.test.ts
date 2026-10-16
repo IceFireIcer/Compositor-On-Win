@@ -9,7 +9,7 @@ import {
   shortcutOverrides,
 } from "./settings";
 import { definitionById, originalChord } from "./table";
-import { chordLabel, type ShortcutChord } from "./chords";
+import { MOD_COMMAND, chordLabel, type ShortcutChord } from "./chords";
 
 /** 最小 localStorage 替身（node 环境没有 window.localStorage）。 */
 function fakeStorage(): Storage {
@@ -40,6 +40,63 @@ beforeEach(() => {
 const UNDO = "Menus:Undo";
 const REDO = "Menus:Redo";
 const UNDONE: ShortcutChord = { key: "u", modifiers: 4 };
+
+// 票 81：清除（None）与旧配置的逐条迁移。
+describe("清除与逐条迁移（票 81）", () => {
+  const NONE: ShortcutChord = { key: "", modifiers: 0 };
+
+  // Undo 的默认就是 Ctrl+Z（table.ts:54），所以拿它做「被占用的键」。
+  // MOD_COMMAND 在 Windows 上就是 Ctrl（chords.ts:111 录 ctrlKey 时置位）。
+  const CTRL_Z: ShortcutChord = { key: "z", modifiers: MOD_COMMAND };
+
+  it("清掉的命令不再占用它的键", () => {
+    // Undo 清掉之后 Ctrl+Z 空出来：把它给 Redo 不算重复。
+    expect(problemIn({ [UNDO]: NONE })).toBeNull();
+    expect(problemIn({ [UNDO]: NONE, [REDO]: CTRL_Z })).toBeNull();
+  });
+
+  it("对照组：没有清除时同一个键会被判重复", () => {
+    // 不先证明这一点，上面那条可能只是因为 problemIn 对重复根本不报。
+    expect(problemIn({ [REDO]: CTRL_Z })).toContain("同时分配");
+  });
+
+  it("清掉之后可以保存，并且读回来还是没有键", () => {
+    expect(saveOverrides({ [UNDO]: NONE })).toBe(true);
+    expect(chordFor(UNDO)).toEqual(NONE);
+  });
+
+  it("一条坏记录只丢自己，同文件里有效的覆盖照常生效", () => {
+    storage.setItem(STORAGE_KEY, JSON.stringify({
+      [UNDO]: UNDONE,
+      "Menus:Gone": { key: "g", modifiers: 4 }, // 命令已删
+      "Menus:Broken": "nope", // 形状不对
+    }));
+    const loaded = loadOverrides();
+    expect(loaded[UNDO]).toEqual(UNDONE);
+    expect(loaded["Menus:Gone"]).toBeUndefined();
+    expect(loaded["Menus:Broken"]).toBeUndefined();
+  });
+
+  it("坏记录排在有效记录之前也不影响后者", () => {
+    // 键的先后不该决定结果：旧实现遇到坏记录整份丢弃，这一条会失败。
+    storage.setItem(STORAGE_KEY, JSON.stringify({
+      "Aaa:Broken": null,
+      [UNDO]: UNDONE,
+    }));
+    expect(loadOverrides()[UNDO]).toEqual(UNDONE);
+  });
+
+  it("两条互相冲突的记录只丢后来试的那条（按 id 排序，先到先得）", () => {
+    // 位掩码 4（MOD_CONTROL）在 Windows 录制器里从不置位，所以这个和弦必然空闲 ——
+    // 用它才能保证两条记录冲突的原因是**彼此**，而不是撞上了某条默认。
+    const FREE: ShortcutChord = { key: "u", modifiers: 4 };
+    storage.setItem(STORAGE_KEY, JSON.stringify({ [UNDO]: FREE, [REDO]: FREE }));
+    const loaded = loadOverrides();
+    // 排序后 Menus:Redo 先试；Menus:Undo 与它冲突，于是只丢 Undo 这一条。
+    expect(loaded[REDO]).toEqual(FREE);
+    expect(loaded[UNDO]).toBeUndefined();
+  });
+});
 
 describe("problemIn（原版 ShortcutSettings.problem）", () => {
   it("默认表合法", () => {

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { SHORTCUTS, definitionById } from "./table";
+import { SHORTCUTS, definitionById, originalChord } from "./table";
 import { problemIn } from "./settings";
+import { MOD_COMMAND, type ShortcutChord } from "./chords";
 
 /**
  * 逐行誊写自 reference/Swift/Compositor/UI/KeyboardShortcuts.swift 的
@@ -12,10 +13,11 @@ import { problemIn } from "./settings";
  * Search Commands（"f" + Command，当前参考源码 KeyboardShortcuts.swift:92），
  * 票 55 又补上 Canvas & Layers 组开头的 Toggle Fullscreen（"f"，无修饰键，
  * KeyboardShortcuts.swift:116）、票 58 的 Last Filter、票 59 的 Export As，
- * 所以现在是 Menus 49 / Canvas 59 / Text 9，共 117 条。
+ * 所以现在是 Menus 51 / Canvas 59 / Text 9，共 119 条 —— 票 81 依上游 87e2283 补上两条
+ * 出厂无键的菜单命令（CMYK Proof Colors / CMYK Gamut Warning，KeyboardShortcuts.swift:112-114）。
  */
 const EXPECTED: readonly (readonly [string, string, number])[] = [
-  // --- Menus（49）---
+  // --- Menus（51）---
   ["Menus:Undo", "z", 1],
   ["Menus:Redo", "z", 9],
   ["Menus:New Canvas", "n", 1],
@@ -68,6 +70,9 @@ const EXPECTED: readonly (readonly [string, string, number])[] = [
   ["Menus:Show Rulers", "r", 1],
   ["Menus:Snap", ";", 9],
   ["Menus:Lock Guides", ";", 3],
+  // 票 81 / 上游 87e2283：两条出厂没有键的菜单命令（KeyboardShortcuts.swift:112-114）。
+  ["Menus:CMYK Proof Colors", "", 0],
+  ["Menus:CMYK Gamut Warning", "", 0],
 
   // --- Canvas & Layers（59）---
   ["Canvas & Layers:Toggle Fullscreen: the canvas alone on black (Esc also leaves)", "f", 0],
@@ -142,12 +147,42 @@ const EXPECTED: readonly (readonly [string, string, number])[] = [
   ["Text Editing:Increase leading by 10", "\u{f701}", 10],
 ];
 
+// 票 81 / 上游 87e2283：两条菜单命令出厂没有键（免得误触），用户可自行分配，也可以清掉。
+describe("出厂无键的校样命令（票 81）", () => {
+  const PROOF = "Menus:CMYK Proof Colors";
+  const GAMUT = "Menus:CMYK Gamut Warning";
+  // 位掩码 4（MOD_CONTROL）在 Windows 录制器里从不置位，所以这个和弦必然空闲。
+  const FREE: ShortcutChord = { key: "y", modifiers: 4 };
+
+  it("两条都在表里，且出厂没有键", () => {
+    for (const id of [PROOF, GAMUT]) {
+      const definition = definitionById(id);
+      expect(definition, `${id} 不在表里`).toBeDefined();
+      expect(originalChord(definition!)).toEqual({ key: "", modifiers: 0 });
+    }
+  });
+
+  it("空键不占键：默认表本来就合法", () => {
+    expect(problemIn({})).toBeNull();
+  });
+
+  it("用户分配一个空闲键后合法，分配一个已占用的键仍报重复", () => {
+    expect(problemIn({ [PROOF]: FREE })).toBeNull();
+    // Ctrl+Z 是 Undo 的默认：分配给别人仍然要报出来。
+    expect(problemIn({ [PROOF]: { key: "z", modifiers: MOD_COMMAND } })).toContain("同时分配");
+  });
+
+  it("分配之后还可以再清掉", () => {
+    expect(problemIn({ [PROOF]: FREE, [GAMUT]: { key: "", modifiers: 0 } })).toBeNull();
+  });
+});
+
 describe("快捷键定义表与原版一一对应（票 47）", () => {
-  it("共 117 条，三个分组 49 / 59 / 9", () => {
-    expect(SHORTCUTS).toHaveLength(117);
-    expect(EXPECTED).toHaveLength(117);
+  it("共 119 条，三个分组 51 / 59 / 9", () => {
+    expect(SHORTCUTS).toHaveLength(119);
+    expect(EXPECTED).toHaveLength(119);
     const count = (group: string): number => SHORTCUTS.filter((d) => d.group === group).length;
-    expect(count("Menus")).toBe(49);
+    expect(count("Menus")).toBe(51);
     expect(count("Canvas & Layers")).toBe(59);
     expect(count("Text Editing")).toBe(9);
   });

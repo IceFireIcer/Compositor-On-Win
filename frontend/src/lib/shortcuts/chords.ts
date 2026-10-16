@@ -153,8 +153,18 @@ const KEY_LABELS: Readonly<Record<string, string>> = {
   [KEY_RIGHT]: "→",
 };
 
-/** 原版 `ShortcutChord.label` 的 Windows 版："Ctrl+Shift+Z"、"Alt+←"、"Space"。 */
+/**
+ * 原版 `ShortcutChord.isNone`：没有键 —— 被人清掉的那条，或者一条出厂就没有键的菜单命令
+ * （KeyboardShortcuts.swift:8-10）。空键在派发时不匹配任何输入，所以它天然不抢键。
+ */
+export function isNoneChord(chord: ShortcutChord): boolean {
+  return chord.key === "";
+}
+
+/** 原版 `ShortcutChord.label` 的 Windows 版："Ctrl+Shift+Z"、"Alt+←"、"Space"、"None"。 */
 export function chordLabel(chord: ShortcutChord): string {
+  // 原版先判 isNone 再拼修饰键（KeyboardShortcuts.swift:57），所以清掉的显示为 None 而不是空串。
+  if (isNoneChord(chord)) return "None";
   let label = "";
   for (const [bit, name] of MODIFIER_LABELS) {
     if ((chord.modifiers & bit) !== 0) label += `${name}+`;

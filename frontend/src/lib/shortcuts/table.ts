@@ -107,6 +107,11 @@ const MENUS: readonly ShortcutDefinition[] = [
   menu("Show Rulers", "r", 1),
   menu("Snap", ";", 9),
   menu("Lock Guides", ";", 3),
+  // 票 81 / 上游 87e2283（KeyboardShortcuts.swift:112-114）：这两条出厂**没有**键，
+  // 免得误触（Photoshop 里是 ⌘Y 与 ⇧⌘Y）。空键在派发时不匹配任何输入，所以不抢键；
+  // 用户在快捷键面板里自己分配。
+  menu("CMYK Proof Colors", "", 0),
+  menu("CMYK Gamut Warning", "", 0),
 ];
 
 // ---------------------------------------------------------------------------

@@ -35,11 +35,11 @@
     refreshRecentProjects,
   } from "../state/shell";
   import { checkForUpdates } from "../state/update";
-  import { gamutWarning, proofColors, proofError, proofLookups } from "../state/cmykProof";
+  import { gamutWarning, loadProofLookups, proofColors, proofError, proofLookups, toggleProof } from "../state/cmykProof";
   import { depthMenuItems, layerDepth, runDepthCommand } from "../state/layerDepth";
   import { CMYKProfiles, LoadCMYKProfile, SetCMYKProfile } from "../../../wailsjs/go/bridge/Service";
-  import { CMYKProofLookups } from "../../../wailsjs/go/bridge/Service";
   import { chordFor } from "../shortcuts/settings";
+  import { isNoneChord } from "../shortcuts/chords";
   import { chordLabel } from "../shortcuts/chords";
   import { registerCanvasModalGuard } from "../shortcuts/dispatch";
   import { textSession } from "../state/text";
@@ -107,30 +107,8 @@
   }
 
   // 校样是视图变换（票 72）：查找表按**当前**配置生成，没有配置就留在菜单报错，
-  // 不发明一张表。两个开关共用同一份表。
-  async function loadProofLookups(): Promise<boolean> {
-    try {
-      proofLookups.set(JSON.parse(await CMYKProofLookups()));
-      proofError.set("");
-      return true;
-    } catch (err) {
-      proofLookups.set(null);
-      proofError.set(err instanceof Error ? err.message : String(err));
-      return false;
-    }
-  }
-
-  async function toggleProof(which: "proof" | "gamut"): Promise<void> {
-    const turningOff = which === "proof" ? $proofColors : $gamutWarning;
-    if (turningOff) {
-      if (which === "proof") proofColors.set(false);
-      else gamutWarning.set(false);
-      return;
-    }
-    if (!$proofLookups && !(await loadProofLookups())) return;
-    if (which === "proof") proofColors.set(true);
-    else gamutWarning.set(true);
-  }
+  // 不发明一张表。两个开关共用同一份表 —— 取表与切换都在 state/cmykProof.ts，
+  // 因为快捷键也要调它们，两处各写一份就会分叉。
 
   /**
    * 配置变了就得重新取表。只把表清空是不够的：开关还亮着，而画布的 setProof 在
@@ -195,9 +173,14 @@
     await refreshRecentProjects();
   }
 
-  /** Current chord label for a definition id — the menu's live hint. */
-  function hintFor(id: string): string {
-    return chordLabel(chordFor(id));
+  /**
+   * Current chord label for a definition id — the menu's live hint. A command with no
+   * key shows **no** hint rather than "None" (upstream's `assigned(_:)` returns nil
+   * until the person gives it one), so an unassigned command does not look broken.
+   */
+  function hintFor(id: string): string | undefined {
+    const chord = chordFor(id);
+    return isNoneChord(chord) ? undefined : chordLabel(chord);
   }
 
   // 反相/反相蒙版: 反相 rides ⌘I (single definition), the mask variant has no
