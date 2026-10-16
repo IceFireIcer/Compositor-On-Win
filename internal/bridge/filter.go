@@ -514,6 +514,9 @@ func runFilterJob(kind string, work *render.Bitmap, p *filterParams, clampSides 
 		grade := p.CameraRaw.ApplyingGroups(p.CameraRawShows)
 		*work = *render.ApplyCameraRawFilter(work, grade, render.CameraRawOptions{
 			Scale: scale, Seed: seed, Clipping: clipping, SharpenMask: p.CameraRawSharpenMask,
+			// The panel's per-point "visualize" switch, or -1. Leaving this out is
+			// not the same as "off": the zero value means point 0.
+			VisualizePointColor: grade.Mixer.VisualizeIndex(),
 		})
 	case FilterInvert:
 		render.ApplyInvert(work)

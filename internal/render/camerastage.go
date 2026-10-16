@@ -358,6 +358,35 @@ func cameraRawTableStages(set *cameraRawTableSet, s *CameraRawSettings, brightne
 	return stages
 }
 
+// cameraRawIdentityStage is CameraRawTables.identity()'s per-stage equivalent: a
+// stage whose one table is the identity, so the chain can exist (and be folded
+// onto) even when no Light or Color slider moved.
+//
+// Upstream gets this from `composed ?? CameraRawTables.identity()`, a table built
+// with no stages at all; here the identity table is the exposure-0 one, which is
+// exactly the identity (TestCameraRawIdentityTablesAreIdentity).
+func cameraRawIdentityStage() cameraRawStage {
+	set, err := CameraRawTables()
+	if err != nil {
+		return cameraRawStage{}
+	}
+	return cameraRawBlend(cameraRawStagePart{table: set.tableAt(cameraRawExposureStart + 10), weight: 1})
+}
+
+// cameraRawTableCurves is camera_raw_table_curves (AdjustPixels.c:1005-1014): the
+// tone curve, then the per-channel curve, applied to every entry of a composed
+// table. Folding the curve in here is what lets a whole run of Camera Raw work
+// — Light and Color, curve, mixer, grading — cost a pixel one lookup.
+func cameraRawTableCurves(table []float32, grid int, tone, red, green, blue []float32) {
+	entries := grid * grid * grid
+	for i := 0; i < entries; i++ {
+		c := table[i*3 : i*3+3]
+		c[0] = float32(camLutAt(red, camLutAt(tone, float64(c[0]))))
+		c[1] = float32(camLutAt(green, camLutAt(tone, float64(c[1]))))
+		c[2] = float32(camLutAt(blue, camLutAt(tone, float64(c[2]))))
+	}
+}
+
 // cameraRawApplyTable is adjust_camera_raw (AdjustPixels.c:422-451): every
 // pixel is unpremultiplied, run through the composed table, and written back
 // premultiplied. A nil table skips the lookup; clipping 1 lights the channels
@@ -420,7 +449,7 @@ func CameraRawTablesAvailable() bool {
 // sliders (Calibration's primaries included) become one composed table, and
 // every pixel costs a single lookup. Reports whether it ran; a false return
 // means the resource is missing and the caller should use the analytic kernels.
-func applyCameraRawTable(b *Bitmap, s CameraRawSettings, clipping int) bool {
+func applyCameraRawTable(b *Bitmap, s CameraRawSettings, clipping int, foldColor bool) bool {
 	set, err := CameraRawTables()
 	if err != nil {
 		return false
@@ -432,9 +461,28 @@ func applyCameraRawTable(b *Bitmap, s CameraRawSettings, clipping int) bool {
 		brightness = cameraRawStatistics(b)
 	}
 	stages := cameraRawTableStages(set, &s, brightness)
+	// The curve and the Color Mixer fold onto the table, so a whole run of Camera
+	// Raw work still costs a pixel one lookup (upstream's foldingColor).
+	//
+	// The caller only asks for this when the fold provably covers everything:
+	// the Color Grading's stages are not ported yet, and refineSaturation is not
+	// part of the fold even upstream — dropping either silently would be worse
+	// than not folding.
+	if foldColor && len(stages) == 0 {
+		stages = append(stages, cameraRawIdentityStage())
+	}
 	var table []float32
 	if len(stages) > 0 {
 		table = cameraComposeStages(cameraRawGrid, stages, set.size)
+	}
+	if foldColor && table != nil {
+		curve := s.Curve
+		tone := BuildCameraRawToneTable(curve)
+		red := BuildCameraRawChannelTable(curve.Red)
+		green := BuildCameraRawChannelTable(curve.Green)
+		blue := BuildCameraRawChannelTable(curve.Blue)
+		cameraRawTableCurves(table, cameraRawGrid, tone[:], red[:], green[:], blue[:])
+		cameraComposeOnto(table, cameraRawGrid, cameraRawMixerStages(set, &s.Mixer), set.size)
 	}
 	// A nil table is still meaningful: the clipping previews run without a grade.
 	cameraRawApplyTable(b, table, cameraRawGrid, clipping)

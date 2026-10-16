@@ -168,6 +168,42 @@ calibration。于是「只调校准滑杆、不碰 light/color」时，原色被
 教训：接线改变的不只是数值，还有**闸门**。谓词集合与阶段集合必须一致，否则会出现「某个滑杆
 单独调时整条路径都不跑」。
 
+## 曲线与混色器折进查找表（2026-10-16 第八块）
+
+上游 `foldingColor` 把曲线、混色器与分级**折进同一张表**，于是整条 Camera Raw 链仍只花一次查表；
+逐像素那一遍只留给拾取点的可视化。已移植：`cameraRawTableCurves`（= `camera_raw_table_curves`，
+`AdjustPixels.c:1005`）、`cameraRawIdentityStage`，以及 `ApplyCameraRawFilter` 里的 `canFold` 判定。
+
+**折的条件取得比上游严**，因为「折的时候漏掉一段」会让那一段静默失效：分级的阶段还没移植，
+`refineSaturation` 连上游都没折进表（`foldingColor` 只调 `camera_raw_table_curves`，不含它）。
+所以只在 `!Grading.Adjusts() && RefineSaturation == 0` 时才折；其余情形照旧走逐像素那一遍 ——
+是性能差异，不是正确性差异。
+
+### 过程中修掉两个真 bug
+
+**1. 参数曲线被应用两次。** 上游的 `toneTable()` 在分割点是被测得的那组时**只做点曲线**，参数曲线
+由测量表的阶段负责（`CameraRawColor.swift:76-83`，注释写明「leaving the curve pass the point curve
+alone」）。我们的 `BuildCameraRawToneTable` 两边都做，于是每个色调被弯了两次。已按上游修。
+
+**2. 「可视化」勾选框一直是坏的。** `CameraRawPointColor` 原先**没有 `Visualize` 字段**，前端那个
+勾选框的值在桥接处被丢掉；而桥接构造 `CameraRawOptions` 时也没设 `VisualizePointColor`，于是它取
+**零值 0** —— 而 -1 才是「关闭」。后果：有拾取点时，一次普通编辑会把画布上该拾取点之外的像素
+**压暗**；同时 `paintColor` 永远为真，折进表永不生效。已补字段、补 `VisualizeIndex()`（无勾选返回
+-1），桥接改用它。
+
+这个 bug 是写 `canFold` 时被测试逼出来的：夹具用 `CameraRawOptions{Scale: 1}`（与桥接同样的写法），
+`canFold` 恒为假。顺着查下去才发现零值陷阱，以及桥接从未传过 -1。
+
+### 验证
+
+| 用例 | 覆盖 |
+| --- | --- |
+| `TestAMixerOnlyAdjustmentStillApplies` | **闸门**：只有混色器调整（Light/Color 一个滑杆没动）时仍生效 —— 折进表后 `paintColor` 为假，闸门漏了它就会被整个丢掉 |
+| `TestACurveOnlyAdjustmentStillApplies` | 只有曲线调整时仍生效 |
+| `TestGradingIsNotLostWhenFoldingIsPossible` | 分级没被折进去，必须走逐像素那一遍 |
+| `TestFoldingAgreesWithThePerPixelPass` | 两条路给出接近的结果（折进表会量化到 33³ 网格，用平缓曲线比较） |
+| `TestVisualizeIndexIsMinusOneUnlessAPointAsksForIt` | 没有拾取点、或拾取点都没勾时返回 -1（零值陷阱的钉子） |
+
 ## 还剩什么
 
 1. 把各滑杆的阶段接上：白平衡 9×9 混四张、对比/高光/阴影按亮度自适应（含

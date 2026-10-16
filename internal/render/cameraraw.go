@@ -47,6 +47,11 @@ type CameraRawPointColor struct {
 	HueRange        float64 `json:"hueRange"`
 	SaturationRange float64 `json:"saturationRange"`
 	LuminanceRange  float64 `json:"luminanceRange"`
+	// Visualize is the panel's per-point "dim the pixels outside this colour"
+	// switch (CameraRawColor.swift:213). It has to cross the bridge: without it
+	// the checkbox did nothing and the caller's zero value read as "visualize
+	// point 0", which dimmed the canvas on an ordinary edit.
+	Visualize bool `json:"visualize"`
 }
 
 // CameraRawMixerSettings is the eight color families plus the picked points.
@@ -297,6 +302,21 @@ func (s CameraRawMixerSettings) Adjusts() bool {
 		}
 	}
 	return false
+}
+
+// VisualizeIndex is the picked point the panel asked to visualize, or -1 when
+// none is (the sentinel ApplyCameraRawCurveColor expects).
+//
+// The zero value of CameraRawOptions.VisualizePointColor is 0, which reads as
+// "visualize point 0": a caller that forgets the field dims the canvas whenever
+// a point exists. This is the one place that decides, so callers cannot forget.
+func (s CameraRawMixerSettings) VisualizeIndex() int {
+	for i, p := range s.Points {
+		if p.Visualize {
+			return i
+		}
+	}
+	return -1
 }
 
 // MixerFloats packs hue+saturation+luminance as the kernel's 24 floats (÷100).
@@ -830,13 +850,25 @@ func (s CameraRawCurveSettings) parametric(tone float64) float64 {
 	return cameraCurvePoint(s.parametricAnchors(), tone)
 }
 
-// BuildCameraRawToneTable ports CameraRawCurveSettings.toneTable: the
-// parametric bends smoothed through the point-curve math, then the composite
-// RGB point curve.
+// BuildCameraRawToneTable ports CameraRawCurveSettings.toneTable: the composite
+// RGB point curve, over the parametric bends **only while Photoshop's measured
+// tables do not draw them**.
+//
+// While the dividers sit where they were measured, the parametric comes from the
+// measured stages (cameraRawTableStages), and upstream's toneTable applies the
+// point curve alone — its comment says so outright: "Whether Photoshop's measured
+// tables draw the parametric curve, leaving the curve pass the point curve
+// alone" (CameraRawColor.swift:76-83). Applying the parametric here as well bent
+// every tone twice.
 func BuildCameraRawToneTable(s CameraRawCurveSettings) [256]float32 {
 	var table [256]float32
+	measured := cameraRawHasMeasuredDividers(&s)
 	for i := range table {
-		table[i] = float32(cameraCurvePoint(s.RGB, s.parametric(float64(i)/255)))
+		tone := float64(i) / 255
+		if !measured {
+			tone = s.parametric(tone)
+		}
+		table[i] = float32(cameraCurvePoint(s.RGB, tone))
 	}
 	return table
 }
@@ -2454,8 +2486,19 @@ func ApplyCameraRawFilter(b *Bitmap, settings CameraRawSettings, opts CameraRawO
 		pixelScale = 1
 	}
 	gainsR, gainsG, gainsB := s.Gains()
-	paintColor := opts.Clipping == 0 && !opts.SharpenMask &&
-		(s.Curve.Adjusts() || s.Mixer.Adjusts() || s.Grading.Adjusts() || opts.VisualizePointColor >= 0)
+	// Upstream folds the curve, mixer and grading onto the table when nothing needs
+	// the per-pixel pass (CameraRaw.swift:217-220). We fold only when the fold
+	// provably covers everything we implement: the Color Grading's stages are not
+	// ported, refineSaturation is not part of the fold even upstream, picked points
+	// need the per-pixel pass, and without the measured tables there is nothing to
+	// fold onto.
+	colorAdjusts := s.Curve.Adjusts() || s.Mixer.Adjusts() || s.Grading.Adjusts()
+	useTables := CameraRawTablesAvailable()
+	canFold := useTables && colorAdjusts && opts.Clipping == 0 && !opts.SharpenMask &&
+		opts.VisualizePointColor < 0 && len(s.Mixer.Points) == 0 &&
+		!s.Grading.Adjusts() && s.Curve.RefineSaturation == 0
+	paintColor := !canFold && opts.Clipping == 0 && !opts.SharpenMask &&
+		(colorAdjusts || opts.VisualizePointColor >= 0)
 	paintEffects := opts.Clipping == 0 && !opts.SharpenMask && s.adjustsEffects()
 	paintDetailOptics := opts.Clipping == 0 && (s.Detail.Adjusts() || s.Optics.Adjusts() || opts.SharpenMask)
 	src := b
@@ -2464,7 +2507,6 @@ func ApplyCameraRawFilter(b *Bitmap, settings CameraRawSettings, opts CameraRawO
 	}
 	// The measured tables carry Calibration's primaries; without them the
 	// analytic kernel has to.
-	useTables := CameraRawTablesAvailable()
 	if opts.Clipping == 0 && !opts.SharpenMask && s.Calibration.Adjusts() {
 		c := s.Calibration
 		if useTables {
@@ -2481,8 +2523,11 @@ func ApplyCameraRawFilter(b *Bitmap, settings CameraRawSettings, opts CameraRawO
 	// tables, so a picture whose only Camera Raw edit is a calibration slider has
 	// to reach the table path — upstream's gate is simply "the stages are not
 	// empty" (CameraRaw.swift:234-238), and those stages carry calibration.
-	if s.adjustsLight() || s.adjustsColor() || s.Calibration.Adjusts() || opts.Clipping != 0 {
-		if !useTables || !applyCameraRawTable(src, s, opts.Clipping) {
+	// canFold is part of the gate: a picture whose only edit is a Color Mixer
+	// adjustment has no Light or Color slider moved, and folding is what applies
+	// it — leaving the gate as the sliders alone would drop the mixer entirely.
+	if s.adjustsLight() || s.adjustsColor() || s.Calibration.Adjusts() || opts.Clipping != 0 || canFold {
+		if !useTables || !applyCameraRawTable(src, s, opts.Clipping, canFold) {
 			ApplyCameraRaw(src, gainsR, gainsG, gainsB, s.Exposure, s.Contrast, s.Highlights,
 				s.Shadows, s.Whites, s.Blacks, s.Vibrance, s.Saturation, opts.Clipping)
 		}
