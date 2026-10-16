@@ -8,14 +8,14 @@
 | # | 功能 | 原版锚点 | 故事# | 里程碑 | 状态 |
 | --- | --- | --- | --- | --- | --- |
 | T01 | 移动/变换 (V) | `.move` | 33-35 | M3 | ☑ 票17：会话接线在 `state/transform.ts:75`（⌘T 开）/`:88`（⏎ 提交，走 `ApplyLayerTransform`）/`:112`（Esc），画布 V 工具拖图层与 8 把手（`CanvasSurface.svelte:522,867`），Go 非破坏写 `layer.transform`（`internal/bridge/layer_transform.go:30`，`layer_transform_test.go`）。自由扭曲（⌘ 拖角）不支持 |
-| T02 | 选框 (M)：矩形/椭圆双模式 | `.marquee` | 26 | M3 | ◐ 内核齐备：矩形/椭圆 region 纯函数 + 测试（`state/selection.ts:210,229`、`selection.test.ts`）；画布指针分派里没有 marquee 分支（`CanvasSurface.svelte:612-698`），矩形/椭圆双模式切换未接 |
-| T03 | 套索 (L)：自由手/多边形双模式 | `.lasso` | 26 | M3 | ◐ 内核齐备：自由手 region 纯函数 + 测试（`state/selection.ts:252`）；画布无 lasso 分支，多边形模式未接 |
+| T02 | 选框 (M)：矩形/椭圆双模式 | `.marquee` | 26 | M3 | ☑ 矩形/椭圆 region 纯函数 + 测试（`state/selection.ts:210,229`、`selection.test.ts`）；画布分支在 `CanvasSurface.svelte:1122`（`beginSelection` 收手势，`:760-770` 出 region），双模式切换在工具选项栏（`ToolOptionsBar.svelte:49-55` 的 rect/ellipse select）。**此前的「没有 marquee 分支、双模式未接」已过期** |
+| T03 | 套索 (L)：自由手/多边形双模式 | `.lasso` | 26 | M3 | ☑ 自由手 region 纯函数 + 测试（`state/selection.ts:252`）；画布分支在 `CanvasSurface.svelte:1122`，**多边形模式已接**（`:789-795` 开多边形、`:819` 双击闭合、`:1380` 预览），模式切换在 `ToolOptionsBar.svelte:61-67`。**此前的「无分支、多边形未接」已过期** |
 | T04 | 魔棒 (W)：颜色魔棒/对象选择，Tab 切换 | `.wand` | 27 | M3/M6 | ◐ 票15 颜色魔棒 + 票37 对象选择（内核 + 黄金基准 `golden_test.go:71`）；画布无魔棒分支，Tab 切换未注册（`actions.test.ts:167`） |
 | T05 | 裁剪 (C)：比例/对称/选区起点 | `.crop` | 36 | M3 | ☑ 票18 尾项：CropState/比例/对称/选区起点 + 43 测试（`state/crop.ts:488`、`crop.test.ts`），覆盖层挂在画布上（`CanvasSurface.svelte:1628`），提交走 `commitCropSession` → `commitCropToDocument` → Go `Crop`（`crop_test.go` 5 例），C 键工具已注册（`commands/entries.ts:114`）。**此前的「零生产消费者、Go 无 Crop RPC」已过期** |
 | T06 | 笔刷 (B) / 橡皮 (E)：大小/硬度/不透明度/平滑、Shift 直线 | `.brush` + `BrushStroke.swift` | 18-19 | M4 | ◐ 笔刷本体已接（`CanvasSurface.svelte:429` PAINT_TOOLS + `internal/render/brush.go` 14 测试）；橡皮不存在（E 键只 `selectTool("brush")`），参数硬编码在 `internal/bridge/brush.go:11-22`，[ / ] 对画笔无效，无笔刷选项栏 |
 | T07 | 污点修复 (J)：内容感知/创建纹理/临近匹配 | `.spotHealing` + `HealPixels.c` | 21 | M6 | ☑ 票35 |
-| T08 | 仿制图章 (S)：对齐开关、单层/全层取样、⌥点设源 | `.cloneStamp` | 20 | M4 | ◐ 内核齐备：`CloneStamp` + 13 测试（`internal/render/stampfill.go:60`、`stampfill_test.go`）；无 RPC，画布无分支（S 键只选中工具） |
-| T09 | 涂抹 (R)：模糊/涂抹/液化三模式 | `.blur` + `MetalWarp` | 22 | M4 | ◐ 内核齐备：WarpStroke 三模式 + 测试（`internal/render/smudge.go:40,111`、`smudge_test.go`）；无 RPC，模式 store 未接（`actions.test.ts:167`） |
+| T08 | 仿制图章 (S)：对齐开关、单层/全层取样、⌥点设源 | `.cloneStamp` | 20 | M4 | ☑ 内核 `CloneStamp` + 13 测试（`internal/render/stampfill.go:60`、`stampfill_test.go`）；**RPC 是 `BeginRetouchStroke` 的 kind `clone`**（`retouch_session.go:122`，`cloneResultFromCoverage` 折深层）；画布分支 `CanvasSurface.svelte:1150`，**⌥ 点设源**在 `:1152`（`setCanvasCloneSource`），取样范围在 `retouch_session.go` 的 `SampleAllLayers` |
+| T09 | 涂抹 (R)：模糊/涂抹/液化三模式 | `.blur` + `MetalWarp` | 22 | M4 | ☑ 内核 `WarpStroke` 三模式 + 测试（`internal/render/smudge.go:40,111`、`smudge_test.go`）；**RPC 是 `BeginRetouchStroke` 的 kind `blur`/`smudge`/`liquify`**（`retouch_session.go:79,109,111`）；画布分支 `CanvasSurface.svelte:1150`（`$activeTool === "blur"`，`:1162` 的失败提示就叫「涂抹失败」） |
 | T10 | 渐变 (G)：可再编辑渐变层 | `.gradient` | 23 | M4 | ◐ 只有未接线的栅格化原语 `GradientFill`（`internal/render/gradient.go:76`，无测试、无调用者）；无渐变会话/RPC/UI |
 | T11 | 形状 (U)：矩形(圆角)/椭圆/线，Shift-U 切换，保持可编辑 | `.shape` + `ShapeKind` | 24 | M4 | ◐ 形状渲染已接合成（`internal/layerrender/shape.go`、`internal/render/composite.go:203`）；无创建会话/RPC，Shift-U 未注册（`table.ts:149`） |
 | T12 | 文字 (T)：段落框/内联多行/IME | `.type` + `TypeTool.swift` | 43-45 | M8 | ☑ 票44+45：创建/编辑/提交/取消/IME/合成/往返 + 逐 run 样式与段落框缩放 |
@@ -173,7 +173,7 @@
 
 | # | 能力 | 锚点 | 故事# | 里程碑 | 状态 |
 | --- | --- | --- | --- | --- | --- |
-| S01 | 魔棒匹配：容差/连续/全局/取样半径(点/3×3/5×5) | `WandPixels.c` | 27 | M3 | ◐ 内核 + 黄金逐位（`internal/render/wand.go`、`golden_test.go:71-82`，ε=0）；无魔棒 RPC/画布交互，容差/连续/全局/取样半径无 UI |
+| S01 | 魔棒匹配：容差/连续/全局/取样半径(点/3×3/5×5) | `WandPixels.c` | 27 | M3 | ☑ 内核 + 黄金逐位（`internal/render/wand.go`、`golden_test.go:71-82`，ε=0）；**画布交互已接**：`CanvasSurface.svelte:1114` 的 wand 分支 → `pickSelection`，模式（wand/object）在 `ToolOptionsBar.svelte:73-81`、**容差**在 `:92-93`（`updateWandSettings`） |
 | S02 | 像素边描迹 → 蚂蚁线闭环路径 | `wand_trace` | 30 | M3 | ◐ 描迹与闭环路径齐备（Go `wand_trace` + `state/selection.ts:117 outlineLoops`、`selection.test.ts`），画布也画蚂蚁线（`CanvasSurface.svelte:846`）；但无创建入口（同 S01） |
 | S03 | 色彩范围（采样含/排除色+羽化度） | `color_range_mask` | 29 | M3 | ◐ 同 C29：内核 + 黄金基准齐备；采样含/排除色 + 羽化度的表单不存在 |
 | S04 | 扩展/收缩/羽化（蒙版域操作） | `SelectionEdits.swift` | 31 | M3 | ◐ 同 C31：扩展/收缩/羽化纯函数 + 测试齐备，无 UI 入口 |
