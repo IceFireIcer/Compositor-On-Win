@@ -95,7 +95,7 @@
 | C38 | Add Noise / Vignette / Bloom-Glow | 40 | M5 | ☑ 票32（滤镜菜单） |
 | C39 | Dither（11 种风格） | 40 | M6 | ☑ 票36 |
 | C40 | Tonal Contrast / Lens Correction | 40 | M5 | ☑ 票32 |
-| C41 | Camera Raw Filter（全参数面板） | 39 | M5 | ☑ 票34：滤镜菜单「Camera Raw 滤镜…」（`state/filters.ts:45`）→ 面板（`App.svelte:404-407` `CameraRawPanel.svelte`）+ Go `ApplyCameraRawFilter`（`internal/render/cameraraw.go:2171`）与滑杆/示波器管线测试（`internal/bridge/filter_test.go:310`） |
+| C41 | Camera Raw Filter（全参数面板） | 39 | M5 | ☑ 票34：滤镜菜单「Camera Raw 滤镜…」（`state/filters.ts:45`）→ 面板（`App.svelte:404-407` `CameraRawPanel.svelte`）+ Go `ApplyCameraRawFilter`（`internal/render/cameraraw.go`，Light/Color 走票 78 的测量表）与滑杆/示波器管线测试（`internal/bridge/filter_test.go:310`） |
 | C42 | Remove Background | 28 | M6 | ☑ 票37 |
 
 **Layer**
@@ -149,9 +149,9 @@
 
 | # | 特效 | 故事# | 里程碑 | 状态 |
 | --- | --- | --- | --- | --- |
-| E01 | Stroke（描边，形态学膨胀） | 41 | M2/M5 | ☑ **已实现**：`render.renderStrokeEffects`（`internal/render/effects.go:61`）+ 形态学 `strokeRingCoverage`/`extremeCoverage`（`:137,155`），里/外描边、分数半径、宽描边、蒙版与独立蒙版 placement、旋转翻转、剪贴、组不透明度、活形状都覆盖（`effects_render_test.go` 11 条）。**上一版状态行写「没有任何特效渲染」是我 grep 被截断后的误判，已纠正** |
+| E01 | Stroke（描边，形态学膨胀） | 41 | M2/M5 | ☑ **已实现**：`render.renderLayerEffects`（`internal/render/effects.go:216`；票 78 期间由 `renderStrokeEffects` 改名，因为它现在同时画投影/外发光/内阴影/内发光）+ 形态学 `strokeRingCoverage`/`extremeCoverage`（`:345,363`），里/外描边、分数半径、宽描边、蒙版与独立蒙版 placement、旋转翻转、剪贴、组不透明度、活形状都覆盖（`effects_render_test.go` 11 条）。**上一版状态行写「没有任何特效渲染」是我 grep 被截断后的误判，已纠正** |
 | E02 | Drop Shadow（投影） | 41 | M2/M5 | ☑ **已实现**：`render.effectsMargin`（余量 `distance + blur*3`）+ `effectCoverage`（按 `blur/2` 做高斯，`LayerEffects.swift:588-596`）+ `renderLayerEffects` 把影子画在图层**下面**；偏移 `shadowOffset` 照抄 `(-cos(angle), sin(angle)) * distance`（90° 垂直向下）。用例：`TestRenderDropShadowFallsStraightDownAtNinetyDegrees`（逐像素网格）、`TestRenderDisabledShadowDrawsNothing`（关掉即与无特效逐字节相同） |
-| E03 | Color Overlay（颜色叠加） | 41 | M2/M5 | ☑ **已实现**：`render.applyColorOverlay`（`effects.go:42`）+ `colorOverlayOf`（`:26`，缺 enabled 即视为可见），source-over 语义与蒙版先于特效、组不透明度、源栅格 placement、活形状都覆盖（`effects_render_test.go` 8 条） |
+| E03 | Color Overlay（颜色叠加） | 41 | M2/M5 | ☑ **已实现**：`render.applyColorOverlay`（`effects.go:119`）+ `colorOverlayOf`（`:27`，缺 enabled 即视为可见），source-over 语义与蒙版先于特效、组不透明度、源栅格 placement、活形状都覆盖（`effects_render_test.go` 8 条） |
 | E04 | Inner Shadow（内阴影） | 41 | M2/M5 | ☑ **已实现**：`invertCoverage`（`1 - level`）+ `effectRecolorAtop`（source-atop，保留原 alpha）+ `renderLayerEffects` 在**图层缓冲**上着色，所以内阴影不会盖到投影上。用例：`TestRenderInnerShadowTintsTheInsideEdgeAndKeepsAlpha`（90° 时落在上缘内侧、中心不变、图层 alpha 与外围透明都不变）、`TestRenderDisabledInnerShadowDrawsNothing` |
 | E05 | Outer Glow（外发光） | 41 | M2/M5 | ☑ **已实现**：`outerGlowOf` + `effectsMargin`（`size*3`）+ `renderLayerEffects` 里的 `soft * (1 - shape)`（对应上游 `outerGlowCoverage` 的 `levels[i] * (1 - mask[i])`），画在图层下面。用例：`TestRenderOuterGlowLightsTheRoomAndNotTheLayer`（照亮四周、不盖图层）、`TestRenderOuterGlowStaysWithinItsMargin` |
 | E06 | Inner Glow（内发光） | 41 | M2/M5 | ☑ **已实现**：`effectCoverage(blur=size)` 取 `1 - level` 后 `effectRecolorAtop`。**`GuidedMatte.levels` 只是「画进 8 位灰度上下文再读回」**，对这些已是目标尺寸的覆盖图是恒等，所以不需要引导滤波。用例：`TestRenderInnerGlowTintsTheInsideEdgeAndKeepsAlpha` |
