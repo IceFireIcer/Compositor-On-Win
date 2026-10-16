@@ -223,8 +223,140 @@ func cameraRawExposureStage(set *cameraRawTableSet, exposure float64) cameraRawS
 	return cameraRawTableStage(set, cameraRawExposureStart, exposure, -5, 0.5, 21)
 }
 
-// Table-run starts, from CameraRawTables.swift:17-26. Only the ones ported so
-// far are named; the rest arrive with their sliders.
+// Table-run starts, from CameraRawTables.swift:17-26.
 const (
-	cameraRawExposureStart = 81
+	cameraRawExposureStart    = 81
+	cameraRawWhitesStart      = 102
+	cameraRawBlacksStart      = 111
+	cameraRawSaturationStart  = 120
+	cameraRawVibranceStart    = 129
+	cameraRawContrastStart    = 138
+	cameraRawHighlightsStart  = 187
+	cameraRawShadowsStart     = 236
+	cameraRawCalibrationStart = 405
+	cameraRawParametricStart  = 435
 )
+
+// The adaptive sliders' measuring grid (CameraRawTables.swift:27-28): seven
+// picture brightnesses and seven slider values.
+var cameraRawBrightnesses = []float64{53, 80, 104, 130, 160, 190, 224}
+var cameraRawAdaptiveValues = []float64{-100, -50, -25, 0, 25, 50, 100}
+
+// cameraRawBetweenPoints is the [Double] overload of CameraRawTables.between:
+// the two entries either side of `value` and how far between them it is. The
+// value is clamped to the range first, so a slider past its end lands on the
+// last interval.
+func cameraRawBetweenPoints(value float64, points []float64) (int, float64) {
+	if value < points[0] {
+		value = points[0]
+	}
+	if last := points[len(points)-1]; value > last {
+		value = last
+	}
+	index := 0
+	for index < len(points)-2 && value > points[index+1] {
+		index++
+	}
+	return index, (value - points[index]) / (points[index+1] - points[index])
+}
+
+// cameraRawAdaptive is CameraRawTables.adaptive: an adaptive slider at `value`
+// for a picture whose measure of brightness is `brightness`, from the four
+// tables around both. Contrast reads the brightest channel, highlights the
+// log-average and shadows the mean luminance (CameraRawTables.swift:162-166).
+func cameraRawAdaptive(set *cameraRawTableSet, start int, value, brightness float64) cameraRawStage {
+	row, down := cameraRawBetweenPoints(brightness, cameraRawBrightnesses)
+	column, across := cameraRawBetweenPoints(value, cameraRawAdaptiveValues)
+	width := len(cameraRawAdaptiveValues)
+	base := start + row*width + column
+	return cameraRawBlend(
+		cameraRawStagePart{table: set.tableAt(base), weight: (1 - down) * (1 - across)},
+		cameraRawStagePart{table: set.tableAt(base + 1), weight: (1 - down) * across},
+		cameraRawStagePart{table: set.tableAt(base + width), weight: down * (1 - across)},
+		cameraRawStagePart{table: set.tableAt(base + width + 1), weight: down * across},
+	)
+}
+
+// cameraRawWhiteBalance is CameraRawTables.whiteBalance: Temperature by rows
+// and Tint across, each −100…100 by 25, so the four grid tables around the pair
+// blend. The grid is the first 81 tables, with no start offset.
+func cameraRawWhiteBalance(set *cameraRawTableSet, temperature, tint float64) cameraRawStage {
+	row, down := cameraRawBetween(temperature, -100, 25, 9)
+	column, across := cameraRawBetween(tint, -100, 25, 9)
+	return cameraRawBlend(
+		cameraRawStagePart{table: set.tableAt(row*9 + column), weight: (1 - down) * (1 - across)},
+		cameraRawStagePart{table: set.tableAt(row*9 + column + 1), weight: (1 - down) * across},
+		cameraRawStagePart{table: set.tableAt((row+1)*9 + column), weight: down * (1 - across)},
+		cameraRawStagePart{table: set.tableAt((row+1)*9 + column + 1), weight: down * across},
+	)
+}
+
+// cameraRawHasMeasuredDividers is CameraRawCurveSettings.hasMeasuredDividers
+// (CameraRawColor.swift:79): the tables were measured with Photoshop's own
+// dividers, so a moved divider needs the curve pass instead of them.
+func cameraRawHasMeasuredDividers(c *CameraRawCurveSettings) bool {
+	return c.ShadowSplit == 25 && c.DarkSplit == 50 && c.LightSplit == 75 && c.RefineSaturation == 0
+}
+
+// cameraRawTableStages is CameraRawTables.stages(for:brightness:) without the
+// grading pass (upstream keeps that in gradingStages): Calibration, Exposure,
+// White Balance, the adaptive Light sliders, the fixed Light and Color ones,
+// then the parametric curve while its dividers sit where Photoshop's were
+// measured. A slider at zero contributes nothing, so an untouched picture
+// composes an empty chain — and the order matters, because these run in
+// sequence over the lattice rather than as independent lookups.
+func cameraRawTableStages(set *cameraRawTableSet, s *CameraRawSettings, brightness cameraRawBrightness) []cameraRawStage {
+	var stages []cameraRawStage
+	// Calibration first, red hue and saturation through blue (CameraRawTables.swift:154).
+	cal := &s.Calibration
+	for index, value := range []float64{
+		cal.RedHue, cal.RedSaturation, cal.GreenHue, cal.GreenSaturation, cal.BlueHue, cal.BlueSaturation,
+	} {
+		if value != 0 {
+			stages = append(stages, cameraRawFifty(set, cameraRawCalibrationStart+index*5, value))
+		}
+	}
+	if s.Exposure != 0 {
+		stages = append(stages, cameraRawExposureStage(set, s.Exposure))
+	}
+	if s.Temperature != 0 || s.Tint != 0 {
+		stages = append(stages, cameraRawWhiteBalance(set, s.Temperature, s.Tint))
+	}
+	// Each adaptive slider reads its own measure of the picture.
+	if s.Contrast != 0 {
+		stages = append(stages, cameraRawAdaptive(set, cameraRawContrastStart, s.Contrast, brightness.brightest))
+	}
+	if s.Highlights != 0 {
+		stages = append(stages, cameraRawAdaptive(set, cameraRawHighlightsStart, s.Highlights, brightness.logBrightest))
+	}
+	if s.Shadows != 0 {
+		stages = append(stages, cameraRawAdaptive(set, cameraRawShadowsStart, s.Shadows, brightness.luminance))
+	}
+	for _, part := range []struct {
+		start int
+		value float64
+	}{
+		{cameraRawWhitesStart, s.Whites},
+		{cameraRawBlacksStart, s.Blacks},
+		{cameraRawSaturationStart, s.Saturation},
+		{cameraRawVibranceStart, s.Vibrance},
+	} {
+		if part.value != 0 {
+			stages = append(stages, cameraRawTableStage(set, part.start, part.value, -100, 25, 9))
+		}
+	}
+	if cameraRawHasMeasuredDividers(&s.Curve) {
+		for index, value := range []float64{s.Curve.Shadows, s.Curve.Darks, s.Curve.Lights, s.Curve.Highlights} {
+			if value != 0 {
+				stages = append(stages, cameraRawFifty(set, cameraRawParametricStart+index*5, value))
+			}
+		}
+	}
+	return stages
+}
+
+// cameraRawFifty is CameraRawTables.fifty: a slider on a run of five tables
+// −100…100 by 50.
+func cameraRawFifty(set *cameraRawTableSet, start int, value float64) cameraRawStage {
+	return cameraRawTableStage(set, start, value, -100, 50, 5)
+}

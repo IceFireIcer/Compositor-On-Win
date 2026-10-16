@@ -1,0 +1,194 @@
+package render
+
+// 票 78：阶段构造器。表号与权重是**照上游公式手算**出来的期望，不是从实现反推的 ——
+// 否则构造器选错表时测试会跟着一起错。
+
+import (
+	"math"
+	"testing"
+	"unsafe"
+)
+
+// tableIndexOf identifies which measured table a stage slot points at, so the
+// expectations can be written as indices.
+func tableIndexOf(set *cameraRawTableSet, table []uint8) int {
+	if table == nil {
+		return -1
+	}
+	return int(uintptr(unsafe.Pointer(&table[0]))-uintptr(unsafe.Pointer(&set.tables[0]))) / set.entries
+}
+
+func stageIndices(set *cameraRawTableSet, stage *cameraRawStage) []int {
+	out := make([]int, 0, len(stage.tables))
+	for _, table := range stage.tables {
+		out = append(out, tableIndexOf(set, table))
+	}
+	return out
+}
+
+// 对比 12、画面最亮通道均值 92：
+//
+//	亮度 92 落在 80 与 104 之间 → row 1、down = 12/24 = 0.5
+//	取值 12 落在 0 与 25 之间   → column 3、across = 12/25 = 0.48
+//	base = contrastStart(138) + 1*7 + 3 = 148
+//	权重 = (1-down)(1-across), (1-down)across, down(1-across), down*across
+func TestAdaptiveStagePicksTheFourSurroundingTables(t *testing.T) {
+	set, err := CameraRawTables()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stage := cameraRawAdaptive(set, cameraRawContrastStart, 12, 92)
+	wantIndices := []int{148, 149, 155, 156}
+	gotIndices := stageIndices(set, &stage)
+	for i, want := range wantIndices {
+		if gotIndices[i] != want {
+			t.Errorf("槽 %d 指向表 %d，想要 %d", i, gotIndices[i], want)
+		}
+	}
+	wantWeights := []float64{0.26, 0.24, 0.26, 0.24}
+	for i, want := range wantWeights {
+		if math.Abs(stage.weights[i]-want) > 1e-12 {
+			t.Errorf("槽 %d 权重 %v，想要 %v", i, stage.weights[i], want)
+		}
+	}
+	// 权重之和为 1：这是「滑块不动就什么都不改」的另一面。
+	total := 0.0
+	for _, w := range stage.weights {
+		total += w
+	}
+	if math.Abs(total-1) > 1e-12 {
+		t.Errorf("权重和 %v，想要 1", total)
+	}
+}
+
+// 自适应滑杆的两条边界：取值与亮度都夹在网格两端。
+func TestAdaptiveStageClampsToTheGridEnds(t *testing.T) {
+	set, err := CameraRawTables()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 亮度 0（低于最低测量点 53）与取值 −100（网格左端）→ 第一行第一列。
+	low := cameraRawAdaptive(set, cameraRawContrastStart, -100, 0)
+	gotLow := stageIndices(set, &low)
+	if gotLow[0] != cameraRawContrastStart {
+		t.Errorf("左下角 = 表 %d，想要 %d", gotLow[0], cameraRawContrastStart)
+	}
+	if low.weights[0] != 1 {
+		t.Errorf("左下角权重 = %v，想要 1", low.weights[0])
+	}
+	// 亮度 255 夹到最高测量点 224、取值 100 夹到网格右端。注意 between 的索引上限是
+	// **len-2**（要留出 +1 那一格），所以两处都是 index 5、frac 1：base 是
+	// start + 5*7 + 5，四个权重里只有 base+width+1 那格是 1。
+	high := cameraRawAdaptive(set, cameraRawContrastStart, 100, 255)
+	gotHigh := stageIndices(set, &high)
+	wantBase := cameraRawContrastStart + 5*7 + 5
+	if gotHigh[0] != wantBase {
+		t.Errorf("右上角 = 表 %d，想要 %d", gotHigh[0], wantBase)
+	}
+	if gotHigh[3] != wantBase+7+1 {
+		t.Errorf("右上角第四槽 = 表 %d，想要 %d", gotHigh[3], wantBase+7+1)
+	}
+	if math.Abs(high.weights[3]-1) > 1e-12 {
+		t.Errorf("右上角第四槽权重 = %v，想要 1", high.weights[3])
+	}
+}
+
+// 白平衡：温度按行、色调按列，各 −100…100 步长 25；0/0 落在 4/4 格。
+func TestWhiteBalanceStagePicksTheGridCell(t *testing.T) {
+	set, err := CameraRawTables()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stage := cameraRawWhiteBalance(set, 0, 0)
+	got := stageIndices(set, &stage)
+	// row 4、column 4 → 表 4*9+4 = 40，四角 40/41/49/50；0 是测量点，权重全在 40。
+	for i, want := range []int{40, 41, 49, 50} {
+		if got[i] != want {
+			t.Errorf("槽 %d 指向表 %d，想要 %d", i, got[i], want)
+		}
+	}
+	if stage.weights[0] != 1 {
+		t.Errorf("测量点上的权重 = %v，想要 1", stage.weights[0])
+	}
+	// 另一端：温度与色调都 100，position 是 8 但索引上限是 tables-2 = 7、frac 1，
+	// 所以落在 7*9+7，权重在第 0 槽。
+	corner := cameraRawWhiteBalance(set, 100, 100)
+	gotCorner := stageIndices(set, &corner)
+	if gotCorner[0] != 7*9+7 {
+		t.Errorf("右下角 = 表 %d，想要 %d", gotCorner[0], 7*9+7)
+	}
+	// down 与 across 都是 1，所以权重落在第 4 槽（down*across），不是第 1 槽。
+	if corner.weights[3] != 1 {
+		t.Errorf("右下角权重 = %v，想要 1（第 4 槽）", corner.weights[3])
+	}
+}
+
+// 完整顺序：一个都没设时是空链；设了几个时顺序与上游 stages(for:brightness:) 一致。
+func TestTableStagesOrderAndEmptiness(t *testing.T) {
+	set, err := CameraRawTables()
+	if err != nil {
+		t.Fatal(err)
+	}
+	brightness := cameraRawBrightness{brightest: 128, luminance: 128, logBrightest: 128}
+	if stages := cameraRawTableStages(set, &CameraRawSettings{}, brightness); len(stages) != 0 {
+		t.Fatalf("什么都没设时应当是空链，得到 %d 段", len(stages))
+	}
+
+	settings := &CameraRawSettings{
+		Exposure:    1,
+		Temperature: 25,
+		Contrast:    10,
+		Highlights:  -20,
+		Shadows:     30,
+		Whites:      25,
+		Saturation:  -25,
+	}
+	stages := cameraRawTableStages(set, settings, brightness)
+	if len(stages) != 7 {
+		t.Fatalf("应当有 7 段，得到 %d", len(stages))
+	}
+	// 顺序：曝光、白平衡、对比、高光、阴影、白色、饱和度。逐段手算：
+	//   曝光 1      → position (1−(−5))/0.5 = 12 → 表 81+12 = 93
+	//   白平衡 25/0 → 行 5（25 是测量点）、列 4（0 是测量点）→ 表 5*9+4 = 49
+	//   对比 10     → 亮度 128 落在 104…130（row 2、down 24/26），取值 10 落在 0…25
+	//                 （column 3、across 0.4）→ 表 138 + 2*7 + 3 = 155
+	//   高光 −20    → 取值落在 −25…0（column 2、across 0.2）→ 表 187 + 2*7 + 2 = 203
+	//   阴影 30     → 取值落在 25…50（column 4、across 0.2）→ 表 236 + 2*7 + 4 = 254
+	//   白色 25     → position 5 → 表 102+5 = 107
+	//   饱和度 −25  → position (−25+100)/25 = 3 → 表 120+3 = 123
+	checks := []struct {
+		name string
+		got  int
+		want int
+	}{
+		{"曝光", tableIndexOf(set, stages[0].tables[0]), 93},
+		{"白平衡", tableIndexOf(set, stages[1].tables[0]), 5*9 + 4},
+		{"对比", tableIndexOf(set, stages[2].tables[0]), cameraRawContrastStart + 2*7 + 3},
+		{"高光", tableIndexOf(set, stages[3].tables[0]), cameraRawHighlightsStart + 2*7 + 2},
+		{"阴影", tableIndexOf(set, stages[4].tables[0]), cameraRawShadowsStart + 2*7 + 4},
+		{"白色", tableIndexOf(set, stages[5].tables[0]), cameraRawWhitesStart + 5},
+		{"饱和度", tableIndexOf(set, stages[6].tables[0]), cameraRawSaturationStart + 3},
+	}
+	for _, c := range checks {
+		if c.got != c.want {
+			t.Errorf("%s 段表 %d，想要 %d", c.name, c.got, c.want)
+		}
+	}
+}
+
+// 参数曲线的分割点被改过时，那张表不再适用，这一段就不出现。
+func TestTableStagesSkipTheParametricCurveWithMovedDividers(t *testing.T) {
+	set, err := CameraRawTables()
+	if err != nil {
+		t.Fatal(err)
+	}
+	brightness := cameraRawBrightness{brightest: 128, luminance: 128, logBrightest: 128}
+	measured := &CameraRawSettings{Curve: CameraRawCurveSettings{Shadows: 50, ShadowSplit: 25, DarkSplit: 50, LightSplit: 75}}
+	if stages := cameraRawTableStages(set, measured, brightness); len(stages) != 1 {
+		t.Fatalf("默认分割点时应有一段，得到 %d", len(stages))
+	}
+	moved := &CameraRawSettings{Curve: CameraRawCurveSettings{Shadows: 50, ShadowSplit: 30, DarkSplit: 50, LightSplit: 75}}
+	if stages := cameraRawTableStages(set, moved, brightness); len(stages) != 0 {
+		t.Fatalf("分割点被改过时不该用测量表，得到 %d 段", len(stages))
+	}
+}

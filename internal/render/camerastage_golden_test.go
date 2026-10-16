@@ -23,7 +23,10 @@ const cameraRawGoldenGrid = 9
 // cameraRawComposeSpec is the stage list the driver parses: two-table blends, a
 // four-way weight split, and a nil table mixed with a real one.
 func cameraRawComposeSpec() string {
-	return fmt.Sprintf("%d %d 4\n91:0.5 92:0.5\n81:0.25 102:0.75\n-1:0.5 95:0.5\n95:0.4 96:0.3 97:0.3\n",
+	// 后两条由**构造器**生成（见 cameraRawGoldenStages），表号与权重照上游公式手算：
+	//   对比 12、亮度 92 → row 1（down 0.5）、column 3（across 0.48）→ 138+1*7+3 = 148
+	//   白平衡 12/−30   → 行 4（down 0.48）、列 2（across 0.8）→ 4*9+2 = 38
+	return fmt.Sprintf("%d %d 6\n91:0.5 92:0.5\n81:0.25 102:0.75\n-1:0.5 95:0.5\n95:0.4 96:0.3 97:0.3\n148:0.26 149:0.24 155:0.26 156:0.24\n38:0.104 39:0.416 47:0.096 48:0.384\n",
 		cameraRawGoldenGrid, cameraRawTableSize)
 }
 
@@ -47,6 +50,9 @@ func cameraRawGoldenStages(set *cameraRawTableSet) []cameraRawStage {
 			cameraRawStagePart{table: set.tableAt(96), weight: 0.3},
 			cameraRawStagePart{table: set.tableAt(97), weight: 0.3},
 		),
+		// The last two come from the builders, so the fixture checks them too.
+		cameraRawAdaptive(set, cameraRawContrastStart, 12, 92),
+		cameraRawWhiteBalance(set, 12, -30),
 	}
 }
 

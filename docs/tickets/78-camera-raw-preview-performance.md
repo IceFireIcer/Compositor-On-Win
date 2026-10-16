@@ -90,6 +90,29 @@ README 里。`go:embed` 打进二进制 —— 产品代码不该去读只读基
 但 `lut.go` 的 `srgbToLinear`/`linearToSrgb` 与 `cameraraw.go` 的 `camRec709` 已经逐字相同，
 改用既有的、删掉自己那份。
 
+## 阶段构造器（2026-10-16 第四块）
+
+`camerastage.go` 补齐上游的构造器与顺序：
+
+- `cameraRawBetweenPoints` = `between(_:in:)` 那个数组重载（先夹到两端，再线性扫描）；
+- `cameraRawAdaptive` = `adaptive`：亮度按 `brightnesses` 七档、取值按 `adaptiveValues` 七档，
+  取周围**四张表**混合。对比读最亮通道、高光读对数平均、阴影读亮度均值；
+- `cameraRawWhiteBalance` = `whiteBalance`：温度按行、色调按列，各 −100…100 步长 25，四角混合；
+- `cameraRawFifty` = `fifty`（五张表，−100…100 步长 50）；
+- `cameraRawTableStages` = `stages(for:brightness:)` 去掉颜色分级那条：Calibration → Exposure →
+  白平衡 → 对比 → 高光 → 阴影 → 白/黑/饱和/自然饱和 → 参数曲线（只在分割点仍是 Photoshop
+  测得的那组时）。一个滑杆都不动时是**空链**。
+
+**边界值得记住**：`between` 的索引上限是 **len−2**（要留出 `+1` 那一格），所以滑杆推到端点时
+索引停在 `len−2`、分数为 1，权重落在最后一格而不是第一格。我在这上面连错了三次期望值
+（自适应右上角、白平衡右下角、以及高光/阴影的列号），都是**测试算错、实现是对的** ——
+每次都用上游公式重新推一遍才改对。
+
+## 对拍
+
+合成夹具的规格里加了两条**由构造器生成**的阶段（对比 12/亮度 92、白平衡 12/−30），表号与
+权重是照上游公式手算的：构造器若选错表，点阵就对不上。通过。
+
 ## 还剩什么
 
 1. 把各滑杆的阶段接上：白平衡 9×9 混四张、对比/高光/阴影按亮度自适应（含
