@@ -258,6 +258,26 @@ func TestRenderClipping(t *testing.T) {
 	}
 }
 
+// 剪贴链的**空底**：源层存在但什么都没画出来（这里是不可见）时，被剪贴的层必须整层消失，
+// 而不是「底空空如也所以随便显示」。
+//
+// 这条是变异审计查出来的：把 renderLayer 里那个 else 分支改成不动 placed，全部测试照样通过 ——
+// 也就是说「空底裁掉目标」这条规则此前没有任何测试。实测后果是底不可见时被剪贴的层**整层显示**。
+func TestRenderClippingAgainstASourceThatRenderedNothing(t *testing.T) {
+	top := solid(2, 2, 255, 0, 0, 255)
+	doc := testDoc(2, 2,
+		testLayer("base", "base.png", func(l *domain.Layer) { l.IsVisible = false }),
+		testLayer("top", "top.png", func(l *domain.Layer) { l.MaskSourceID = ptr("base") }),
+	)
+	srcs := map[string]*Bitmap{"base.png": top, "top.png": top}
+	out, _ := Render(doc, func(name string) (*Bitmap, error) { return srcs[name], nil })
+	for i := 0; i < len(out.Pix); i += 4 {
+		if out.Pix[i+3] != 0 {
+			t.Fatalf("底没有画出来时，被剪贴的层应当整层消失，得到 alpha %d", out.Pix[i+3])
+		}
+	}
+}
+
 func TestRenderGroupOpacityAndMask(t *testing.T) {
 	image := solid(2, 2, 255, 0, 0, 255)
 	groupMask := alphaColumn(2, 2, 255, 0)
