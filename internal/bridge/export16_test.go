@@ -12,6 +12,7 @@ import (
 
 	"golang.org/x/image/tiff"
 
+	"compositor-win/internal/domain"
 	"compositor-win/internal/render"
 )
 
@@ -100,14 +101,84 @@ func TestExportAsSixteenBitTIFFKeepsSixteenBits(t *testing.T) {
 	}
 }
 
-func TestExportAsSixteenBitRefusesWhatItCannotKeep(t *testing.T) {
-	// 多图层：拼合要在 16 位下做，我们没有那条路 —— 必须明确拒绝，而不是静默给 8 位。
+// 多图层现在**成功**（票 84 的 U31 剩余）：render.CompositeDeep 用 16 位样本跑 8 位那条普通
+// 公式。上面那层不透明，所以合出来就是它的值 —— 而那两个值只差低位，8 位往返会把它们压成同一个数。
+func TestExportAsSixteenBitCompositesMultipleLayers(t *testing.T) {
 	svc, _ := newTestService(t, 4, 1)
 	deepLayerForExport(t, svc)
 	sess := activeSessionOf(t, svc)
-	sess.doc.Layers = append(sess.doc.Layers, sess.doc.Layers[0])
-	if _, err := svc.ExportAs(`{"format":"png","sixteenBit":true}`); err == nil || !strings.Contains(err.Error(), "单图层") {
-		t.Fatalf("多图层应被拒绝并说明原因，得到 %v", err)
+	second := sess.doc.Layers[0]
+	second.ID, second.Name = "top", "top"
+	image := "top.png"
+	second.ImageFile = &image
+	bitmap := render.NewBitmap(sess.doc.Width, sess.doc.Height)
+	deep := render.NewDeep(sess.doc.Width, sess.doc.Height, false)
+	for x := 0; x < deep.W; x++ {
+		i := x * 4
+		v := uint16(0x8000 + x*3)
+		deep.Pix[i], deep.Pix[i+1], deep.Pix[i+2] = v, v, v
+		deep.Pix[i+3] = 65535
+	}
+	bitmap.Deep = deep
+	sess.bitmaps[image] = bitmap
+	sess.doc.Layers = append(sess.doc.Layers, second)
+
+	dir := t.TempDir()
+	stubExportSaveDialog(t, filepath.Join(dir, "stack"))
+	reply, err := svc.ExportAs(`{"format":"png","sixteenBit":true,"defaultName":"stack.png"}`)
+	if err != nil {
+		t.Fatalf("多图层 16 位导出应当成功，得到 %v", err)
+	}
+	data, err := os.ReadFile(parseJSON[map[string]string](t, reply)["path"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	img, err := png.Decode(bytes.NewReader(data))
+	if err != nil {
+		t.Fatalf("导出的 PNG 应可重新打开核验: %v", err)
+	}
+	var got [4]uint32
+	for x := 0; x < 4; x++ {
+		r, _, _, _ := img.At(x, 0).RGBA()
+		got[x] = r
+	}
+	if got[0] == got[3] {
+		t.Fatalf("两端像素相同（%d）—— 多图层这条路先把结果压成了 8 位", got[0])
+	}
+	if want := uint32(0x8080); got[0] < want-0x80 || got[0] > want+0x80 {
+		t.Errorf("合出来 %d，想要接近上面那层的 %d", got[0], want)
+	}
+}
+
+// 合成描述不了的情形仍然**明确拒绝**，并指出是哪一层、哪一条属性。
+func TestExportAsSixteenBitRefusesWhatTheCompositeCannotDescribe(t *testing.T) {
+	cases := []struct {
+		name   string
+		mutate func(*domain.Layer)
+		want   string
+	}{
+		{"蒙版", func(l *domain.Layer) {
+			f, on := "m.png", true
+			l.MaskFile, l.MaskEnabled = &f, &on
+		}, "蒙版"},
+		{"非正常混合", func(l *domain.Layer) {
+			m := domain.BlendMultiply
+			l.BlendMode = &m
+		}, "混合模式"},
+		{"组", func(l *domain.Layer) {
+			isGroup := true
+			l.IsGroup = &isGroup
+		}, "组"},
+	}
+	for _, c := range cases {
+		svc, _ := newTestService(t, 4, 1)
+		deepLayerForExport(t, svc)
+		sess := activeSessionOf(t, svc)
+		sess.doc.Layers = append(sess.doc.Layers, sess.doc.Layers[0])
+		c.mutate(&sess.doc.Layers[1])
+		if _, err := svc.ExportAs(`{"format":"png","sixteenBit":true}`); err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Fatalf("%s 应被拒绝并说明原因，得到 %v", c.name, err)
+		}
 	}
 }
 

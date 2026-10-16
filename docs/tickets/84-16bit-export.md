@@ -4,7 +4,7 @@
 
 **Blocked by:** 59 — 统一 Export As 与 PDF/TIFF 导出; 68 — 决策门槛与 .comp v12 / 16 位图层存取。
 
-**Status:** in-progress（2026-10-16）—— 编码器与单图层那条路已落地，**多图层的 16 位合成未做**。
+**Status:** done（2026-10-16）—— 编码器、单图层快路与**多图层 16 位合成**都已落地。
 
 - [x] 16 位层导出 PNG/TIFF 不先压成 8 位；普通 RGB 导出仍按既有路径工作。
       编码器：`EncodePNG16WithDPI` / `EncodeTIFF16WithDPI`（`internal/render/export16.go`），
@@ -17,19 +17,42 @@
       尺寸：16 位**拒绝**改尺寸（重采样只有 8 位实现），在弹保存对话框**之前**就报错。
       取消：沿用既有的保存对话框路径。预览仍是 8 位 PNG —— 16 位的视觉结果只差抖动，
       与原版一样用它当预览。
+- [x] **多图层也做完了**（见下「多图层 16 位合成」）：`render.CompositeDeep` 把 8 位普通路径
+      （place → 缩 alpha → source-over）搬到 16 位样本上，不另写一套合成器。
 - [x] 重开导出的文件验证通道深度和细节，失败不改变项目脏状态。
       测试都是**解码回来逐像素比**，不是只看文件头：夹具的四个像素只差 3（8 位往返会把它们
       压成同一个数），所以「导出后仍互不相同」就是「没有先压成 8 位」的直接证据。
       失败路径在 `ExportAs` 开头就返回，不碰文档、历史与脏标记。
 
-## 为什么只做单图层
+## 多图层 16 位合成（2026-10-16，U31 剩余已补）
 
 上游把拼合画进 16 位每通道的 CGContext，16 位合成由 CoreGraphics 代劳（ImageExporter.swift:33）。
-我们这边没有 CoreGraphics，而合成器 `render.Render` 全程走 8 位 `Bitmap` —— 平行的 16 位合成器
-不存在，临时搭一套又会变成「第二份像素真相」，与像素不变量相冲。
+我们这边没有 CoreGraphics，但也**没有另写一套合成器**：
 
-所以闸门取得很窄，**每一种不支持的情形都明确报错并说明原因**，绝不把 8 位合成结果套上 16 位
-文件头 —— 那正是票面第一条禁止的「先压成 8 位」。等有了 16 位合成器，把闸门放宽即可。
+`render.CompositeDeep` 把 8 位合成器那条普通路径原样搬到 16 位样本上 —— `Place`（对应
+`DrawTransformedDeep`）→ 按图层不透明度缩 alpha → source-over。它**不重新决定**图层怎么合，
+所以不是「第二份像素真相」；公式的权威仍是 `Render`，由 `TestDeepCompositeMatchesTheEightBitOne`
+执行这条约束（量化后最大差 **2 级**，而故意破坏公式会差到 **118 级**）。
+
+闸门因此放宽了一档：多图层的**普通图像图层 + 正常混合**现在能导出 16 位，位移/旋转/翻转/缩放
+也支持（走 `DrawTransformedDeep`，采样方式取自图层本身，与 `Place` 一致）。
+
+仍然明确拒绝、且说明是哪一层哪条属性的：组、调整图层、蒙版、剪贴蒙版、图层特效、非「正常」
+混合、没有 16 位栅格。**绝不把 8 位合成结果套上 16 位文件头** —— 那正是票面第一条禁止的。
+
+### 单图层那条快路还在
+
+拼合结果本身就是某一层的深层栅格时（单图层、恒等变换、无蒙版/特效/非正常混合/不透明度 1、
+尺寸等于画布），仍然直接返回那份栅格 —— 一个像素都不用重算，也就没有任何舍入。
+
+## 验证（新增）
+
+| 用例 | 覆盖 |
+| --- | --- |
+| `render.TestDeepCompositeMatchesTheEightBitOne` | 两层（一层偏移 + 半透明）合成后量化，与 8 位合成最大差 2 级；破坏公式立刻差 118 级 |
+| `render.TestDeepCompositeKeepsBitsTheEightBitPathCannot` | 两层的 8 位副本相同、16 位只差一个低位单位，合出来仍保留差别 |
+| `bridge.TestExportAsSixteenBitCompositesMultipleLayers` | 端到端：两层文档导出 PNG，解码回来两端像素仍互不相同 |
+| `bridge.TestExportAsSixteenBitRefusesWhatTheCompositeCannotDescribe` | 蒙版 / 非正常混合 / 组各自被拒绝并说明是哪一层哪条属性 |
 
 ## 验证
 

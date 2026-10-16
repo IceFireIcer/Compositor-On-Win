@@ -21,14 +21,74 @@ import (
 // the active document's own deep pixels, when the flattened result *is* that
 // raster and it is not an HDR one (an HDR raster goes out as EXR, ticket 85).
 func (w *Workspace) sixteenBitExportRaster() (*render.DeepRaster, error) {
-	deep, err := w.flattenIsTheDeepRaster()
-	if err != nil {
-		return nil, err
+	// 先试那条**能证明无损**的路：拼合结果本身就是某一层的深层栅格，一个像素都不用重算。
+	if deep, err := w.flattenIsTheDeepRaster(); err == nil {
+		if deep.HDR {
+			return nil, fmt.Errorf("HDR 栅格走 EXR（16 位 PNG/TIFF 装不下超白值）")
+		}
+		return deep, nil
 	}
-	if deep.HDR {
-		return nil, fmt.Errorf("HDR 栅格走 EXR（16 位 PNG/TIFF 装不下超白值）")
+	return w.composeDeepExportRaster()
+}
+
+// composeDeepExportRaster is the multi-layer path (ticket 84's U31 remainder):
+// render.CompositeDeep runs the 8-bit pipeline's plain formula — place, scale
+// the alpha by the layer opacity, source-over — on 16-bit samples, so a stack of
+// normal-blended image layers keeps its precision instead of being squeezed
+// through bytes.
+//
+// The gate is still narrow, and still says which layer and which property stops
+// it: a group, an adjustment, a missing raster, a mask, a clip, effects, or a
+// blend mode other than normal. Anything it cannot describe is refused rather
+// than downgraded.
+func (w *Workspace) composeDeepExportRaster() (*render.DeepRaster, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	sess := w.activeSessionLocked()
+	if sess == nil {
+		return nil, errNoDocument
 	}
-	return deep, nil
+	doc := sess.doc
+	if len(doc.Layers) == 0 {
+		return nil, fmt.Errorf("文档没有图层")
+	}
+	for i := range doc.Layers {
+		l := &doc.Layers[i]
+		if !l.IsVisible {
+			continue
+		}
+		name := l.Name
+		if name == "" {
+			name = l.ID
+		}
+		switch {
+		case l.IsGroupLayer():
+			return nil, fmt.Errorf("图层「%s」是组，16 位合成不支持组", name)
+		case l.Adjustment != nil:
+			return nil, fmt.Errorf("图层「%s」是调整图层，16 位合成不支持调整", name)
+		case l.ImageFile == nil:
+			return nil, fmt.Errorf("图层「%s」没有位图", name)
+		case l.MaskFile != nil && (l.MaskEnabled == nil || *l.MaskEnabled):
+			return nil, fmt.Errorf("图层「%s」有蒙版，16 位合成不支持蒙版", name)
+		case l.MaskSourceID != nil:
+			return nil, fmt.Errorf("图层「%s」是剪贴蒙版，16 位合成不支持剪贴", name)
+		case l.Effects != nil:
+			return nil, fmt.Errorf("图层「%s」有图层特效，16 位合成不支持特效", name)
+		case l.BlendMode != nil && *l.BlendMode != domain.BlendNormal:
+			return nil, fmt.Errorf("图层「%s」的混合模式不是「正常」", name)
+		}
+		if bmp := sess.bitmaps[*l.ImageFile]; bmp == nil || bmp.Deep == nil {
+			return nil, fmt.Errorf("图层「%s」没有 16 位栅格", name)
+		}
+	}
+	src := func(image string) (*render.Bitmap, error) {
+		bmp := sess.bitmaps[image]
+		if bmp == nil {
+			return nil, fmt.Errorf("缺少位图 %s", image)
+		}
+		return bmp, nil
+	}
+	return render.CompositeDeep(doc, src)
 }
 
 // hdrExportRaster is the raster an EXR export writes when the flattened result is
