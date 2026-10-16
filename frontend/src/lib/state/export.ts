@@ -174,6 +174,11 @@ export interface ExportPreviewRequest {
   quality: number;
   background: string;
   sixteenBit?: boolean;
+  /**
+   * 票 87：按 View › CMYK › 配置 的那份 ICC 写出打印机要的油墨（TIFF 与 PDF）。
+   * 配置缺失或格式不支持时导出会带着具体原因失败，不会静默写成 RGB。
+   */
+  cmyk?: boolean;
 }
 
 /**

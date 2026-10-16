@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"compositor-win/internal/colorio"
+	"compositor-win/internal/render"
 )
 
 // cmykTestProfile 找一份可用的 CMYK 配置：先看应用自己的目录，再看 Windows 系统目录。
@@ -127,6 +128,58 @@ func TestCMYKTIFFImportsThroughItsEmbeddedProfile(t *testing.T) {
 	black := result.Bitmap.Pix[4]
 	if black > 80 {
 		t.Errorf("满黑墨应当转成明显偏暗，得到 %d", black)
+	}
+}
+
+// 票 87 与票 86 的闭环：写出的 CMYK TIFF 能被我们自己的读取器读回来，配置也随文件回来，
+// 再按同一份配置转回 RGB。按 ADR-0008 §5 取结构性断言 —— lcms2 的往返对饱和色有量化与
+// 色域映射的位移，钉死数值没有意义。
+func TestCMYKTIFFRoundTripsThroughTheReader(t *testing.T) {
+	profile := cmykTestProfile(t)
+	// 红、绿、蓝、白、黑，各一个像素。
+	rgb := []uint8{255, 0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 255, 0, 0, 0}
+	const w, h = 5, 1
+	ink, err := colorio.ConvertToInk(rgb, w, h, profile, [3]uint8{255, 255, 255})
+	if err != nil {
+		t.Fatalf("ConvertToInk: %v", err)
+	}
+	data, err := render.EncodeCMYKTIFFWithDPI(ink, w, h, 72, profile)
+	if err != nil {
+		t.Fatalf("EncodeCMYKTIFFWithDPI: %v", err)
+	}
+	back, err := decodeCMYKTIFF(data)
+	if err != nil {
+		t.Fatalf("写出的文件读不回来: %v", err)
+	}
+	if back.Width != w || back.Height != h {
+		t.Fatalf("尺寸 = %d×%d，想要 %d×%d", back.Width, back.Height, w, h)
+	}
+	if !bytes.Equal(back.Profile, profile) {
+		t.Fatal("内嵌的配置应当原样回来")
+	}
+	if !bytes.Equal(back.Ink, ink) {
+		t.Fatal("油墨平面应当原样回来（TIFF 是无损的）")
+	}
+	got, err := colorio.ConvertToRGB(back.Ink, w, h, back.Profile)
+	if err != nil {
+		t.Fatalf("ConvertToRGB: %v", err)
+	}
+	// 结构性断言：每个像素的主通道仍然是原来那个。
+	for x := 0; x < 3; x++ {
+		channel := x // 0=红 1=绿 2=蓝
+		value := got[x*3+channel]
+		for c := 0; c < 3; c++ {
+			if c != channel && value < got[x*3+c] {
+				t.Errorf("像素 %d 的主通道不再是 %d：%v", x, channel, got[x*3:x*3+3])
+			}
+		}
+	}
+	// 纸白与黑是这套配置的两个端点，往返应当基本精确。
+	if got[9] < 240 {
+		t.Errorf("白应当回到接近白，得到 %v", got[9:12])
+	}
+	if got[12] > 60 {
+		t.Errorf("黑应当回到接近黑，得到 %v", got[12:15])
 	}
 }
 

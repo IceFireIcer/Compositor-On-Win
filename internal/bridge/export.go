@@ -16,6 +16,7 @@ import (
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
+	"compositor-win/internal/colorio"
 	"compositor-win/internal/domain"
 	"compositor-win/internal/hdrio"
 	"compositor-win/internal/render"
@@ -184,6 +185,9 @@ type exportAsRequest struct {
 	// SixteenBit keeps 16 bits a channel (ticket 84). Only PNG and TIFF carry
 	// it, and only when the flattened result is a layer's own deep raster.
 	SixteenBit bool `json:"sixteenBit"`
+	// CMYK writes a printer's inks through the chosen ICC profile (ticket 87),
+	// for TIFF and PDF. JPEG's four-channel encoder is not written yet.
+	CMYK bool `json:"cmyk"`
 }
 
 // exportFormat is one Export As format: the menu label, the save dialog's
@@ -383,6 +387,17 @@ func (s *Service) ExportAs(requestJSON string) (string, error) {
 				hdrRaster.W, hdrRaster.H, req.Width, req.Height)
 		}
 	}
+	// 票 87：CMYK 写出打印机要的油墨。配置取自 View › CMYK › 配置（colorio.Chosen），
+	// 与校样共用同一份，所以导出的就是屏幕上校样看到的那套墨。
+	var cmykProfile *colorio.Profile
+	if req.CMYK {
+		if format.id != "tiff" && format.id != "pdf" {
+			return "", fmt.Errorf("CMYK 只支持 TIFF 与 PDF；%s 的四通道编码器尚未实现", format.label)
+		}
+		if cmykProfile = colorio.Chosen(); cmykProfile == nil {
+			return "", fmt.Errorf("CMYK 导出需要一份 ICC 配置（视图 › CMYK › 配置）")
+		}
+	}
 	var deep16 *render.DeepRaster
 	if req.SixteenBit {
 		if format.id != "png" && format.id != "tiff" {
@@ -402,6 +417,22 @@ func (s *Service) ExportAs(requestJSON string) (string, error) {
 	br, bg, bb := parseBackground(req.Background)
 	return s.writeExport("导出 "+format.label, name, []runtime.FileFilter{format.filter}, format.accepted, format.ext,
 		func(bmp *render.Bitmap, res int) ([]byte, error) {
+			if cmykProfile != nil {
+				// 油墨没有 alpha：先按背景压平（纸是白的），再交给 lcms2 转。
+				flat := render.FlattenOverBackground(bmp, br, bg, bb)
+				rgb := make([]uint8, 0, flat.W*flat.H*3)
+				for i := 0; i < len(flat.Pix); i += 4 {
+					rgb = append(rgb, flat.Pix[i], flat.Pix[i+1], flat.Pix[i+2])
+				}
+				ink, err := colorio.ConvertToInk(rgb, flat.W, flat.H, cmykProfile.Data, [3]uint8{br, bg, bb})
+				if err != nil {
+					return nil, fmt.Errorf("CMYK 转换失败: %w", err)
+				}
+				if format.id == "tiff" {
+					return render.EncodeCMYKTIFFWithDPI(ink, flat.W, flat.H, res, cmykProfile.Data)
+				}
+				return render.EncodeCMYKPDFWithDPI(ink, flat.W, flat.H, res, cmykProfile.Data)
+			}
 			if format.id == "exr" {
 				if hdrRaster != nil {
 					return hdrio.EncodeEXR(hdrRaster)

@@ -38,6 +38,8 @@
   let quality = $state(rememberedQuality());
   // 票 84：16 位每通道。只对 PNG/TIFF 有意义（上游同样只在 PNG 上给这个开关）。
   let sixteenBit = $state(false);
+  // 票 87：CMYK 每次默认关（上游同此：多数导出是给屏幕看的）。只对 TIFF/PDF 有意义。
+  let cmyk = $state(false);
   let background = $state("#ffffff");
   let zoom = $state<number | null>(null);
   let ready = $state(false);
@@ -49,7 +51,8 @@
   const scalePercent = $derived(exportScalePercent(original, { width, height }));
   const def = $derived(exportFormatDef(format));
   // JPEG 与 PDF 没有透明通道：预览与导出都要落在选定背景上。
-  const flattened = $derived(format === "jpeg" || format === "pdf");
+  // 压平（要背景色）的格式：JPEG/PDF 本来就没有透明通道；CMYK 的 TIFF 也没有（油墨没有 alpha）。
+  const flattened = $derived(format === "jpeg" || format === "pdf" || (format === "tiff" && cmyk));
 
   // 打开窗口：压平一次（Go 侧持有光栅），尺寸从压平后的原图起步。
   $effect(() => {
@@ -76,7 +79,7 @@
   // 设置变化 → 重编码预览（150ms 防抖，与滤镜/JPEG 预览一致）。
   let debounce: ReturnType<typeof setTimeout> | null = null;
   $effect(() => {
-    const request: ExportPreviewRequest = { format, width, height, quality, background, sixteenBit };
+    const request: ExportPreviewRequest = { format, width, height, quality, background, sixteenBit, cmyk };
     if (!ready || width < 1 || height < 1) return;
     if (debounce) clearTimeout(debounce);
     debounce = setTimeout(() => {
@@ -147,7 +150,7 @@
     exporting = true;
     error = null;
     try {
-      if (await commitExport({ format, width, height, quality, background, sixteenBit })) close();
+      if (await commitExport({ format, width, height, quality, background, sixteenBit, cmyk })) close();
     } catch (err) {
       error = err instanceof Error ? err.message : String(err);
     } finally {
@@ -272,6 +275,14 @@
         <span class="label">16 位</span>
         <input type="checkbox" bind:checked={sixteenBit} />
         <span class="hint">每通道 16 位，文件约大一倍（需要 16 位图层且画布上只有它）</span>
+      </label>
+    {/if}
+
+    {#if format === "tiff" || format === "pdf"}
+      <label class="row">
+        <span class="label">CMYK</span>
+        <input type="checkbox" bind:checked={cmyk} />
+        <span class="hint">按「视图 › CMYK › 配置」那份 ICC 写出印刷油墨（JPEG 尚不支持）</span>
       </label>
     {/if}
 
