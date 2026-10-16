@@ -62,7 +62,7 @@
 | C20 | Snap 总开关 | — | 7 | M3 | ☑ 票76：总开关与四个子目标都接上并持久化（`state/view.ts` 的 `snapEnabled`/`snapToggles`，键名照抄原版 ToolDefaults）；菜单「对齐」+ ⇧⌘; + 命令面板动态勾选；消费端见 V04 |
 | C21 | Show Transform Controls | ⌘H | 34 | M3 | ☑ `showsTransformControls`（`transformSession.ts:1081`）+ 测试；⌘H 与菜单项都是 `toggleTransformControls()`（`actions.ts:792`、`MenuBar.svelte:845-853`，菜单项带勾），画布两处消费：旋转把手只在开着时才抓（`CanvasSurface.svelte:895`）、控件组本身（`:1492`）。**⌘H 只切可见性，⌘T 才开会话**（`actions.ts:560` 的注释即此语义）。此前的「零消费者、⌘H 接到 beginTransformSession」是错的 |
 | C22 | Grid ' / Guides ; / Rulers ⌘R 开关 | ' ; ⌘R | 6 | M3 | ☑ 三个开关都接上并可见：`state/view.ts:29,32,35` + 菜单勾（`MenuBar.svelte:485-510`）+ ⌘'/⌘;/⌘R（`table.ts:94-96`）；画布真的画布局网格/参考线/标尺（`CanvasSurface.svelte:858,888,974`），`view.test.ts` 覆盖 |
-| C23 | Grid Settings…（间距/细分） | — | 6 | M3 | ☐ 无 Grid Settings 表单/菜单项，Go 侧也没有 gridSettings（internal grep = 0）；布局网格参数硬编码 normalizeGrid(64, 8)（`state/view.ts:47`） |
+| C23 | Grid Settings…（间距/细分） | — | 6 | M3 | ☑ 票06：`layoutGrid` store（`state/view.ts:45`，默认 `normalizeGrid(64, 8)`）+ 表单 `GridSettingsSheet.svelte`（间距/细分，提交走 `normalizeGrid`）+ 视图菜单项（`MenuBar.svelte:784` → `gridSettingsOpen`）+ `App.svelte:551` 挂载 + 画布消费（`CanvasSurface.svelte:409`）。**此前的「无表单/菜单项、参数硬编码」已过期**。参数在**前端**而非 Go，与原版一致（布局网格属视图状态） |
 | C24 | Snap To：参考线/网格/图层/文档边界 | — | 7 | M3 | ☑ 四个子开关（`state/view.ts:160 snapToggles`，持久化 + 测试）**有 UI**：视图菜单里四项带勾（`MenuBar.svelte:816-825`）；**有消费端**：`state/snap.ts:155-190 collectTargets` 逐项门控，`transformSession.ts:655-671` 同表。**此前的「无 UI 入口、没有消费端」已过期** |
 | C25 | Lock Guides / Clear Guides | ⌥; | 7 | M3 | ☑ 菜单「锁定参考线」（`MenuBar.svelte:521`，⇧⌘; `table.ts:98`）与「清除参考线」（`MenuBar.svelte:530`）都可达；锁定时不可抓取（`CanvasSurface.svelte:582`），清除写回 Go（`actions.ts:508`）并作为「参考线」撤销步（`internal/bridge/guides_test.go`） |
 
@@ -102,7 +102,7 @@
 
 | # | 命令 | 快捷键 | 故事# | 里程碑 | 状态 |
 | --- | --- | --- | --- | --- | --- |
-| C43 | New Adjustment Layer（12 种） | — | 37 | M5 | ☐ 无「新建调整层」入口也无 RPC：Go LayerOp 表（`internal/bridge/document.go:117-303`）没有 addAdjustmentLayer，前端 grep `New Adjustment` = 0 |
+| C43 | New Adjustment Layer（12 种） | — | 37 | M5 | ☑ Go `LayerOp` 的 `addAdjustment`（`document.go:260`，含类型校验 `:263`、插入位置 `:323`、provisional 创建 `:91`）+ 前端 `layerOps.addAdjustment`（`state/document.ts:575`）+ 图层菜单 12 项「新建调整图层 · <类型>」（`MenuBar.svelte:635`）。**此前的「无入口也无 RPC」已过期**；`document_test.go:262,308,342,392` 与 `adjustment_session_test.go:179` 覆盖 |
 | C44 | Edit Adjustment… | — | 37 | M5 | ☑ 票31+34：图层面板「编辑」按钮（`LayersPanel.svelte:155-171`）→ `beginFilter(kind, …, layerID, adjustment)` → Go `setAdjustment`（`internal/bridge/document.go:227`）/`ApplyAdjustment`（`internal/render/adjustment.go:19`），调整层渲染有测试（`adjustment_render_test.go`） |
 | C45 | Transform Layer / Transform Selection | ⌘T | 32-34 | M3 | ☑ 变换图层全链路（⌘T `table.ts:85` → `state/transform.ts:75` → `ApplyLayerTransform` `layer_transform.go:30`，`layer_transform_test.go`）；**Transform Selection 已接**：`transformSelection`（`state/selectionCommands.ts:174`）被 `state/selectionEdit.ts:95` 消费，入口是「变换选区…」（`MenuBar.svelte:306`）→ `SelectionEditSheet` |
 | C46 | Duplicate Layer / Layer via Copy | ⌘J | 16 | M3 | ☑ 票47：Go `duplicateLayer`（子树/剪贴链/位图独立拷贝）+ 菜单与快捷键 |
@@ -149,12 +149,12 @@
 
 | # | 特效 | 故事# | 里程碑 | 状态 |
 | --- | --- | --- | --- | --- |
-| E01 | Stroke（描边，形态学膨胀） | 41 | M2/M5 | ☐ |
-| E02 | Drop Shadow（投影） | 41 | M2/M5 | ☐ |
-| E03 | Color Overlay（颜色叠加） | 41 | M2/M5 | ☐ |
-| E04 | Inner Shadow（内阴影） | 41 | M2/M5 | ☐ |
-| E05 | Outer Glow（外发光） | 41 | M2/M5 | ☐ |
-| E06 | Inner Glow（内发光） | 41 | M2/M5 | ☐ |
+| E01 | Stroke（描边，形态学膨胀） | 41 | M2/M5 | ☐ `domain.StrokeEffect`（`internal/domain/effects.go:60-61` 的 maxSize 校验）+ PSD 导入 + 前端镜像（`state/document.ts:47`）**都已就位**；`internal/render` 里没有任何特效渲染（grep Effects = 0，只有 Camera Raw 的同名无关概念）。导入带描边的 PSD 会**静默不画**。属票 79 一族的范围 |
+| E02 | Drop Shadow（投影） | 41 | M2/M5 | ☐ 同 E01：`DropShadow`/`ShadowEffect` 数据模型与校验在 `domain/effects.go`，渲染缺失 |
+| E03 | Color Overlay（颜色叠加） | 41 | M2/M5 | ☐ 同 E01：数据模型在 `domain/effects.go`，渲染缺失 |
+| E04 | Inner Shadow（内阴影） | 41 | M2/M5 | ☐ 同 E01：数据模型在 `domain/effects.go`，渲染缺失 |
+| E05 | Outer Glow（外发光） | 41 | M2/M5 | ☐ 同 E01：`GlowEffect`（`domain/effects.go:100-103` 的 Scaled）+ 校验在，渲染缺失 |
+| E06 | Inner Glow（内发光） | 41 | M2/M5 | ☐ 同 E01：数据模型在 `domain/effects.go`，渲染缺失 |
 
 ## F. 文档模型与图层系统能力
 
