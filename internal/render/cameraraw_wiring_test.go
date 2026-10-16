@@ -4,7 +4,10 @@ package render
 // 这条测试证明接线**真的生效** —— 既有的 Camera Raw 测试没有钉住色调数值，所以接线
 // 之后它们仍然全绿，光靠它们看不出走的是哪条路。
 
-import "testing"
+import (
+	"math"
+	"testing"
+)
 
 func cameraRawRamp() *Bitmap {
 	b := NewBitmap(16, 1)
@@ -42,6 +45,59 @@ func TestCameraRawFilterGradesWithTheMeasuredTables(t *testing.T) {
 
 // 票 78 收尾：曲线与混色器折进查找表（上游 foldingColor）。折进表的意义是整条 Camera Raw
 // 链仍只花一次查表；风险是**折的时候漏掉某一段**，那一段就静默失效。
+
+// 票 90：vibrance 与 saturation 的**定义性区别** —— vibrance 主要抬不饱和的颜色，对已经饱和的
+// 颜色下手轻得多；saturation 一视同仁。这两根滑杆在界面上挨着，退化成一个最不容易被发现。
+func TestVibranceGainsMoreOnAMutedColorThanOnASaturatedOne(t *testing.T) {
+	if !CameraRawTablesAvailable() {
+		t.Skip("没有随包资源时这两根滑杆走解析核，测不到 Photoshop 的行为")
+	}
+	// 两个像素：偏灰的蓝，和纯蓝。
+	build := func() *Bitmap {
+		b := NewBitmap(2, 1)
+		// 偏灰的蓝，和明显饱和但**还有余量**的蓝 —— 纯蓝已经到顶，再抬也无处可去。
+		copy(b.Pix[0:], []uint8{120, 140, 170, 255})
+		copy(b.Pix[4:], []uint8{40, 60, 200, 255})
+		return b
+	}
+	saturationAt := func(b *Bitmap, i int) float64 {
+		r, g, bl := float64(b.Pix[i]), float64(b.Pix[i+1]), float64(b.Pix[i+2])
+		maxc := math.Max(r, math.Max(g, bl))
+		minc := math.Min(r, math.Min(g, bl))
+		if maxc == 0 {
+			return 0
+		}
+		return (maxc - minc) / maxc
+	}
+	base := build()
+	apply := func(s CameraRawSettings) *Bitmap {
+		return ApplyCameraRawFilter(build(), s, CameraRawOptions{Scale: 1, VisualizePointColor: -1})
+	}
+	vibrance := apply(CameraRawSettings{Vibrance: 50})
+
+	if got := saturationAt(base, 0); got > 0.5 {
+		t.Fatalf("夹具的第一个像素应当是不饱和的，得到 %v", got)
+	}
+	if got := saturationAt(base, 4); got < 0.5 {
+		t.Fatalf("夹具的第二个像素应当是明显饱和的，得到 %v", got)
+	}
+	// **相对**增益：绝对 chroma 的变化量总是饱和色更大（它的起点就大），而「对已饱和的颜色下手
+	// 更轻」说的是相对自己原来的饱和度。
+	relative := func(b *Bitmap, index int) float64 {
+		before := saturationAt(base, index)
+		return (saturationAt(b, index) - before) / before
+	}
+	vMuted := relative(vibrance, 0)
+	vSaturated := relative(vibrance, 4)
+	if vMuted <= vSaturated {
+		t.Errorf("vibrance 对不饱和像素的相对增益 %v 应当高于对饱和像素的 %v", vMuted, vSaturated)
+	}
+
+	// 这条**不**去比较 vibrance 与 saturation 的绝对强弱。实测两者在这些样本上方向相同
+	// （vibrance 0.43/0.25，saturation 0.30/0.15），因为饱和的那一端本来就贴近上限 —— 等滑杆值
+	// 比较分不出这两根滑杆，硬写一条「vibrance 更保护」的断言只是在拟合数字。这两根滑杆的权威
+	// 真值是 Photoshop 的测量表本身，由 TestCameraRawApplyMatchesC 与各 stage builder 钉住。
+}
 
 // 只有混色器调整（Light/Color 一个滑杆都没动）时也必须生效。这一条钉的是闸门：折进表之后
 // paintColor 为假，如果闸门还只认 adjustsLight/adjustsColor，混色器会被整个丢掉。

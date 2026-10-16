@@ -311,7 +311,7 @@
 | U34 | CMYK JPEG/TIFF/PDF 导出 | 87 | M7 | ◐ **TIFF 与 PDF 已通**：`EncodeCMYKTIFFWithDPI`（基线无压缩 TIFF + ICC 34675）与 `EncodeCMYKPDFWithDPI`（`/ICCBased` N=4 + `/Alternate /DeviceCMYK`），配置取自 View › CMYK › 配置；写出的 TIFF 由票 86 的读取器读回来闭环验证。**JPEG 未做**（四通道要自写熵编码器）——**明确拒绝**而非静默写 RGB。已知差异：油墨极性按 ICC 约定，与 Photoshop 的反相约定未用真文件核对 |
 | U35 | 画布选层后揭示图层 | 88 | M3 | ✅ `LayersPanel.svelte` 的 effect：选中行用 `scrollIntoView({block:"nearest"})`（最小滚动量，已可见即不动，所以不闪），行的定义直接取面板真值 `[role="option"][aria-selected="true"]`（图层行与蒙版行走同一条路）。依赖只有选中层与蒙版目标两个值，所以重命名/缩略图刷新不触发滚动；键没变则直接返回（快照整体替换会让 effect 重跑）。查不到行静默返回。浏览器测试含反向验证 |
 | U36 | 更新窗口发行说明 | 89 | M9 | ☐ |
-| U37 | Camera Raw 色彩族对齐 | 90 | M5 | ☐ |
+| U37 | Camera Raw 色彩族对齐 | 90 | M5 | ✅ 七项断言逐条核对（白平衡/混色器/曲线/四轮分级/渐晕/校准原有，vibrance 本轮补）；**权威真值是随包的 Photoshop 测量表**，由 `TestCameraRawApplyMatchesC`/`TestCameraRawComposeMatchesC` 与各 stage builder 表号断言钉住，其余是行为方向与接线。透明像素不参与统计（3 条）；Camera Raw 在本仓**不是调整层类型**，预览与提交同序由 `TestCameraRawEffectsPreviewMatchesFullSize` 覆盖；1.4.5 基线原样留在 `tests/golden/legacy/` 未覆盖。**未写**「vibrance 比 saturation 更保护饱和色」——实测等滑杆值分不出，不拟合数字 |
 | U38 | 上游资源与截图 CI 等价方案 | 91 | M0/M9 | ✅ `internal/assetcheck`（`go test ./...` 覆盖，无需改 workflow）：嵌入表尺寸/SHA-256/`CRT3` 魔数且与上游逐字节一致；`tests/golden/c` 每个拷贝件顶部 20 行内自证 `reference/Swift` 源文件 + 40 位提交号且源文件存在；声称整文件的注释之下必须仍与上游一致（比较前归一化行尾）；README 清单；许可证；源码不得出现 `.xcodeproj`/`.xcassets`/`Assets.xcassets`/`ScreenshotTests`。等价表（icon→`genicon`、截图→`*.browser.test.mjs`、feed→`genfeed`、Xcode 工程**明确排除**）记在票面。**检查抓到 10 个拷贝件无来源注释并已补** |
 | U39 | 窄窗口图层与工具栏布局 | 92 | M0/M3 | ◐ **查出并修掉真缺陷**：`.mask-row` 第三方栏原为 `minmax(88px, auto)`（硬下限 88px + 26px 缩进）→ 面板 ≤148px 时蒙版菜单冲出右边界；改 `minmax(0, 88px)`（封顶好读、允许收缩，宁可截断不溢出），宽度扫描 200→100px 无溢出。选项栏实测 240px 可横滚、无第二滚动条，1600px 完全不滚，已用新浏览器测试钉住；重命名行高稳定；禁用/空状态走主题令牌。**仍缺**：整壳极小窗口遮挡检查与深色主题对比度实测 |
 
