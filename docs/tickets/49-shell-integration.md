@@ -99,3 +99,30 @@ tooltip/hint），末尾是"清除最近记录"：清应用列表 + 外壳最近
 5. **多文件里的 PSD 只停一个**：转换报告一次一个（原版也是逐个确认）。
 6. **最近项目的"打开失败"不自动从列表里删**：下次打开仍会列出（读取时只过滤"不存在"，
    不过滤"读不了"）。
+
+## 验收证据审计（2026-10-16，第八轮：保存/重开与标签隔离）**—— 本轮没查出缺口**
+
+| 变异 | 结果 |
+| --- | --- |
+| `MaskLinked` 不再序列化（`json:"-"`） | ✓ 被抓住 |
+| `MaskPlacement` 不再序列化 | ✓ 被抓住 |
+| `Opacity` 不再序列化 | ✓ 被抓住 |
+| 跨标签复制的资产改为**共享**而不是深拷贝 | ✓ 被抓住（`TestCopyLayersIntoDeepCopiesBitmaps` 等三条） |
+
+### 为什么挑这几处
+
+`.comp` 的 manifest 走 `encoding/json` 自动序列化，所以「写少一个字段」的等价变异就是给 domain 字段
+加 `json:"-"`。挑了三个**容易被忽略**的：解链遮罩的 `maskPlacement`、`maskLinked`、以及 `opacity` ——
+它们都是 `omitempty` 的指针，丢掉了不会报错，只会让重开后画面不对。三条都被抓住 ✓。
+
+标签隔离测的是另一条：`cloneAsset` 里 `source.Clone()` 若改成共享，源标签与目标标签会指向同一份位图，
+改一个动两个。改成共享后 `TestCopyLayersIntoDeepCopiesBitmaps`、`TestDuplicateLayerClonesMaskAsset`、
+`TestDuplicateLayerCopiesOneLayerAboveWithIndependentPixels` 三条立刻失败 ✓。
+
+### 八轮下来的判断
+
+这是八轮里**第二次**回来干净（第一次是票 26 的调整层/特效）。前七轮查出八处真缺口，说明这个方法有
+产出；这两次干净说明它**不会无中生有** —— 两者合起来才说明这个方向可信。
+
+覆盖率高的地方（域模型 ↔ 磁盘的往返、跨会话复制）本来就测得好；缺口集中在**分支与判别力**上：
+拒绝分支、没测试的规则、对称的夹具、只测一侧的事务边界。
