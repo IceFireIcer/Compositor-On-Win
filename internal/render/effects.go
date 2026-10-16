@@ -34,6 +34,82 @@ func colorOverlayOf(effects *domain.Effects) *domain.OverlayEffect {
 	return overlay
 }
 
+// shadowOf / innerShadowOf / outerGlowOf / innerGlowOf follow LayerEffects.visible
+// (LayerEffects.swift): a missing `enabled` field means the effect is visible, so
+// old projects keep the effects they were saved with.
+func shadowOf(effects *domain.Effects) *domain.ShadowEffect {
+	if effects == nil || effects.Shadow == nil {
+		return nil
+	}
+	s := effects.Shadow
+	if s.Enabled != nil && !*s.Enabled {
+		return nil
+	}
+	return s
+}
+
+func innerShadowOf(effects *domain.Effects) *domain.ShadowEffect {
+	if effects == nil || effects.InnerShadow == nil {
+		return nil
+	}
+	s := effects.InnerShadow
+	if s.Enabled != nil && !*s.Enabled {
+		return nil
+	}
+	return s
+}
+
+func outerGlowOf(effects *domain.Effects) *domain.GlowEffect {
+	if effects == nil || effects.OuterGlow == nil {
+		return nil
+	}
+	g := effects.OuterGlow
+	if g.Enabled != nil && !*g.Enabled {
+		return nil
+	}
+	return g
+}
+
+func innerGlowOf(effects *domain.Effects) *domain.GlowEffect {
+	if effects == nil || effects.InnerGlow == nil {
+		return nil
+	}
+	g := effects.InnerGlow
+	if g.Enabled != nil && !*g.Enabled {
+		return nil
+	}
+	return g
+}
+
+// effectsMargin ports LayerEffectsRenderer.margin (LayerEffects.swift:435-446):
+// the room the effects need around the layer's pixels. An outside stroke asks for
+// its width, a shadow for its distance plus three blur radii, an outer glow for
+// three sizes; the largest wins, then ceil and two pixels of slack. An inside
+// stroke and the recoloring effects (color overlay, inner glow, inner shadow)
+// need no room but still take the two.
+func effectsMargin(effects *domain.Effects) int {
+	margin := 0.0
+	needs := false
+	if s := strokeOf(effects); s != nil {
+		needs = true
+		if !s.Inside {
+			margin = math.Max(margin, s.Size)
+		}
+	}
+	if s := shadowOf(effects); s != nil {
+		needs = true
+		margin = math.Max(margin, s.Distance+s.Blur*3)
+	}
+	if g := outerGlowOf(effects); g != nil {
+		needs = true
+		margin = math.Max(margin, g.Size*3)
+	}
+	if !needs {
+		return 0
+	}
+	return int(math.Ceil(margin)) + 2
+}
+
 // applyColorOverlay ports LayerEffectsRenderer.render's coverage fill and
 // MetalLayerEffects.effects_compose. The source is already masked, in layer
 // pixels, before placement and layer/group opacity. This is source-over, not
@@ -58,25 +134,24 @@ func applyColorOverlay(shown *Bitmap, overlay *domain.OverlayEffect) {
 // morphology input is the shown source alpha before the overlay changes it.
 // It returns the padded raster and the symmetric inset used to compensate
 // the layer transform in document space.
-func renderStrokeEffects(shown *Bitmap, overlay *domain.OverlayEffect, stroke *domain.StrokeEffect) (*Bitmap, int, error) {
-	if stroke == nil {
-		if overlay == nil {
-			return shown, 0, nil
+func renderLayerEffects(shown *Bitmap, effects *domain.Effects) (*Bitmap, int, error) {
+	overlay := colorOverlayOf(effects)
+	stroke := strokeOf(effects)
+	shadow := shadowOf(effects)
+	glow := outerGlowOf(effects)
+	inset := effectsMargin(effects)
+	if inset == 0 {
+		if overlay != nil {
+			applyColorOverlay(shown, overlay)
 		}
-		applyColorOverlay(shown, overlay)
 		return shown, 0, nil
 	}
-
-	inset := int(math.Ceil(stroke.Size)) + 2
-	if stroke.Inside {
-		inset = 2
-	}
-	if shown.W <= 0 || shown.H <= 0 || inset < 0 || shown.W > int(^uint(0)>>1)-2*inset || shown.H > int(^uint(0)>>1)-2*inset {
-		return nil, 0, fmt.Errorf("描边 padding 尺寸溢出: %dx%d + %d", shown.W, shown.H, inset)
+	if shown.W <= 0 || shown.H <= 0 || shown.W > int(^uint(0)>>1)-2*inset || shown.H > int(^uint(0)>>1)-2*inset {
+		return nil, 0, fmt.Errorf("特效 padding 尺寸溢出: %dx%d + %d", shown.W, shown.H, inset)
 	}
 	width, height := shown.W+2*inset, shown.H+2*inset
 	if width <= 0 || height <= 0 || width > domain.MaxSurfacePixels/height {
-		return nil, 0, fmt.Errorf("描边 surface 过大: %dx%d（上限 %d 像素）", width, height, domain.MaxSurfacePixels)
+		return nil, 0, fmt.Errorf("特效 surface 过大: %dx%d（上限 %d 像素）", width, height, domain.MaxSurfacePixels)
 	}
 
 	// Keep the original source alpha in the padded grid. This is also the
@@ -88,38 +163,70 @@ func renderStrokeEffects(shown *Bitmap, overlay *domain.OverlayEffect, stroke *d
 			shape[(y+inset)*width+x+inset] = shown.Pix[(y*shown.W+x)*4+3]
 		}
 	}
-	reach := max(1, int(math.Round(stroke.Size)))
 	var ring []uint8
-	if stroke.Size > 0 && stroke.Opacity > 0 {
-		ring = strokeRingCoverage(shape, width, height, reach, stroke.Inside)
+	if stroke != nil && stroke.Size > 0 && stroke.Opacity > 0 {
+		ring = strokeRingCoverage(shape, width, height, max(1, int(math.Round(stroke.Size))), stroke.Inside)
+	}
+	// The coverage planes the effects beneath the layer need, all built from
+	// the shown alpha before the overlay or an inside stroke can change it.
+	var shadowPlane, glowPlane []uint8
+	if shadow != nil && shadow.Opacity > 0 {
+		dx, dy := shadowOffset(shadow)
+		shadowPlane = effectCoverage(shape, width, height, dx, dy, shadow.Blur)
+	}
+	if glow != nil && glow.Opacity > 0 {
+		// outerGlowCoverage: the softened shape with the interior taken out,
+		// so the glow lights the room around the layer and not the layer itself.
+		soft := effectCoverage(shape, width, height, 0, 0, glow.Size)
+		glowPlane = make([]uint8, len(soft))
+		for i := range soft {
+			glowPlane[i] = uint8(float64(soft[i]) * (1 - float64(shape[i])/255))
+		}
 	}
 
 	result := NewBitmap(width, height)
 	for y := 0; y < height; y++ {
 		for x := 0; x < width; x++ {
 			i := y*width + x
-			var color [4]float64
+			alpha := float64(shape[i]) / 255
+			// Beneath the layer: the drop shadow, the outer glow, an outside stroke.
+			var under [4]float64
+			if shadowPlane != nil {
+				effectColorOver(&under, shadow.Red, shadow.Green, shadow.Blue,
+					float64(shadowPlane[i])/255*shadow.Opacity)
+			}
+			if glowPlane != nil {
+				effectColorOver(&under, glow.Red, glow.Green, glow.Blue,
+					float64(glowPlane[i])/255*glow.Opacity)
+			}
 			var strokeAlpha float64
 			if ring != nil {
 				strokeAlpha = float64(ring[i]) / 255 * stroke.Opacity
 			}
-			if !stroke.Inside {
-				effectColorOver(&color, stroke.Red, stroke.Green, stroke.Blue, strokeAlpha)
+			if stroke != nil && !stroke.Inside {
+				effectColorOver(&under, stroke.Red, stroke.Green, stroke.Blue, strokeAlpha)
 			}
+			// The layer's own pixels, with the recoloring effects on them. Composing
+			// them in their own buffer and drawing that over the effects is the same
+			// arithmetic as the single-pass form it replaces, and it keeps an inner
+			// effect gated on the layer's alpha rather than the composite's.
+			var layer [4]float64
 			if x >= inset && x < width-inset && y >= inset && y < height-inset {
 				si := ((y-inset)*shown.W + x - inset) * 4
-				alpha := float64(shape[i]) / 255
-				for ch := range color {
-					color[ch] = float64(shown.Pix[si+ch])/255 + color[ch]*(1-alpha)
+				for ch := range layer {
+					layer[ch] = float64(shown.Pix[si+ch]) / 255
 				}
 			}
 			if overlay != nil {
 				// Overlay uses the shown alpha, not the accumulated outside
 				// stroke/source coverage. Compose before quantizing, as Metal.
-				a := float64(shape[i]) / 255 * overlay.Opacity
-				effectColorOver(&color, overlay.Red, overlay.Green, overlay.Blue, a)
+				effectColorOver(&layer, overlay.Red, overlay.Green, overlay.Blue, alpha*overlay.Opacity)
 			}
-			if stroke.Inside {
+			color := under
+			for ch := range color {
+				color[ch] = layer[ch] + color[ch]*(1-layer[3])
+			}
+			if stroke != nil && stroke.Inside {
 				effectColorOver(&color, stroke.Red, stroke.Green, stroke.Blue, strokeAlpha)
 			}
 			for ch, value := range color {

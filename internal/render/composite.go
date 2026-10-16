@@ -218,9 +218,10 @@ func renderLayer(doc *domain.Document, l *domain.Layer, target *Bitmap, sc *scop
 			return fmt.Errorf("图层 %s 加载 %s 失败: %w", l.ID, *l.ImageFile, err)
 		}
 	}
-	overlay := colorOverlayOf(l.Effects)
-	stroke := strokeOf(l.Effects)
-	hasEffects := overlay != nil || stroke != nil
+	// Any effect the renderer draws makes the layer take the effects path; the
+	// margin it needs decides whether that path pads the raster.
+	hasEffects := effectsMargin(l.Effects) > 0 || colorOverlayOf(l.Effects) != nil ||
+		innerGlowOf(l.Effects) != nil || innerShadowOf(l.Effects) != nil
 	var placed *Bitmap
 	if pixels != nil {
 		transform := l.Transform
@@ -235,7 +236,7 @@ func renderLayer(doc *domain.Document, l *domain.Layer, target *Bitmap, sc *scop
 			}
 			var inset int
 			var err error
-			pixels, inset, err = renderStrokeEffects(pixels, overlay, stroke)
+			pixels, inset, err = renderLayerEffects(pixels, l.Effects)
 			if err != nil {
 				return fmt.Errorf("图层 %s 渲染特效失败: %w", l.ID, err)
 			}
