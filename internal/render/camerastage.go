@@ -6,6 +6,8 @@ package render
 // 真值是 tests/golden/c/AdjustPixels.c 的 table_lookup / camera_raw_stage_color /
 // camera_raw_compose（:246,298,269），逐行对应。
 
+import "math"
+
 // cameraRawStage is CameraRawStage: up to eight measured tables blended by
 // weight. A nil table means no change.
 type cameraRawStage struct {
@@ -353,6 +355,56 @@ func cameraRawTableStages(set *cameraRawTableSet, s *CameraRawSettings, brightne
 		}
 	}
 	return stages
+}
+
+// cameraRawApplyTable is adjust_camera_raw (AdjustPixels.c:422-451): every
+// pixel is unpremultiplied, run through the composed table, and written back
+// premultiplied. A nil table skips the lookup; clipping 1 lights the channels
+// at white on black and 2 darkens those at black on white, which are
+// Photoshop's clipping previews. Transparent pixels pass through untouched.
+//
+// The composed table is what makes a whole run of Camera Raw stages cost one
+// trilinear lookup a pixel.
+func cameraRawApplyTable(b *Bitmap, table []float32, grid, clipping int) {
+	if b == nil {
+		return
+	}
+	for i := 0; i < len(b.Pix); i += 4 {
+		alpha := float64(b.Pix[i+3])
+		if alpha == 0 {
+			continue
+		}
+		// The C widens by 255 and divides back, so keep that shape exactly.
+		r := math.Min(255.0, float64(b.Pix[i])*255.0/alpha) / 255.0
+		g := math.Min(255.0, float64(b.Pix[i+1])*255.0/alpha) / 255.0
+		bl := math.Min(255.0, float64(b.Pix[i+2])*255.0/alpha) / 255.0
+		if table != nil {
+			looked := cameraComposedLookup(table, grid, [3]float64{r, g, bl})
+			r, g, bl = looked[0], looked[1], looked[2]
+		}
+		if clipping == 1 {
+			r = cameraUnit(r >= 254.5/255.0)
+			g = cameraUnit(g >= 254.5/255.0)
+			bl = cameraUnit(bl >= 254.5/255.0)
+		} else if clipping == 2 {
+			rc, gc, bc := r <= 0.5/255.0, g <= 0.5/255.0, bl <= 0.5/255.0
+			if rc || gc || bc {
+				r = cameraUnit(!rc)
+				g = cameraUnit(!gc)
+				bl = cameraUnit(!bc)
+			} else {
+				r, g, bl = 1, 1, 1
+			}
+		}
+		writePremulD(b.Pix[i:], r, g, bl, alpha)
+	}
+}
+
+func cameraUnit(on bool) float64 {
+	if on {
+		return 1
+	}
+	return 0
 }
 
 // cameraRawFifty is CameraRawTables.fifty: a slider on a run of five tables

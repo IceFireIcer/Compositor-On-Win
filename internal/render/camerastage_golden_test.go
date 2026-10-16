@@ -78,6 +78,79 @@ func regenerateCameraRawComposeFixture(t *testing.T) {
 		itoa(deepGoldenW), itoa(deepGoldenH), tablesPath, specPath)
 }
 
+// regenerateCameraRawApplyFixtures runs the whole path through the C: compose
+// the stages, run them over real pixels. Three fixtures, one per clipping
+// preview, so the grade and both previews are pinned.
+func regenerateCameraRawApplyFixtures(t *testing.T) {
+	t.Helper()
+	if os.Getenv("GOLDEN_REGENERATE") != "1" {
+		return
+	}
+	set, err := CameraRawTables()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	tablesPath := filepath.Join(dir, "tables.raw")
+	deepGoldenWrite(t, tablesPath, set.tables)
+	specPath := filepath.Join(dir, "spec.txt")
+	deepGoldenWrite(t, specPath, []byte(cameraRawComposeSpec()))
+	base := filepath.Join(dir, "base.raw")
+	deepGoldenWrite(t, base, cameraRawStatsFixture())
+	for _, clipping := range []int{0, 1, 2} {
+		out := filepath.Join("testdata", fmt.Sprintf("adjust_camera_raw_clip%d.expected.raw", clipping))
+		deepGoldenRun(t, "adjust_camera_raw", base, out,
+			itoa(deepGoldenW), itoa(deepGoldenH), tablesPath, specPath, itoa(clipping))
+	}
+}
+
+// The end-to-end comparison: the same stages composed here, run over the same
+// pixels, must land byte for byte where the C does — including the transparent
+// column, which both sides skip.
+func TestCameraRawApplyMatchesC(t *testing.T) {
+	regenerateCameraRawApplyFixtures(t)
+	set, err := CameraRawTables()
+	if err != nil {
+		t.Fatal(err)
+	}
+	table := cameraComposeStages(cameraRawGoldenGrid, cameraRawGoldenStages(set), set.size)
+	for _, clipping := range []int{0, 1, 2} {
+		t.Run(fmt.Sprintf("clipping %d", clipping), func(t *testing.T) {
+			got := &Bitmap{W: deepGoldenW, H: deepGoldenH, Pix: append([]uint8(nil), cameraRawStatsFixture()...)}
+			cameraRawApplyTable(got, table, cameraRawGoldenGrid, clipping)
+			want, err := os.ReadFile(filepath.Join("testdata", fmt.Sprintf("adjust_camera_raw_clip%d.expected.raw", clipping)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(want) != len(got.Pix) {
+				t.Fatalf("夹具 %d 字节，位图 %d", len(want), len(got.Pix))
+			}
+			for i := range want {
+				if got.Pix[i] != want[i] {
+					t.Fatalf("下标 %d：Go %d，C %d", i, got.Pix[i], want[i])
+				}
+			}
+		})
+	}
+}
+
+// 透明像素原样跳过：整幅透明时一个字节都不动。
+func TestCameraRawApplyLeavesClearPixelsAlone(t *testing.T) {
+	set, err := CameraRawTables()
+	if err != nil {
+		t.Fatal(err)
+	}
+	table := cameraComposeStages(cameraRawGoldenGrid, cameraRawGoldenStages(set), set.size)
+	b := NewBitmap(4, 4)
+	before := append([]uint8(nil), b.Pix...)
+	cameraRawApplyTable(b, table, cameraRawGoldenGrid, 0)
+	for i := range before {
+		if b.Pix[i] != before[i] {
+			t.Fatalf("全透明位图被改动了：下标 %d", i)
+		}
+	}
+}
+
 func TestCameraRawComposeMatchesC(t *testing.T) {
 	regenerateCameraRawComposeFixture(t)
 	set, err := CameraRawTables()
