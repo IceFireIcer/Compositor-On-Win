@@ -71,10 +71,10 @@
 | # | 命令 | 快捷键 | 故事# | 里程碑 | 状态 |
 | --- | --- | --- | --- | --- | --- |
 | C26 | All / Deselect / Inverse | ⌘A/⌘D/⇧⌘I | 29 | M3 | ☑ All/Deselect/Inverse 经 `actions.ts:657-659` 注册，走纯函数 `state/selectionCommands.ts:29-39`；⌘A/⌘D/⇧⌘I（`table.ts:75-77`）+ `selectionCommands.test.ts` |
-| C27 | Layer's Pixels（载入图层像素为选区） | — | 29 | M3 | ☐ 无入口也无通路：Go 无 layerPixels/SelectLayerPixels（grep = 0），前端无动作、无 RPC |
+| C27 | Layer's Pixels（载入图层像素为选区） | — | 29 | M3 | ☑ 早就有：Go `LoadLayerSelection(tabId, layerID, "pixels")`（`selection_edit.go:46`，alpha ≥ 128、按图层 transform 映射到文档空间）+ 前端 `selectionEdit.ts` 的 `loadLayerSelection`（带 generation 守卫）+ 菜单「载入图层像素」（`MenuBar.svelte:301`）。本轮补上**缩略图 Ctrl 点击**（Shift 加选 / Alt 减选，原版 `NativeLayerList.loadMode`）。**此前的「无入口也无通路」是错的——那一版 grep 找的是 `layerPixels` 这个名字，方法其实叫 `LoadLayerSelection`** |
 | C28 | Subject（选择主体） | ⌥⌘A | 28 | M6 | ☑ 票37 |
 | C29 | Color Range…（色彩范围表单） | — | 29 | M3 | ☑ 内核 + 黄金基准（`internal/render/wand.go` ColorRangeMask、`tests/golden/cases/color-range.json`、`golden_test.go:50`）；**表单与菜单都有**：`MenuBar.svelte:302` 的「色彩范围…」→ `editSelection("colorRange")` → `SelectionEditSheet`（`App.svelte:548` 挂载，`SelectionEditSheet.svelte:57,80,123` 处理含/排除色）。**此前的「表单/菜单/RPC 全缺」已过期** |
-| C30 | Mask's Black Areas（载入蒙版黑色区） | — | 29 | M3 | ☐ 无入口也无通路（Go grep MaskBlackAreas = 0，前端无动作） |
+| C30 | Mask's Black Areas（载入蒙版黑色区） | — | 29 | M3 | ☑ 早就有：同一个 `LoadLayerSelection` 的 `"mask"` 分支（灰值 < 128，链接蒙版跟随图层、解除链接用 `maskPlacement`）+ 菜单「载入蒙版黑色区域」（`MenuBar.svelte:302`，无蒙版时置灰）。本轮补上缩略图 Ctrl 点击的加选/减选 |
 | C31 | Expand… / Contract… / Feather… | — | 31 | M3 | ☑ 纯函数 + 测试齐备（`state/selectionCommands.ts:103,109,118`、`selectionCommands.test.ts`）；**菜单项与表单都有**：`MenuBar.svelte:303-305` 三项 → `editSelection` → `SelectionEditSheet`。**此前的「无表单与菜单项」已过期** |
 
 **Image**

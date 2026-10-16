@@ -21,6 +21,22 @@
   import { canvasEditTarget, clearMaskTarget, selectMaskTarget } from "../state/layerTarget";
   import { requestLayerMask, type LayerMaskOperation } from "../state/layerMask";
   import { depthMenuItemsFor, layerDepth, refreshLayerDepth, runDepthCommand } from "../state/layerDepth";
+  import { loadLayerSelection, type SampleMode } from "../state/selectionEdit";
+
+  /**
+   * Ctrl（macOS 的 ⌘）点缩略图把该层的像素 / 蒙版载入为选区；Shift 加选、Alt 减选
+   * （原版 NativeLayerList.loadMaskSelection/loadLayerSelection 的 loadMode）。
+   * 不带修饰键的普通点击不拦，仍由外层容器处理（选中图层 / 蒙版目标）。
+   */
+  function loadThumbSelection(event: MouseEvent, kind: "pixels" | "mask"): void {
+    if (!event.ctrlKey && !event.metaKey) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const mode: SampleMode = event.altKey ? "subtract" : event.shiftKey ? "add" : "replace";
+    void loadLayerSelection(kind, mode).catch((err) => {
+      window.alert(`载入选区失败：${err instanceof Error ? err.message : String(err)}`);
+    });
+  }
 
   /**
    * The layer panel (ticket 20 shell + bridge wiring). Rows render top→bottom
@@ -284,6 +300,7 @@
           alt=""
           draggable="false"
           aria-hidden="true"
+          onclick={(e) => loadThumbSelection(e, "pixels")}
         />
 
         {#if editingId === layer.id}
@@ -416,6 +433,7 @@
               alt=""
               draggable="false"
               aria-hidden="true"
+              onclick={(e) => loadThumbSelection(e, "mask")}
             />
             <span class="mask-name">蒙版</span>
             <select

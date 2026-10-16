@@ -108,15 +108,35 @@ function decodeSelection(raw: string, expectedTab: string, width: number, height
   return selectionFromMask(Uint8Array.from(binary, (c) => c.charCodeAt(0)), width, height);
 }
 
-export async function loadLayerSelection(kind: "pixels" | "mask"): Promise<boolean> {
+export async function loadLayerSelection(kind: "pixels" | "mask", mode: SampleMode = "replace"): Promise<boolean> {
   const doc = get(document), tabId = get(workspace).activeId, original = get(currentSelection);
   if (!tabId || !doc.docId || !doc.activeLayerID) return false;
   const raw = await Service.LoadLayerSelection(tabId, doc.activeLayerID, kind);
   const now = get(document);
   if (get(workspace).activeId !== tabId || now.docId !== doc.docId || now.rev !== doc.rev ||
     now.activeLayerID !== doc.activeLayerID || get(currentSelection) !== original) return false;
-  currentSelection.set(decodeSelection(raw, tabId, doc.width, doc.height));
+  const loaded = decodeSelection(raw, tabId, doc.width, doc.height);
+  currentSelection.set(mergeLoadedSelection(original, loaded, mode));
   return true;
+}
+
+/**
+ * 把载入的选区并入当前选区：Shift 加选、Alt 减选、否则替换 —— 原版
+ * NativeLayerList.loadMode。两者都是文档空间，尺寸一致时才逐像素合并；画布变过就退回
+ * 替换，免得把错位的掩码并进选区。
+ */
+function mergeLoadedSelection(current: Selection | null, loaded: Selection, mode: SampleMode): Selection {
+  if (mode === "replace" || !current || !current.active ||
+    current.width !== loaded.width || current.height !== loaded.height) {
+    return loaded;
+  }
+  const mask = new Uint8Array(loaded.mask.length);
+  for (let i = 0; i < mask.length; i++) {
+    mask[i] = mode === "add"
+      ? Math.max(current.mask[i], loaded.mask[i])
+      : Math.max(0, current.mask[i] - loaded.mask[i]);
+  }
+  return selectionFromMask(mask, loaded.width, loaded.height);
 }
 
 /** Only the newest asynchronous color match may replace the live preview. */

@@ -71,6 +71,37 @@ describe("selection command wiring", () => {
     expect(get(currentSelection)?.mask).toEqual(soft);
   });
 
+  // C27/C30：菜单那条是替换；缩略图 Ctrl 点击带 Shift/Alt 时并入当前选区
+  // （原版 NativeLayerList.loadMode）。
+  it("Shift 加选把载入的掩码并进当前选区", async () => {
+    const right = new Uint8Array(width * height);
+    for (let y = 0; y < height; y++) for (let x = 4; x < width; x++) right[y * width + x] = 255;
+    bridge.LoadLayerSelection.mockResolvedValue(reply(right));
+    expect(await loadLayerSelection("pixels", "add")).toBe(true);
+    const mask = get(currentSelection)!.mask;
+    expect(mask[2 * width + 2]).toBe(255); // 原来的 2×2 矩形还在
+    expect(mask[2 * width + 5]).toBe(255); // 载入的右半也在
+    expect(mask[0]).toBe(0); // 两边都没有的地方仍是空
+  });
+
+  it("Alt 减选从当前选区里扣掉载入的掩码", async () => {
+    const left = new Uint8Array(width * height);
+    for (let y = 0; y < height; y++) for (let x = 0; x < 4; x++) left[y * width + x] = 255;
+    bridge.LoadLayerSelection.mockResolvedValue(reply(left));
+    expect(await loadLayerSelection("pixels", "subtract")).toBe(true);
+    const mask = get(currentSelection)!.mask;
+    // 原来的矩形整个落在左半，被扣干净。
+    expect(mask.some((value) => value > 0)).toBe(false);
+  });
+
+  it("不带模式时是替换，不受当前选区影响", async () => {
+    const right = new Uint8Array(width * height);
+    for (let y = 0; y < height; y++) for (let x = 4; x < width; x++) right[y * width + x] = 255;
+    bridge.LoadLayerSelection.mockResolvedValue(reply(right));
+    expect(await loadLayerSelection("pixels")).toBe(true);
+    expect(get(currentSelection)!.mask[2 * width + 2]).toBe(0);
+  });
+
   it.each(["tab", "revision", "layer", "selection"])("rejects a loaded selection after the %s changes", async (change) => {
     const response = deferred<string>(); bridge.LoadLayerSelection.mockReturnValue(response.promise);
     const pending = loadLayerSelection("pixels");
