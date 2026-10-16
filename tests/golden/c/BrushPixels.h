@@ -1,3 +1,8 @@
+// Copied verbatim from reference/Swift/Compositor/Rendering/BrushPixels.h
+// (865e4675d09de64c3e4ad90aeacee8997542f4ae), unchanged at the current pin
+// e8c9e29701528413cc0e608d61187c1c61790add — the revision this copy was
+// verified against byte for byte. reference/ stays read-only (AGENTS.md
+// invariant #4: kernels travel as copies that name their source).
 #ifndef BrushPixels_h
 #define BrushPixels_h
 #include <stdint.h>

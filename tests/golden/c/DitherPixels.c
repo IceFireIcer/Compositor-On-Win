@@ -4,7 +4,10 @@
  * file is still the copy taken before 1.4.8 split Scanlines out (commit
  * 865e467): the scanline code lives in ScanlinesPixels.c and the inline
  * DITHER_SCANLINES stays here, so the existing dither references are unchanged
- * byte for byte. See README.md for both provenances. AGENTS.md invariant #4. */
+ * byte for byte. See README.md for both provenances. AGENTS.md invariant #4.
+ *
+ * INCREMENT: not a whole-file copy — the two provenances above differ by design,
+ * so this file cannot be compared against one upstream revision as a whole. */
 #include "DitherPixels.h"
 #include <math.h>
 #include <stdlib.h>

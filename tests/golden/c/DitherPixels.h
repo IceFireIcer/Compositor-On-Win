@@ -2,7 +2,9 @@
  * reference/Swift/Compositor/Rendering/DitherPixels.h at commit
  * e8c9e29701528413cc0e608d61187c1c61790add (v1.5.1-8-ge8c9e29); the rest of this
  * header is still the copy taken before 1.4.8 split Scanlines out (commit
- * 865e467). See README.md for both provenances. AGENTS.md invariant #4. */
+ * 865e467). See README.md for both provenances. AGENTS.md invariant #4.
+ *
+ * INCREMENT: not a whole-file copy — see DitherPixels.c for why. */
 #ifndef DitherPixels_h
 #define DitherPixels_h
 #include <stdint.h>
