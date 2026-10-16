@@ -11,7 +11,7 @@
 | T02 | 选框 (M)：矩形/椭圆双模式 | `.marquee` | 26 | M3 | ◐ 内核齐备：矩形/椭圆 region 纯函数 + 测试（`state/selection.ts:210,229`、`selection.test.ts`）；画布指针分派里没有 marquee 分支（`CanvasSurface.svelte:612-698`），矩形/椭圆双模式切换未接 |
 | T03 | 套索 (L)：自由手/多边形双模式 | `.lasso` | 26 | M3 | ◐ 内核齐备：自由手 region 纯函数 + 测试（`state/selection.ts:252`）；画布无 lasso 分支，多边形模式未接 |
 | T04 | 魔棒 (W)：颜色魔棒/对象选择，Tab 切换 | `.wand` | 27 | M3/M6 | ◐ 票15 颜色魔棒 + 票37 对象选择（内核 + 黄金基准 `golden_test.go:71`）；画布无魔棒分支，Tab 切换未注册（`actions.test.ts:167`） |
-| T05 | 裁剪 (C)：比例/对称/选区起点 | `.crop` | 36 | M3 | ◐ 内核齐备：CropState/比例/对称/选区起点 + 43 测试（`state/crop.ts:488`、`crop.test.ts`）；零生产消费者，Go 无 Crop RPC（Service 73 个方法里没有） |
+| T05 | 裁剪 (C)：比例/对称/选区起点 | `.crop` | 36 | M3 | ☑ 票18 尾项：CropState/比例/对称/选区起点 + 43 测试（`state/crop.ts:488`、`crop.test.ts`），覆盖层挂在画布上（`CanvasSurface.svelte:1628`），提交走 `commitCropSession` → `commitCropToDocument` → Go `Crop`（`crop_test.go` 5 例），C 键工具已注册（`commands/entries.ts:114`）。**此前的「零生产消费者、Go 无 Crop RPC」已过期** |
 | T06 | 笔刷 (B) / 橡皮 (E)：大小/硬度/不透明度/平滑、Shift 直线 | `.brush` + `BrushStroke.swift` | 18-19 | M4 | ◐ 笔刷本体已接（`CanvasSurface.svelte:429` PAINT_TOOLS + `internal/render/brush.go` 14 测试）；橡皮不存在（E 键只 `selectTool("brush")`），参数硬编码在 `internal/bridge/brush.go:11-22`，[ / ] 对画笔无效，无笔刷选项栏 |
 | T07 | 污点修复 (J)：内容感知/创建纹理/临近匹配 | `.spotHealing` + `HealPixels.c` | 21 | M6 | ☑ 票35 |
 | T08 | 仿制图章 (S)：对齐开关、单层/全层取样、⌥点设源 | `.cloneStamp` | 20 | M4 | ◐ 内核齐备：`CloneStamp` + 13 测试（`internal/render/stampfill.go:60`、`stampfill_test.go`）；无 RPC，画布无分支（S 键只选中工具） |
@@ -19,7 +19,7 @@
 | T10 | 渐变 (G)：可再编辑渐变层 | `.gradient` | 23 | M4 | ◐ 只有未接线的栅格化原语 `GradientFill`（`internal/render/gradient.go:76`，无测试、无调用者）；无渐变会话/RPC/UI |
 | T11 | 形状 (U)：矩形(圆角)/椭圆/线，Shift-U 切换，保持可编辑 | `.shape` + `ShapeKind` | 24 | M4 | ◐ 形状渲染已接合成（`internal/layerrender/shape.go`、`internal/render/composite.go:203`）；无创建会话/RPC，Shift-U 未注册（`table.ts:149`） |
 | T12 | 文字 (T)：段落框/内联多行/IME | `.type` + `TypeTool.swift` | 43-45 | M8 | ☑ 票44+45：创建/编辑/提交/取消/IME/合成/往返 + 逐 run 样式与段落框缩放 |
-| T13 | 吸管 (I)：取样环（可开关） | `.eyedropper` + `showsSampleRing` | 25 | M3 | ◐ 内核齐备（`state/color.ts:180` samplePixel + `color.test.ts`）；零生产消费者，画布无吸管分支，取样环 showsSampleRing 全仓 0 命中 |
+| T13 | 吸管 (I)：取样环（可开关） | `.eyedropper` + `showsSampleRing` | 25 | M3 | ☑ `state/color.ts:180` samplePixel + `color.test.ts`；画布有吸管分支（`CanvasSurface.svelte:1107`）、取样环（`:1467` 读 `$showsSampleRing`）、滤镜吸管吞点击（`:1055` `eyedropperClick`）；取样环开关在工具选项栏（`ToolOptionsBar.svelte:355` → `setShowsSampleRing`）。**此前的「零消费者、0 命中」已过期** |
 | T14 | 抓手 (H) / 空格平移 | `.hand` | 4 | M3 | ☑ 空格/中键/抓手三条平移路径（`CanvasSurface.svelte:651`）+ 视口 `state/viewport.ts` 与 `viewport.test.ts`；H 键已接 |
 | T15 | 缩放 (Z)：点击/拖拽 | `.zoom` | 3 | M3 | ☑ 缩放工具点击/Alt 反向（`CanvasSurface.svelte:658`）+ 滚轮锚点缩放 + ⌘0/⌘1/=/−（`table.ts:62-65`、`viewport.test.ts`） |
 | T16 | 无工具 (A)：画布点击无操作 | `.idle` | — | M3 | ☑ A 键选 idle（`actions.ts` 工具字母），画布对 idle 不落任何分支（`CanvasSurface.svelte:612-698`）＝点击无操作 |
@@ -48,9 +48,9 @@
 | C11 | Cut / Copy / Paste（像素与文字域分流） | ⌘X/C/V | 55 | M3/M9 | ☑ 票48：选区像素拷/切（剪切留洞、可撤销）、整层复制（含编组/调整层）、外部图像粘贴、⌘V 落层丢选区；文字域由原生 textarea 自己处理（输入框内快捷键让位，菜单项同时禁用）。对照 SelectionClipboardTests 的 9 个用例：原位粘贴/剪切回填/形状选区（套索软边有测试）/选区包围盒裁剪已覆盖，变换会话那 4 个用例属票 16。**系统剪贴板的 Win32 手递手（winclip 的 C 侧）没有自动化测试**——接缝在测试里是内存假实现，纯 Go 的 CF_DIB/PNG 解码有测试 |
 | C12 | Copy Merged | ⇧⌘C | 48 | M7 | ☑ 票42（CF_DIB；剪贴板像素/整层 UI 通道随票48） |
 | C13 | 整层复制/粘贴/跨标签拖拽 | — | 16 | M3 | ☑ 票48：`copyLayersInto` 跨会话复制子树（新 UUID/资产、位图深拷贝、引用重映射、目标画布居中、一步撤销）+ 图层面板拖到标签栏（`TransferLayer`）+ ⌘V 的跨标签分支（`copiedLayerFor` 命中别的会话 → `copyLayersInto`，有测试）。面板内部的拖拽重排仍属票 20 |
-| C14 | Keyboard Shortcuts…（重映射表单） | — | 52 | M9 | ☑ 票47：表单（录制/冲突提示/恢复默认/持久化）+ 113 条定义表 + 三域分流 |
+| C14 | Keyboard Shortcuts…（重映射表单） | — | 52 | M9 | ☑ 票47：表单（录制/冲突提示/恢复默认/持久化）+ 117 条定义表 + 三域分流。**唯一一处有意偏离原版键位**：Last Filter 原版 ⌃⌘F（modifiers 5）在 Windows 上 bit 4 与 bit 1 都渲染成 Ctrl，折成同一键会写出 `Ctrl+Ctrl+F`，故取 Command\|Option = **Ctrl+Alt+F**（modifiers 3；搜索仍是 Ctrl+F，不冲突）。落在 `table.ts:89` 与 `table.test.ts:50` 的注释里 |
 | C15 | Fill with Foreground/Background Color | ⌥⌫ / ⌘⌫ | 42 | M4 | ☑ 票23：`FillSelection`（`internal/bridge/selection_commands.go:59`，选区裁剪/软边/一步撤销，`fill_test.go` 7 例）+ 编辑菜单两项（`MenuBar.svelte:280-291`）+ ⌥⌫/⌘⌫（`table.ts:72-73`） |
-| C16 | Clear Selection Pixels | — | 42 | M4 | ◐ 内核/RPC 就绪：`FillSelection(mode="clear")`（`selection_commands.go:59,73`，`fill_test.go:85` 断言选区变透明）；前端 `fill("clear")` 只有定义、无注册/菜单/快捷键（`actions.ts:564`） |
+| C16 | Clear Selection Pixels | — | 42 | M4 | ☑ 票42+47：`FillSelection(mode="clear")`（`selection_commands.go:59,73`，`fill_test.go:85` 断言选区变透明）+ 编辑菜单项「清除选区像素」（`MenuBar.svelte:448`，无选区时置灰）+ Delete 键在有选区时走它（`actions.ts:864`，`actions.test.ts` 四条覆盖）。**此前的「只有定义、无入口」已过期** |
 | C17 | Content-Aware Fill… | ⇧⌫ | 42 | M6 | ☑ 票35 |
 
 **View（画布组）**
@@ -60,7 +60,7 @@
 | C18 | Fit Canvas / Actual Pixels / Zoom In/Out | ⌘0/⌘1/=/- | 3 | M3 | ☑ 票13+47：视口命令 + 快捷键/视图菜单 |
 | C19 | Pixel Grid 开关（≥800%） | — | 5 | M3 | ◐ 像素网格 ≥800% 自动显示（`CanvasSurface.svelte:320,852`，`PIXEL_GRID_ZOOM` ← `state/viewport.ts:32`）；原版的 showsPixelGrid 开关没有 store/入口，`Menus:Show Grid`（`actions.ts:683`）绑的是布局网格（原版 Show ▸ Grid，属 C22） |
 | C20 | Snap 总开关 | — | 7 | M3 | ☑ 票76：总开关与四个子目标都接上并持久化（`state/view.ts` 的 `snapEnabled`/`snapToggles`，键名照抄原版 ToolDefaults）；菜单「对齐」+ ⇧⌘; + 命令面板动态勾选；消费端见 V04 |
-| C21 | Show Transform Controls | ⌘H | 34 | M3 | ◐ store 与测试齐备（`transformSession.ts:1063` showsTransformControls）但零消费者；⌘H 与菜单项接到 `beginTransformSession`（`actions.ts:690`、`MenuBar.svelte:538`），画布只在会话存在时画控件（`CanvasSurface.svelte:867`）——按 ⌘H 得到的是开会话，不是切换控件 |
+| C21 | Show Transform Controls | ⌘H | 34 | M3 | ☑ `showsTransformControls`（`transformSession.ts:1081`）+ 测试；⌘H 与菜单项都是 `toggleTransformControls()`（`actions.ts:792`、`MenuBar.svelte:845-853`，菜单项带勾），画布两处消费：旋转把手只在开着时才抓（`CanvasSurface.svelte:895`）、控件组本身（`:1492`）。**⌘H 只切可见性，⌘T 才开会话**（`actions.ts:560` 的注释即此语义）。此前的「零消费者、⌘H 接到 beginTransformSession」是错的 |
 | C22 | Grid ' / Guides ; / Rulers ⌘R 开关 | ' ; ⌘R | 6 | M3 | ☑ 三个开关都接上并可见：`state/view.ts:29,32,35` + 菜单勾（`MenuBar.svelte:485-510`）+ ⌘'/⌘;/⌘R（`table.ts:94-96`）；画布真的画布局网格/参考线/标尺（`CanvasSurface.svelte:858,888,974`），`view.test.ts` 覆盖 |
 | C23 | Grid Settings…（间距/细分） | — | 6 | M3 | ☐ 无 Grid Settings 表单/菜单项，Go 侧也没有 gridSettings（internal grep = 0）；布局网格参数硬编码 normalizeGrid(64, 8)（`state/view.ts:47`） |
 | C24 | Snap To：参考线/网格/图层/文档边界 | — | 7 | M3 | ◐ 四个子开关的 store 与默认值齐备且有测试（`state/view.ts:44`、`view.test.ts`）；无 UI 入口（View 菜单没有 Snap To 子菜单），且与 C20 一样没有消费端 |
@@ -85,7 +85,7 @@
 | C33 | Black & White / Color Balance / Exposure / Gradient Map / Grain（像素版） | — | 38 | M5 | ☑ 票31 |
 | C34 | Invert ⌘I（选中蒙版时为 Invert Mask） | ⌘I | 38 | M5 | ☑ 票31 |
 | C35 | Canvas Size… / Image Size… / Trim… | ⌥⌘C/⌥⌘I | 50 | M7 | ☑ 票43 |
-| C36 | Flip Canvas Horizontal / Vertical | — | 33 | M3 | ◐ 纯函数 + 测试（`transformSession.ts:369 flipCanvasTransforms`）；零生产者、无 RPC、无菜单/快捷键（actions.ts 里 Flip 0 命中） |
+| C36 | Flip Canvas Horizontal / Vertical | — | 33 | M3 | ☑ `actions.ts:638 flipCanvas` → Go `FlipCanvas` RPC（镜像每层/蒙版/参考线）→ 应用快照；图像菜单两项（`MenuBar.svelte:537,545`）。无快捷键（原版也没有）。**此前的「零生产者、无 RPC」已过期** |
 
 **Filter（`FilterKind` 除内容感知与图像调整外全部）**
 
@@ -111,7 +111,7 @@
 | C49 | New Blank Layer / Rename / Show-Hide | ⇧⌘N | 16 | M3 | ☑ 票20+47：空白层/重命名/可见性（面板）+ ⇧⌘N 快捷键与菜单 |
 | C50 | Move Layer Up/Down | ] / [ | 17 | M3 | ☑ 票47：Go moveLayer + 图层菜单与快捷键（方向键 Nudge 亦已接，走 nudgeLayer） |
 | C51 | Merge（向下合并/合并所选/合并组，随上下文变标题） | ⌘E | 17 | M3 | ☑ 票47：Go `mergeLayers`（render.Render 合成参与层、剪贴重指向、一步撤销）+ 菜单标题随上下文 |
-| C52 | Flip Layer H/V | — | 33 | M3 | ◐ 纯函数 + 测试（`transformSession.ts:359 flipLayerTransform`）；无菜单/快捷键/RPC（frontend grep Flip 只命中 session 自身与测试） |
+| C52 | Flip Layer H/V | — | 33 | M3 | ☑ `actions.ts:717 flipLayer`：开变换会话 → `flipTransform` → `commitTransformSession`（非破坏，走 `ApplyLayerTransformToTab`）；图层菜单两项（`MenuBar.svelte:597,605`）。无快捷键（原版也没有） |
 | C53 | Delete Layer / Layer Mask / Effect（随选中项变标题） | — | 17 | M3 | ◐ 票47：删层（⌫/菜单）与 Go `deleteLayerMask`/`deleteEffect` 已就绪；面板还没有蒙版/特效行的右键入口 |
 
 ## C. 调整图层（`AdjustmentKind`，12 种，非破坏）
@@ -125,8 +125,8 @@
 | A05 | Gradient Map | 256×3 表 | 37 | M5 | ☑ 票10+26：同 A01（256×3 渐变映射表 + 黄金逐位 + 调整层渲染）；新建入口见 C43 |
 | A06 | Grain（胶片颗粒，文档锚定噪声场） | `adjust_grain` | 37 | M5 | ☑ 票27：`ApplyGrain`（`internal/render/kernels.go`）+ 黄金逐位（`golden_test.go:83`）+ 调整层渲染测试；破坏式入口见 C33，新建调整层见 C43 |
 | A07 | Add Noise（位置+种子确定性） | `noise_add_at` | 37 | M5 | ☑ 票27：`ApplyAddNoise`（位置 + 种子确定性，`kernels.go`）+ 黄金（`golden_test.go:107`）+ 调整层渲染测试；新建入口见 C43 |
-| A08 | Gaussian Blur（溢出层边缘） | CI blur 语义 | 37 | M5 | ☐ 调整层内核缺失：`internal/render/adjustment.go:26-111` 的 dispatch 没有 blur 分支（注释自认「kinds without a kernel yet (the blurs) still pass through」）；破坏式高斯模糊滤镜已实现（票32，见 C37） |
-| A09 | Motion Blur | CI motion 语义 | 37 | M5 | ☐ 同 A08：调整层 dispatch 无 motion blur 分支；破坏式运动模糊滤镜已实现（票32，见 C37） |
+| A08 | Gaussian Blur（溢出层边缘） | CI blur 语义 | 37 | M5 | ☑ `adjustment.go:62-67` 的 `AdjustmentGaussianBlur` 分支复用破坏式滤镜的同一个 `ApplyGaussianBlur`（半径缺失或非正时不动），`TestRenderAdjustmentGaussianBlurChangesPixels`（`adjustment_render_test.go:151`）；破坏式入口见 C37。**此前的「dispatch 没有 blur 分支」已过期——12 种 kind 全部有内核，`default` 分支对已知 kind 不可达** |
+| A09 | Motion Blur | CI motion 语义 | 37 | M5 | ☑ `adjustment.go:68-77` 的 `AdjustmentMotionBlur` 分支（`ApplyMotionBlur`，`MotionRadiusPerPixel` 与破坏式滤镜同一条换算），`TestRenderAdjustmentMotionBlurChangesPixels`（`adjustment_render_test.go:174`） |
 | A10 | Invert | CPU | 37 | M5 | ◐ 内核已移植（`internal/render/kernels.go:324` ApplyInvert，真值 PixelInvert.swift）且反相菜单可达（C34 ☑）；但 `tests/golden/c/` 无 invert 内核、render 测试里也没有 ApplyInvert 断言——缺参照/回归测试 |
 | A11 | Black & White（6 通道权重+着色） | `adjust_black_white` | 37 | M5 | ☑ 票27：`ApplyBlackWhite`（6 通道权重 + 着色，`kernels.go`）+ 黄金逐位（`golden_test.go:87`）+ 调整层渲染测试；破坏式入口 C33 ☑ |
 | A12 | Color Balance（保明度） | `adjust_color_balance` | 37 | M5 | ☑ 票27：`ApplyColorBalance`（保明度，`kernels.go`）+ 黄金逐位（`golden_test.go:96`）+ 调整层渲染测试；破坏式入口 C33 ☑ |
@@ -214,7 +214,7 @@
 | V05 | 锐利缩小采样（Lanczos 级联） | `DownsampleCache` | 51 | M2 | ☐ 全仓无 Lanczos/降采样实现（internal/render grep = 0），缩放靠 CSS img |
 | V06 | 数值拖拽调节（拖标签 scrub）/方向键步进/点击跳转 | `NumericScrub`/`SliderSnap` | 54 | M3 控件 | ◐ 纯函数 + 测试齐备（`components/numeric.ts:68,102,116`、`numeric.test.ts`）；零生产消费者（各表单仍用原生 input） |
 | V07 | 合成徽标光标（加选/减选/吸管/旋转等 ~10 种） | NSCursor 家族 | — | M3 | ☑ 票13：合成徽标光标按工具/修饰键切换（`components/cursors.ts`、`cursors.test.ts`），已接画布（`CanvasSurface.svelte:340`） |
-| V08 | 右键拖拽笔刷 HUD | `EditorCanvas` | 18 | M4 | ◐ 纯函数 + 测试（`lib/gpu/brushCursor.ts`）；零生产消费者，右键只有 preventDefault（`CanvasSurface.svelte:797`） |
+| V08 | 右键拖拽笔刷 HUD | `EditorCanvas` | 18 | M4 | ☑ `lib/gpu/brushCursor.ts` + `brushCursor.test.ts`；画布右键在笔刷类工具上开 `beginBrushTipDrag`（`CanvasSurface.svelte:1014-1018`，`e.button === 2 && BRUSH_TOOLS.has($activeTool)`），拖动走 `dragBrushTip`（`:1186`） |
 | V09 | 4K 笔刷回显 <16ms 基准 | `brush-performance.md` | 19 | M4 | ◐ 票52：`TestBrushStroke4KLatency` 在 4000×4000 上逐段计时，实测 median 1.5–2.0ms / p95 2.1–2.5ms（门禁：默认 48ms，`COMPOSITOR_BENCH_STRICT=1` 时为票面目标 16ms），基线入 `docs/benchmarks/performance.md`。**只有后端、不含显示**，且桥接层只暴露直径 30（原版测 40/800）—— 故 ◐ |
 | V10 | 内存压力响应的纹理/缓存逐出 | `GPUCanvas` | — | M2 | ◐ 票52：`internal/memory` 采样档位（<25% moderate / <12% critical），桥接侧真的逐出渲染缓存并把历史压到 10–50 步（注入测试证明撤销/重做/重渲染仍可用），档位变化推 `memory:pressure`；前端注册口就位且有测试。**GPU 纹理缓存尚未接进画布**（票 11 的库层今天没有生产端注册）—— 故 ◐ |
 
@@ -292,7 +292,7 @@
 | U15 | .comp 16 位存取与版本门控 | 68 | M1/M7 | ☑（ADR-0007；写最低所需版本）。普通 16 位图层跑滤镜已保留深层（票 82 的 `RunDeep`） |
 | U16 | 16 位转换与几何编辑 | 69 | M7 | ✅ |
 | U17 | .comp HDR/EXR 存取与版本门控 | 70 | M1/M7 | ✅ 非 sRGB 色度仍按数字读取 |
-| U18 | HDR 编辑与画布预览 | 71 | M2/M7 | ◐ 图层编辑已保留高光，调整图层待 82 |
+| U18 | HDR 编辑与画布预览 | 71 | M2/M7 | ◐ 图层编辑已保留高光；**HDR 调整层仍未走全深度**：`runFilterOnGrid` 的 HDR 分支是归一化 → 8 位内核 → 恢复尺度，只有 Exposure 走 `adjustmentWorksAtFullDepth`。票 82 解决的是普通 **16 位**图层的滤镜/绘画/重绘，不含 HDR 调整层 |
 | U19 | CMYK ICC 校样 | 72 | M2/M7 | ◐ 查找表已接到显示，无内置 ICC |
 | U20 | Progressive Blur | 73 | M5 | ✅ 可变半径用 8 档高斯阶梯近似 |
 | U21 | 欢迎页粘贴、标签栏和图层建项目 | 74 | M0/M7 | ✅ 欢迎屏粘贴、标签栏拖放新开项目、Untitled 最小空闲序号；无路径的内存图仍走导入为图层 |
@@ -303,7 +303,7 @@
 | U26 | 半透明像素的图层特效着色 | 79 | M5 | ☐ |
 | U27 | Camera Raw 分区重置 | 80 | M5 | ☐ |
 | U28 | 快捷键清除与旧配置迁移 | 81 | M9 | ☐ |
-| U29 | 16 位图层绘画与调整精度 | 82 | M5/M7 | ✅ 滤镜走 `RunDeep`；笔触/重绘/渐变/填充折深层（本轮修掉四处丢深层的路径） |
+| U29 | 16 位图层绘画与调整精度 | 82 | M5/M7 | ✅ 滤镜走 `RunDeep`（`deep_split`/`deep_merge` 与 C 逐字节对拍）；笔触/重绘/渐变/填充折深层 —— 其中**四处原先会丢掉深层**，本轮修掉 |
 | U30 | 16 位与 HDR 屏幕抖动预览 | 83 | M2/M7 | ☐ 决策门槛 |
 | U31 | 16 位 PNG/TIFF 导出 | 84 | M7 | ☐ 决策门槛 |
 | U32 | HDR EXR 导出 | 85 | M7 | ☐ 决策门槛 |
