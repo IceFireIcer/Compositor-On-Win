@@ -20,7 +20,9 @@
       禁用按钮与空状态**不依赖浏览器默认样式**：`app.css` 有全局 `button:disabled`，图层面板另有
       `.layer-menu button:disabled`，空状态用 `--text-dim` 等主题令牌，与菜单同一套。
 - [x] **深色主题的对比度已实测**（2026-10-16，见下）。
-- [ ] 小窗口与键盘焦点下的遮挡。**部分**：焦点样式逐处存在（`.row`/`.mask-row`、
+  **整壳极小窗口已实测**（2026-10-16，见下）—— 量出并修掉一处真缺陷（640px 下隐式网格列被最宽
+  的一行撑开，页面横向溢出 82px）。
+- [x] 小窗口与键盘焦点下的遮挡。**部分**：焦点样式逐处存在（`.row`/`.mask-row`、
       选项栏的 input/select、各处 sheet 的 `:focus-visible`，都是 2px `--accent` 描边）。两处 `outline: none`
       是刻意的（画布文本框用虚线边框、命令面板搜索框是模态里唯一焦点），不是缺陷。**未做**：整壳在
       极小窗口下的遮挡检查（要在真实编辑器外壳里量），以及深色主题下的对比度实测。
@@ -59,6 +61,37 @@
 | `LayersPanel.browser.test.mjs`「down to 100px」 | 宽度扫描：面板不横向溢出、没有控件越界（**测出过真缺陷**） |
 | `LayersPanel.browser.test.mjs`「narrow width … rename」 | 180px 下按钮在界内、重命名前后行高一致 |
 | `theme.contrast.test.mjs` | 从 `app.css` 读令牌，12 对文本/底色断言 AA；`--border` 钉住「亮于背景但安静」 |
+| `App.browser.test.mjs` | 整壳挂真实浏览器，三个小视口下断言页面不横向溢出、没有够不着的元素（**测出过真缺陷**） |
+
+## 整壳极小窗口测量（2026-10-16，U39 的最后半项）
+
+`frontend/src/App.browser.test.mjs` 把**整个 App** 挂进真实浏览器：`window.runtime` 用 Proxy 兜住
+（任何事件订阅都返回取消函数），`window.go` 给 `onMount` 要的那几个，`/render/**` 用路由拦掉。
+样式表要**自己 `import("/src/app.css")`** —— `main.ts` 才引它，直接挂组件不会带上；第一版就是因此
+误报了一次（`html/body/#app` 没有 `height:100%`，`.app` 撑到内容高 762px）。
+
+判据两条，在 900×600 / 640×480 / 480×360 三个视口下：
+
+1. 页面不横向溢出（`scrollWidth === clientWidth`）；
+2. 没有元素跑到视口外**且够不着** —— 越界的那一侧若有祖先能滚（`overflow-x/y: auto` 且真的可滚），
+   算够得着，不算遮挡。
+
+### 量出来的真缺陷
+
+640×480 下 `.app` 是 **722 宽**：隐式网格列按 **max-content** 定宽，于是整条网格被**最宽的那一行**
+（工具栏与选项栏）撑开，页面横向溢出 82px。修法：`.app` 显式写 `grid-template-columns: minmax(0, 1fr)`，
+并给 `.toolbar` 加 `overflow-x: auto`（与选项栏一致 —— 宁可滚，不要把缩放控件裁掉）。
+
+### 哪一处是**吃劲**的（量过，不猜）
+
+反向验证时发现：只撤销 `grid-template-columns` 或只撤销 `.app { overflow: hidden }`，测试**照样通过**；
+只有撤销 `.toolbar { overflow-x: auto }` 才会失败（缩放控件不可达）。所以：
+
+- **吃劲的是工具栏可横滚** —— 断言真正钉住的就是它；
+- `minmax(0, 1fr)` 与 `overflow: hidden` 是**防御性**的：让布局真的变窄，而不是被裁掉。留着，但不当成
+  「测试保护了它们」。
+
+这条同样记进票面 —— 一处改动是否被断言覆盖，不能靠「我改了它、测试是绿的」来判断。
 
 两条新测试都**反向验证过**：把 CSS 改回 `minmax(88px, auto)`，扫描测试立刻在 140px 处失败。
 

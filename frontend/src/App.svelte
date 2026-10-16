@@ -575,8 +575,13 @@
 <style>
   .app {
     display: grid;
+    /* 显式列必须是 minmax(0, 1fr)：隐式列按 max-content 定宽，于是整条网格被**最宽的那一行**
+       （窄窗口下是工具栏与选项栏）撑开，页面横向溢出。这条是整壳小窗口测试量出来的。 */
+    grid-template-columns: minmax(0, 1fr);
     grid-template-rows: auto auto minmax(0, 1fr) auto;
     height: 100%;
+    /* 极窄时宁可裁掉也不让页面滚动。 */
+    overflow: hidden;
   }
 
   .toolbar {
@@ -584,6 +589,9 @@
     align-items: center;
     gap: 10px;
     height: 44px;
+    /* 窄窗口下横向可滚，与选项栏一致：宁可滚，不要把缩放控件裁掉（裁掉就点不到了）。 */
+    overflow-x: auto;
+    overflow-y: hidden;
     padding: 0 12px;
     background: var(--bg-panel);
     border-bottom: 1px solid var(--border);
