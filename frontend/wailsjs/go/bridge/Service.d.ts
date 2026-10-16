@@ -113,6 +113,8 @@ export function HealPoint(arg1:number,arg2:number):Promise<string>;
 
 export function HealingStrokePoint(arg1:string,arg2:number,arg3:number):Promise<void>;
 
+export function HistoryNames():Promise<string>;
+
 export function ImageSize(arg1:string):Promise<string>;
 
 export function ImportDroppedPaths(arg1:Array<string>):Promise<string>;

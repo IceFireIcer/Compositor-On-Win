@@ -44,7 +44,7 @@
 
 | # | 命令 | 快捷键 | 故事# | 里程碑 | 状态 |
 | --- | --- | --- | --- | --- | --- |
-| C10 | Undo/Redo（菜单名带操作名） | ⌘Z / ⇧⌘Z | 57 | M1 | ◐ 撤销/重做已接线且有操作名数据（Go `internal/history/history.go:113,122`，菜单 `MenuBar.svelte:252-253`，`actions.ts:637-638`）；但菜单名不带操作名——前端没有 UndoName RPC（frontend grep = 0） |
+| C10 | Undo/Redo（菜单名带操作名） | ⌘Z / ⇧⌘Z | 57 | M1 | ☑ 撤销/重做接线（`actions.ts:728-729`，菜单 `MenuBar.svelte:407-408`），**标题带操作名**：Go 的 `History.UndoName/RedoName`（`history.go:113,122`）经新 RPC `HistoryNames`（`history_names.go`）送到前端 `state/historyNames.ts`，`undoMenuLabel/redoMenuLabel` 按上游 `"Undo \(name)"` 拼（空栈退回裸标题），查询挂在每次快照上与 layerDepth 同一套序号守卫 |
 | C11 | Cut / Copy / Paste（像素与文字域分流） | ⌘X/C/V | 55 | M3/M9 | ☑ 票48：选区像素拷/切（剪切留洞、可撤销）、整层复制（含编组/调整层）、外部图像粘贴、⌘V 落层丢选区；文字域由原生 textarea 自己处理（输入框内快捷键让位，菜单项同时禁用）。对照 SelectionClipboardTests 的 9 个用例：原位粘贴/剪切回填/形状选区（套索软边有测试）/选区包围盒裁剪已覆盖，变换会话那 4 个用例属票 16。**系统剪贴板的 Win32 手递手（winclip 的 C 侧）没有自动化测试**——接缝在测试里是内存假实现，纯 Go 的 CF_DIB/PNG 解码有测试 |
 | C12 | Copy Merged | ⇧⌘C | 48 | M7 | ☑ 票42（CF_DIB；剪贴板像素/整层 UI 通道随票48） |
 | C13 | 整层复制/粘贴/跨标签拖拽 | — | 16 | M3 | ☑ 票48：`copyLayersInto` 跨会话复制子树（新 UUID/资产、位图深拷贝、引用重映射、目标画布居中、一步撤销）+ 图层面板拖到标签栏（`TransferLayer`）+ ⌘V 的跨标签分支（`copiedLayerFor` 命中别的会话 → `copyLayersInto`，有测试）。面板内部的拖拽重排仍属票 20 |

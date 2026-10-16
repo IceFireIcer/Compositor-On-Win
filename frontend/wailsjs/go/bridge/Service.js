@@ -222,6 +222,10 @@ export function HealingStrokePoint(arg1, arg2, arg3) {
   return window['go']['bridge']['Service']['HealingStrokePoint'](arg1, arg2, arg3);
 }
 
+export function HistoryNames() {
+  return window['go']['bridge']['Service']['HistoryNames']();
+}
+
 export function ImageSize(arg1) {
   return window['go']['bridge']['Service']['ImageSize'](arg1);
 }

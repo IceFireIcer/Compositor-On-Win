@@ -443,6 +443,8 @@ export function applyDocumentSnapshot(raw: string, expectedDocId?: string): bool
   // 文档变了，标签栏的脏标记/尺寸可能也变了 —— 见 scheduleWorkspaceRefresh。
   scheduleWorkspaceRefresh();
   void import("./layerDepth").then((m) => m.refreshLayerDepth());
+  // 撤销/重做的菜单标题也跟着文档走：Go 的操作名是真源（对等矩阵 C10）。
+  void import("./historyNames").then((m) => m.refreshHistoryNames());
   return true;
 }
 

@@ -57,6 +57,7 @@
     snapToggles,
   } from "../state/view";
   import { showsTransformControls } from "../state/transform";
+  import { historyNames, redoMenuLabel, undoMenuLabel } from "../state/historyNames";
   import { SEARCH_COMMANDS_LABEL, menuModel, type MenuModel } from "../commands/menuModel";
   import { toggleCommandPalette } from "../commands/session";
   // 票 55 / 56 的菜单入口：菜单栏是这两票唯一共用的文件，由 Lead 统一接线。
@@ -404,8 +405,9 @@
     {
       label: "编辑",
       items: [
-        { label: "撤销", hint: hintFor("Menus:Undo"), run: () => runAndClose("Menus:Undo") },
-        { label: "重做", hint: hintFor("Menus:Redo"), run: () => runAndClose("Menus:Redo") },
+        // 标题带操作名（原版 "Undo <操作名>"）：名字由 Go 给，空栈时退回裸标题。
+        { label: undoMenuLabel($historyNames), hint: hintFor("Menus:Undo"), run: () => runAndClose("Menus:Undo") },
+        { label: redoMenuLabel($historyNames), hint: hintFor("Menus:Redo"), run: () => runAndClose("Menus:Redo") },
         // 文字会话开着时剪贴板归文本框（原版按 first responder 分流）。
         {
           label: "剪切",
