@@ -63,7 +63,7 @@
 | C21 | Show Transform Controls | ⌘H | 34 | M3 | ☑ `showsTransformControls`（`transformSession.ts:1081`）+ 测试；⌘H 与菜单项都是 `toggleTransformControls()`（`actions.ts:792`、`MenuBar.svelte:845-853`，菜单项带勾），画布两处消费：旋转把手只在开着时才抓（`CanvasSurface.svelte:895`）、控件组本身（`:1492`）。**⌘H 只切可见性，⌘T 才开会话**（`actions.ts:560` 的注释即此语义）。此前的「零消费者、⌘H 接到 beginTransformSession」是错的 |
 | C22 | Grid ' / Guides ; / Rulers ⌘R 开关 | ' ; ⌘R | 6 | M3 | ☑ 三个开关都接上并可见：`state/view.ts:29,32,35` + 菜单勾（`MenuBar.svelte:485-510`）+ ⌘'/⌘;/⌘R（`table.ts:94-96`）；画布真的画布局网格/参考线/标尺（`CanvasSurface.svelte:858,888,974`），`view.test.ts` 覆盖 |
 | C23 | Grid Settings…（间距/细分） | — | 6 | M3 | ☐ 无 Grid Settings 表单/菜单项，Go 侧也没有 gridSettings（internal grep = 0）；布局网格参数硬编码 normalizeGrid(64, 8)（`state/view.ts:47`） |
-| C24 | Snap To：参考线/网格/图层/文档边界 | — | 7 | M3 | ◐ 四个子开关的 store 与默认值齐备且有测试（`state/view.ts:44`、`view.test.ts`）；无 UI 入口（View 菜单没有 Snap To 子菜单），且与 C20 一样没有消费端 |
+| C24 | Snap To：参考线/网格/图层/文档边界 | — | 7 | M3 | ☑ 四个子开关（`state/view.ts:160 snapToggles`，持久化 + 测试）**有 UI**：视图菜单里四项带勾（`MenuBar.svelte:816-825`）；**有消费端**：`state/snap.ts:155-190 collectTargets` 逐项门控，`transformSession.ts:655-671` 同表。**此前的「无 UI 入口、没有消费端」已过期** |
 | C25 | Lock Guides / Clear Guides | ⌥; | 7 | M3 | ☑ 菜单「锁定参考线」（`MenuBar.svelte:521`，⇧⌘; `table.ts:98`）与「清除参考线」（`MenuBar.svelte:530`）都可达；锁定时不可抓取（`CanvasSurface.svelte:582`），清除写回 Go（`actions.ts:508`）并作为「参考线」撤销步（`internal/bridge/guides_test.go`） |
 
 **Select**
