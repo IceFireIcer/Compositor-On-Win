@@ -1,0 +1,180 @@
+{
+  "note": "defaultProgressiveLine 的共享用例：Go 侧（internal/bridge/filter.go）与前端（frontend/src/lib/state/progressiveBlur.ts）各读一遍，任一侧改了公式都会挂。",
+  "cases": [
+    {
+      "name": "整幅画布上的图层",
+      "transform": {
+        "origin": [
+          0,
+          0
+        ],
+        "size": [
+          100,
+          80
+        ]
+      },
+      "docWidth": 100,
+      "docHeight": 80,
+      "expect": {
+        "start": [
+          50,
+          28
+        ],
+        "end": [
+          50,
+          80
+        ]
+      }
+    },
+    {
+      "name": "居中且小于画布",
+      "transform": {
+        "origin": [
+          20,
+          10
+        ],
+        "size": [
+          60,
+          40
+        ]
+      },
+      "docWidth": 100,
+      "docHeight": 80,
+      "expect": {
+        "start": [
+          50,
+          24
+        ],
+        "end": [
+          50,
+          50
+        ]
+      }
+    },
+    {
+      "name": "左上超出画布",
+      "transform": {
+        "origin": [
+          -30,
+          -20
+        ],
+        "size": [
+          90,
+          70
+        ]
+      },
+      "docWidth": 100,
+      "docHeight": 80,
+      "expect": {
+        "start": [
+          30,
+          17.5
+        ],
+        "end": [
+          30,
+          50
+        ]
+      }
+    },
+    {
+      "name": "右下超出画布",
+      "transform": {
+        "origin": [
+          60,
+          50
+        ],
+        "size": [
+          90,
+          70
+        ]
+      },
+      "docWidth": 100,
+      "docHeight": 80,
+      "expect": {
+        "start": [
+          80,
+          60.5
+        ],
+        "end": [
+          80,
+          80
+        ]
+      }
+    },
+    {
+      "name": "完全在画布外",
+      "transform": {
+        "origin": [
+          -200,
+          -200
+        ],
+        "size": [
+          50,
+          50
+        ]
+      },
+      "docWidth": 100,
+      "docHeight": 80,
+      "expect": {
+        "start": [
+          50,
+          28
+        ],
+        "end": [
+          50,
+          80
+        ]
+      }
+    },
+    {
+      "name": "零尺寸",
+      "transform": {
+        "origin": [
+          10,
+          10
+        ],
+        "size": [
+          0,
+          0
+        ]
+      },
+      "docWidth": 100,
+      "docHeight": 80,
+      "expect": {
+        "start": [
+          50,
+          28
+        ],
+        "end": [
+          50,
+          80
+        ]
+      }
+    },
+    {
+      "name": "贴右下角",
+      "transform": {
+        "origin": [
+          100,
+          80
+        ],
+        "size": [
+          10,
+          10
+        ]
+      },
+      "docWidth": 100,
+      "docHeight": 80,
+      "expect": {
+        "start": [
+          50,
+          28
+        ],
+        "end": [
+          50,
+          80
+        ]
+      }
+    }
+  ]
+}

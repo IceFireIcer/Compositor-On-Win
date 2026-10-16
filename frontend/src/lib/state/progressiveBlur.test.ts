@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import sharedCases from "../../../../internal/bridge/testdata/progressive_line_cases.json";
 import {
   beginProgressiveDrag,
   defaultProgressiveLine,
@@ -7,12 +8,31 @@ import {
   progressiveLine,
 } from "./progressiveBlur";
 
+// Go 侧（internal/bridge/filter.go）是这份公式的真源，前端为了在发 RPC 之前摆出默认线
+// 复制了一份。两边各读同一份夹具，任一侧改了公式都会挂。
+interface ProgressiveLineCase {
+  name: string;
+  transform: { origin: [number, number]; size: [number, number] };
+  docWidth: number;
+  docHeight: number;
+  expect: { start: [number, number]; end: [number, number] };
+}
+const cases: ProgressiveLineCase[] = sharedCases.cases as ProgressiveLineCase[];
+
 // 票 73：端点存的是文档坐标，默认落点照抄上游 Filters.swift:708-713。
 describe("渐进模糊的线（票 73）", () => {
   it("铺满画布的图层：默认线从 35% 高度到底边", () => {
     const line = defaultProgressiveLine({ origin: [0, 0], size: [200, 100] }, 200, 100);
     expect(line.start).toEqual([100, 35]);
     expect(line.end).toEqual([100, 100]);
+  });
+
+  it("与 Go 的共享用例逐条一致（真源在 Go 侧）", () => {
+    expect(cases.length).toBeGreaterThan(0);
+    for (const c of cases) {
+      const got = defaultProgressiveLine(c.transform, c.docWidth, c.docHeight);
+      expect([got.start, got.end], c.name).toEqual([c.expect.start, c.expect.end]);
+    }
   });
 
   it("只占画布一角的图层：默认线取那一块", () => {
