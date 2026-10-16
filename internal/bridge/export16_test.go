@@ -101,6 +101,40 @@ func TestExportAsSixteenBitTIFFKeepsSixteenBits(t *testing.T) {
 	}
 }
 
+// 票 85：HDR 栅格不能走 16 位 PNG/TIFF —— 超白值会被裁到 1.0 且**无声无息**。
+//
+// 这条是变异审计查出来的：把 sixteenBitExportRaster 里那段 HDR 拒绝去掉，全部测试照样通过。
+// 同时钉住另一侧 —— 同一份文档走 EXR 必须成功，否则「拒绝」就变成了「谁也导不出」。
+func TestExportAsSixteenBitRefusesAnHDRRasterButEXRAcceptsIt(t *testing.T) {
+	svc, _ := newTestService(t, 4, 1)
+	deep := deepLayerForExport(t, svc)
+	deep.HDR = true
+	// half 表示的超白：0x4C00 是 4.0，远在白点之上。
+	for x := 0; x < deep.W; x++ {
+		i := x * 4
+		deep.Pix[i], deep.Pix[i+1], deep.Pix[i+2] = 0x4C00, 0x4C00, 0x4C00
+		deep.Pix[i+3] = 0x3C00
+	}
+
+	if _, err := svc.ExportAs(`{"format":"png","sixteenBit":true}`); err == nil || !strings.Contains(err.Error(), "HDR") {
+		t.Fatalf("HDR 栅格走 16 位应当被拒绝并说明去 EXR，得到 %v", err)
+	}
+
+	dir := t.TempDir()
+	stubExportSaveDialog(t, filepath.Join(dir, "wide"))
+	reply, err := svc.ExportAs(`{"format":"exr","defaultName":"wide.exr"}`)
+	if err != nil {
+		t.Fatalf("同一份 HDR 栅格走 EXR 应当成功，得到 %v", err)
+	}
+	data, err := os.ReadFile(parseJSON[map[string]string](t, reply)["path"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(data) == 0 {
+		t.Fatal("EXR 是空的")
+	}
+}
+
 // 多图层现在**成功**（票 84 的 U31 剩余）：render.CompositeDeep 用 16 位样本跑 8 位那条普通
 // 公式。上面那层不透明，所以合出来就是它的值 —— 而那两个值只差低位，8 位往返会把它们压成同一个数。
 func TestExportAsSixteenBitCompositesMultipleLayers(t *testing.T) {

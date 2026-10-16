@@ -45,6 +45,27 @@
 拼合结果本身就是某一层的深层栅格时（单图层、恒等变换、无蒙版/特效/非正常混合/不透明度 1、
 尺寸等于画布），仍然直接返回那份栅格 —— 一个像素都不用重算，也就没有任何舍入。
 
+
+## 验收证据审计（2026-10-16，第二轮）
+
+沿用票 87 那套办法：**改坏实现，看测试会不会失败**。只查「有没有提到这句话」不够 ——
+「改坏了会不会失败」才是同一件事。
+
+| 变异 | 结果 |
+| --- | --- |
+| `deepNRGBA64` 不做去预乘（导出带预乘值） | ✓ 被抓住 |
+| 16 位 TIFF 不写分辨率 | ✓ 被抓住 |
+| 16 位导出**不再拒绝 HDR 栅格** | ✗ **没被抓住 —— 真缺口** |
+
+### 查出并补上的缺口
+
+把 `sixteenBitExportRaster` 里那段 HDR 拒绝去掉，**全部测试照样通过**：也就是说「HDR 栅格不能走
+16 位 PNG/TIFF」这条规则此前**没有任何测试**。它的后果不是报错，而是**超白值被无声裁到 1.0** ——
+正是票面第一条禁止的那种静默降级。
+
+新增 `TestExportAsSixteenBitRefusesAnHDRRasterButEXRAcceptsIt`：同一份带超白值（half 0x4C00 = 4.0）
+的 HDR 栅格，走 16 位必须被拒绝并说明去 EXR，走 EXR 必须成功。**两侧都钉** —— 否则「拒绝」可能
+悄悄变成「谁也导不出」。加上之后重跑变异：立刻失败 ✓。
 ## 验证（新增）
 
 | 用例 | 覆盖 |
@@ -52,6 +73,7 @@
 | `render.TestDeepCompositeMatchesTheEightBitOne` | 两层（一层偏移 + 半透明）合成后量化，与 8 位合成最大差 2 级；破坏公式立刻差 118 级 |
 | `render.TestDeepCompositeKeepsBitsTheEightBitPathCannot` | 两层的 8 位副本相同、16 位只差一个低位单位，合出来仍保留差别 |
 | `bridge.TestExportAsSixteenBitCompositesMultipleLayers` | 端到端：两层文档导出 PNG，解码回来两端像素仍互不相同 |
+| `bridge.TestExportAsSixteenBitRefusesAnHDRRasterButEXRAcceptsIt` | HDR 栅格走 16 位被拒绝、走 EXR 成功（**变异审计查出的缺口**） |
 | `bridge.TestExportAsSixteenBitRefusesWhatTheCompositeCannotDescribe` | 蒙版 / 非正常混合 / 组各自被拒绝并说明是哪一层哪条属性 |
 
 ## 验证

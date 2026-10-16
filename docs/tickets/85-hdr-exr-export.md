@@ -21,6 +21,10 @@
       导出走既有的保存对话框路径（取消返回空路径、权限/路径错误由 `writeExport` 报出）；
       整条路是只读的，不碰文档、历史与脏标记。
 
+## 验收证据审计（2026-10-16）
+
+变异审计：把 `hdrExportRaster` 改成恒返回 nil（EXR 退回 8 位栅格）→ `TestExportAsEXRKeepsLightBrighterThanWhite` 立刻失败（「超白高光被截断了：峰值 1」）✓。这条断言是吃劲的。
+
 ## 验证
 
 | 用例 | 覆盖 |
