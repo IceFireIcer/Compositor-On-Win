@@ -183,6 +183,59 @@ func TestCMYKTIFFRoundTripsThroughTheReader(t *testing.T) {
 	}
 }
 
+// 票 86 的 JPEG 那一半：带内嵌配置的 CMYK JPEG 走真实导入路径，颜色按配置转成 RGB，
+// 配置跟着结果出来给桥接采纳。
+func TestCMYKJPEGImportsThroughItsEmbeddedProfile(t *testing.T) {
+	profile := cmykTestProfile(t)
+	// 纸白与满黑各一个像素 —— 转换的绝对值取决于所用配置的黑点，所以只做结构性断言。
+	ink := []uint8{0, 0, 0, 0, 0, 0, 0, 255}
+	data, err := render.EncodeCMYKJPEGWithProfile(ink, 2, 1, 100, profile)
+	if err != nil {
+		t.Fatalf("EncodeCMYKJPEGWithProfile: %v", err)
+	}
+	path := filepath.Join(t.TempDir(), "cmyk.jpg")
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	result, err := Decode(path, 1000)
+	if err != nil {
+		t.Fatalf("CMYK JPEG 应当走导入路径: %v", err)
+	}
+	if result.Width != 2 || result.Height != 1 {
+		t.Fatalf("尺寸 = %d×%d", result.Width, result.Height)
+	}
+	if !bytes.Equal(result.SourceProfile, profile) {
+		t.Fatalf("SourceProfile 应当是文件内嵌的那份（%d 字节 vs %d）", len(result.SourceProfile), len(profile))
+	}
+	white := result.Bitmap.Pix[0]
+	if white < 235 {
+		t.Errorf("纸白应当转成接近白，得到 %d", white)
+	}
+	black := result.Bitmap.Pix[4]
+	if black > 90 {
+		t.Errorf("满黑墨应当转成明显偏暗，得到 %d", black)
+	}
+}
+
+// 没有内嵌配置的 CMYK JPEG 必须**明确拒绝**，而不是猜一个 sRGB 出来。
+func TestCMYKJPEGWithoutAProfileIsRefused(t *testing.T) {
+	data, err := render.EncodeCMYKJPEG([]uint8{0, 0, 0, 0}, 1, 1, 90)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "noprofile.jpg")
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err = Decode(path, 1000)
+	if err == nil {
+		t.Fatal("没有配置的 CMYK JPEG 应当被拒绝")
+	}
+	if !bytes.Contains([]byte(err.Error()), []byte("ICC")) {
+		t.Fatalf("错误应当说明缺的是 ICC 配置，得到 %v", err)
+	}
+}
+
 // 没有内嵌配置的 CMYK TIFF 必须**明确拒绝**，而不是猜一个 sRGB 出来。
 func TestCMYKTIFFWithoutAProfileIsRefused(t *testing.T) {
 	data := buildCMYKTIFF(t, 1, 1, []uint8{0, 0, 0, 0}, nil)

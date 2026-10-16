@@ -177,21 +177,78 @@ func decodeCMYKImport(path string, data []byte, remainingPixels int) (*Result, e
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrUnreadable, err)
 	}
-	if img.Width > domain.MaxSide || img.Height > domain.MaxSide || img.Width*img.Height > remainingPixels {
-		return nil, tooLarge(img.Width, img.Height, remainingPixels)
+	return cmykImportResult(path, img.Ink, img.Width, img.Height, img.Profile, "TIFF", remainingPixels)
+}
+
+// isCMYKJPEG reports whether the JPEG declares four components. Walking the
+// segments beats letting image.DecodeConfig have a go: it rejects a
+// four-component JPEG outright, so there is nothing to learn from the failure.
+func isCMYKJPEG(data []byte) bool {
+	if len(data) < 2 || data[0] != 0xFF || data[1] != 0xD8 {
+		return false
 	}
-	if len(img.Profile) == 0 {
-		return nil, fmt.Errorf("%w: CMYK TIFF 没有内嵌 ICC 配置，套用 sRGB 会把颜色弄错", ErrUnsupported)
+	i := 2
+	for i+4 <= len(data) {
+		if data[i] != 0xFF {
+			return false
+		}
+		marker := data[i+1]
+		switch {
+		case marker == 0xD8 || marker == 0x01 || (marker >= 0xD0 && marker <= 0xD7):
+			i += 2
+			continue
+		case marker == 0xDA: // 压缩数据从此开始，帧头要么已经见过，要么就不在
+			return false
+		}
+		length := int(data[i+2])<<8 | int(data[i+3])
+		if length < 2 || i+2+length > len(data) {
+			return false
+		}
+		// SOF0..SOF15，除 DHT/JPG/DAC 外都是帧头；分量数在段内偏移 7 处。
+		if marker >= 0xC0 && marker <= 0xCF && marker != 0xC4 && marker != 0xC8 && marker != 0xCC {
+			return length >= 8 && data[i+9] == 4
+		}
+		i += 2 + length
 	}
-	if !colorio.IsCMYKProfile(img.Profile) {
-		return nil, fmt.Errorf("%w: CMYK TIFF 内嵌的配置不是 CMYK 配置", ErrUnsupported)
-	}
-	rgb, err := colorio.ConvertToRGB(img.Ink, img.Width, img.Height, img.Profile)
+	return false
+}
+
+// decodeCMYKJPEGImport reads a four-component JPEG and converts it through the
+// profile the file carries (ticket 86's JPEG half).
+func decodeCMYKJPEGImport(path string, data []byte, remainingPixels int) (*Result, error) {
+	ink, w, h, profile, err := render.DecodeCMYKJPEGWithProfile(data)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrUnreadable, err)
 	}
-	nrgba := image.NewNRGBA(image.Rect(0, 0, img.Width, img.Height))
-	for i := 0; i < img.Width*img.Height; i++ {
+	return cmykImportResult(path, ink, w, h, profile, "JPEG", remainingPixels)
+}
+
+// cmykImportResult is the shared tail of both CMYK readers: bounds, the profile
+// the colour has to go through, and the conversion to a working RGB bitmap. The
+// profile travels back in SourceProfile so the caller can adopt it for proofing.
+//
+// A file with no usable profile is **refused**, not guessed at: assuming sRGB for
+// CMYK ink produces the wrong colors, and the ticket's second item forbids
+// exactly that. refusals say which format and which of the two it is.
+func cmykImportResult(path string, ink []uint8, w, h int, profile []byte, kind string, remainingPixels int) (*Result, error) {
+	if w < 1 || h < 1 {
+		return nil, fmt.Errorf("%w: CMYK %s 的尺寸无效", ErrUnreadable, kind)
+	}
+	if w > domain.MaxSide || h > domain.MaxSide || w*h > remainingPixels {
+		return nil, tooLarge(w, h, remainingPixels)
+	}
+	if len(profile) == 0 {
+		return nil, fmt.Errorf("%w: CMYK %s 没有内嵌 ICC 配置，套用 sRGB 会把颜色弄错", ErrUnsupported, kind)
+	}
+	if !colorio.IsCMYKProfile(profile) {
+		return nil, fmt.Errorf("%w: CMYK %s 内嵌的配置不是 CMYK 配置", ErrUnsupported, kind)
+	}
+	rgb, err := colorio.ConvertToRGB(ink, w, h, profile)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrUnreadable, err)
+	}
+	nrgba := image.NewNRGBA(image.Rect(0, 0, w, h))
+	for i := 0; i < w*h; i++ {
 		nrgba.Pix[i*4] = rgb[i*3]
 		nrgba.Pix[i*4+1] = rgb[i*3+1]
 		nrgba.Pix[i*4+2] = rgb[i*3+2]
@@ -203,7 +260,7 @@ func decodeCMYKImport(path string, data []byte, remainingPixels int) (*Result, e
 		Bitmap:        bmp,
 		Width:         bmp.W,
 		Height:        bmp.H,
-		SourceProfile: img.Profile,
+		SourceProfile: profile,
 	}, nil
 }
 

@@ -430,8 +430,9 @@ func (s *Service) ExportAs(requestJSON string) (string, error) {
 				}
 				switch format.id {
 				case "jpeg":
-					// 质量走表单里那一档，与 8 位路径同样把 <1 夹到 1（票 87 的验收 2）。
-					return render.EncodeCMYKJPEG(ink, flat.W, flat.H, req.Quality)
+					// 质量走表单里那一档，与 8 位路径同样把 <1 夹到 1；配置按票 87 第一条嵌进
+					// APP2（导入侧要靠它才知道这是谁的油墨）。
+					return render.EncodeCMYKJPEGWithProfile(ink, flat.W, flat.H, req.Quality, cmykProfile.Data)
 				case "tiff":
 					return render.EncodeCMYKTIFFWithDPI(ink, flat.W, flat.H, res, cmykProfile.Data)
 				default:

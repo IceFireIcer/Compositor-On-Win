@@ -86,6 +86,9 @@ func Decode(path string, remainingPixels int) (*Result, error) {
 	if (ext == "tif" || ext == "tiff") && isCMYKTIFF(data) {
 		return decodeCMYKImport(path, data, remainingPixels)
 	}
+	if (ext == "jpg" || ext == "jpeg") && isCMYKJPEG(data) {
+		return decodeCMYKJPEGImport(path, data, remainingPixels)
+	}
 	cfg, format, err := image.DecodeConfig(bytes.NewReader(data))
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrUnreadable, err)

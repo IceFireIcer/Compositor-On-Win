@@ -4,8 +4,40 @@ import (
 	"bytes"
 	"image"
 	"image/jpeg"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 )
+
+// cmykProfileFixture 找一份本机的 CMYK ICC 配置：ICC 头偏移 16 处的色彩空间字段写着 CMYK，
+// 所以不需要色彩引擎就能挑出来。找不到就跳过 —— 不发明一份合成配置。
+func cmykProfileFixture(t *testing.T) []byte {
+	t.Helper()
+	dir := `C:\Windows\System32\spool\drivers\color`
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Skip("本机没有 ICC 配置目录")
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		ext := strings.ToLower(filepath.Ext(e.Name()))
+		if ext != ".icc" && ext != ".icm" {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(dir, e.Name()))
+		if err != nil || len(data) < 20 {
+			continue
+		}
+		if string(data[16:20]) == "CMYK" {
+			return data
+		}
+	}
+	t.Skip("本机没有可用的 CMYK ICC 配置")
+	return nil
+}
 
 // jpegMarkers walks the JPEG segments and returns the APP14 marker and the
 // component count from the frame header. Walking beats searching for the bytes:
@@ -84,6 +116,43 @@ func TestCMYKJPEGWritesFourComponentsAndTheAdobeMarker(t *testing.T) {
 		if d > 8 {
 			t.Errorf("第 %d 个油墨量往返后是 %d，原本 %d（差 %d）", i, back[i], ink[i], d)
 		}
+	}
+}
+
+// 配置要能随文件走：票 87 第一条要的是「四通道颜色空间**或** ICC profile」，而导入侧要靠它
+// 才知道这是谁的油墨。用一份真实系统配置当夹具，逐字节比对。
+func TestCMYKJPEGCarriesTheEmbeddedProfile(t *testing.T) {
+	profile := cmykProfileFixture(t)
+	ink := []uint8{0, 0, 0, 0, 255, 0, 0, 0, 0, 255, 0, 0, 0, 0, 255, 0}
+	data, err := EncodeCMYKJPEGWithProfile(ink, 4, 1, 95, profile)
+	if err != nil {
+		t.Fatalf("EncodeCMYKJPEGWithProfile: %v", err)
+	}
+	_, w, h, got, err := DecodeCMYKJPEGWithProfile(data)
+	if err != nil {
+		t.Fatalf("DecodeCMYKJPEGWithProfile: %v", err)
+	}
+	if w != 4 || h != 1 {
+		t.Fatalf("尺寸 = %d×%d", w, h)
+	}
+	if !bytes.Equal(got, profile) {
+		t.Fatalf("内嵌配置回来 %d 字节，想要 %d 字节（前 8 字节：% x vs % x）",
+			len(got), len(profile), got[:min(8, len(got))], profile[:min(8, len(profile))])
+	}
+}
+
+// 没有配置时不发明一份：返回 nil，让调用方去问。
+func TestCMYKJPEGWithoutAProfileReturnsNone(t *testing.T) {
+	data, err := EncodeCMYKJPEG([]uint8{0, 0, 0, 0}, 1, 1, 90)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, _, profile, err := DecodeCMYKJPEGWithProfile(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(profile) != 0 {
+		t.Fatalf("没有内嵌配置时应当返回 nil，得到 %d 字节", len(profile))
 	}
 }
 
