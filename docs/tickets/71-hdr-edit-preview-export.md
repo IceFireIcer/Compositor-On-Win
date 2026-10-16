@@ -37,6 +37,7 @@
    `GPUAdjustment.apply`）。要 16 位合成器，属票 82。
 2. **非曝光滤镜的中间量是 8 位**：上游 `normalizing` 把 16 位栅格交给 `run()`；这里的内核只吃 8 位
    像素，所以白内的层次是 8 位精度（高光本身按比例还原，不受影响）。16 位内核属票 82。
-3. **纯 16 位图层跑滤镜仍会丢深层像素**：内核拿不住它的精度，`runFilterOnGrid` 走 `DropDeep`。
-   上游 `invertKeepsSixteenBits` / `hueSaturationKeepsSixteenBits` 的对应用例属票 82。
+3. ~~**纯 16 位图层跑滤镜仍会丢深层像素**~~：**票 82 已修**——`runFilterOnGrid` 对普通 16 位
+   图层走 `render.RunDeep`（原版 `DeepLayer.run`：拆分跑内核再读回 16 位），不再 `DropDeep`。
+   见票 68 的第 2 条与对等矩阵 U29。
 4. 屏幕抖动（8 位屏上的平滑显示）属票 83；这里的显示副本是抖动后的派生副本。
