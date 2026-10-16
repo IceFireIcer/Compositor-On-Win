@@ -6,7 +6,10 @@
     {
       "name": "libheif",
       "default-features": false
-    }
+    },
+    // 票 87/U34：CMYK JPEG 导出直接用 libjpeg（四分量）。它本来就作为 libraw/libheif
+    // 的传递依赖躺在树里，但**显式写出来**才是一个可复现的依赖 —— 靠传递依赖是脆的。
+    "libjpeg-turbo"
   ],
   "builtin-baseline": "2976266a3b2aa358e0eed9e89bde2e0cf59daf0a"
 }

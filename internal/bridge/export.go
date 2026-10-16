@@ -391,8 +391,8 @@ func (s *Service) ExportAs(requestJSON string) (string, error) {
 	// 与校样共用同一份，所以导出的就是屏幕上校样看到的那套墨。
 	var cmykProfile *colorio.Profile
 	if req.CMYK {
-		if format.id != "tiff" && format.id != "pdf" {
-			return "", fmt.Errorf("CMYK 只支持 TIFF 与 PDF；%s 的四通道编码器尚未实现", format.label)
+		if format.id != "tiff" && format.id != "pdf" && format.id != "jpeg" {
+			return "", fmt.Errorf("CMYK 只支持 JPEG、TIFF 与 PDF；%s 没有四通道编码器", format.label)
 		}
 		if cmykProfile = colorio.Chosen(); cmykProfile == nil {
 			return "", fmt.Errorf("CMYK 导出需要一份 ICC 配置（视图 › CMYK › 配置）")
@@ -428,10 +428,15 @@ func (s *Service) ExportAs(requestJSON string) (string, error) {
 				if err != nil {
 					return nil, fmt.Errorf("CMYK 转换失败: %w", err)
 				}
-				if format.id == "tiff" {
+				switch format.id {
+				case "jpeg":
+					// 质量走表单里那一档，与 8 位路径同样把 <1 夹到 1（票 87 的验收 2）。
+					return render.EncodeCMYKJPEG(ink, flat.W, flat.H, req.Quality)
+				case "tiff":
 					return render.EncodeCMYKTIFFWithDPI(ink, flat.W, flat.H, res, cmykProfile.Data)
+				default:
+					return render.EncodeCMYKPDFWithDPI(ink, flat.W, flat.H, res, cmykProfile.Data)
 				}
-				return render.EncodeCMYKPDFWithDPI(ink, flat.W, flat.H, res, cmykProfile.Data)
 			}
 			if format.id == "exr" {
 				if hdrRaster != nil {

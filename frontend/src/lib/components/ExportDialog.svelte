@@ -278,11 +278,11 @@
       </label>
     {/if}
 
-    {#if format === "tiff" || format === "pdf"}
+    {#if format === "jpeg" || format === "tiff" || format === "pdf"}
       <label class="row">
         <span class="label">CMYK</span>
         <input type="checkbox" bind:checked={cmyk} />
-        <span class="hint">按「视图 › CMYK › 配置」那份 ICC 写出印刷油墨（JPEG 尚不支持）</span>
+        <span class="hint">按「视图 › CMYK › 配置」那份 ICC 写出印刷油墨（JPEG 走 Adobe 约定）</span>
       </label>
     {/if}
 

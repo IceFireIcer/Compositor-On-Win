@@ -10,6 +10,7 @@ import (
 
 	"compositor-win/internal/colorio"
 	"compositor-win/internal/rasterio"
+	"compositor-win/internal/render"
 )
 
 // 票 87：CMYK 导出。
@@ -72,13 +73,29 @@ func TestExportAsCMYKTIFFCarriesTheProfile(t *testing.T) {
 	}
 }
 
-// JPEG 的四通道编码器还没写：必须**明确拒绝**，而不是静默写出 RGB 冒充 CMYK。
-func TestExportAsCMYKRefusesJPEG(t *testing.T) {
+// JPEG 的四分量编码器已经写好了（票 87 的 U34 剩余，走 libjpeg）：导出的文件必须真的能按
+// 四分量读回来，而不是只写了个 JPEG 头。
+func TestExportAsCMYKJPEGWritesFourComponents(t *testing.T) {
 	svc := cmykExportService(t)
-	stubExportSaveDialog(t, filepath.Join(t.TempDir(), "out"))
-	_, err := svc.ExportAs(`{"format":"jpeg","cmyk":true}`)
-	if err == nil || !strings.Contains(err.Error(), "CMYK") {
-		t.Fatalf("JPEG 的 CMYK 应当被拒绝并说明原因，得到 %v", err)
+	dir := t.TempDir()
+	stubExportSaveDialog(t, filepath.Join(dir, "print"))
+	reply, err := svc.ExportAs(`{"format":"jpeg","cmyk":true,"quality":90,"defaultName":"print.jpg"}`)
+	if err != nil {
+		t.Fatalf("CMYK JPEG 导出应当成功，得到 %v", err)
+	}
+	data, err := os.ReadFile(parseJSON[map[string]string](t, reply)["path"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	ink, w, h, err := render.DecodeCMYKJPEG(data)
+	if err != nil {
+		t.Fatalf("写出的 CMYK JPEG 应当能按四分量读回来: %v", err)
+	}
+	if w != 4 || h != 2 {
+		t.Errorf("尺寸 = %d×%d，想要 4×2", w, h)
+	}
+	if len(ink) != w*h*4 {
+		t.Errorf("油墨缓冲 %d 字节，想要 %d（四分量）", len(ink), w*h*4)
 	}
 }
 
