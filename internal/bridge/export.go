@@ -97,7 +97,11 @@ func (s *Service) BeginExportPreview() (string, error) {
 	preview := bmp
 	if longest := max(bmp.W, bmp.H); longest > previewLimit {
 		scale := float64(previewLimit) / float64(longest)
-		preview = render.DownscaleBitmap(bmp, int(float64(bmp.W)*scale+0.5), int(float64(bmp.H)*scale+0.5))
+		// ResampleBitmap, not DownsampleBitmap: the dialog's JPEG quality preview
+		// re-encodes this thumbnail, and the saved file goes through
+		// ResampleBitmap too. Two different filters would show the user one
+		// picture and write another.
+		preview = render.ResampleBitmap(bmp, int(float64(bmp.W)*scale+0.5), int(float64(bmp.H)*scale+0.5))
 	}
 	s.exportPreview = preview
 	b, err := json.Marshal(exportPreviewReply{Width: bmp.W, Height: bmp.H, Resolution: res})

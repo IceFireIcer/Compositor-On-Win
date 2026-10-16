@@ -22,7 +22,8 @@ func strokeOf(effects *domain.Effects) *domain.StrokeEffect {
 }
 
 // colorOverlayOf follows LayerEffects.visible in Swift: old projects omit
-// enabled, which means visible. Shadow and glow kernels are not implemented here.
+// enabled, which means visible. An overlay at zero opacity is skipped so the
+// color path does not run for nothing.
 func colorOverlayOf(effects *domain.Effects) *domain.OverlayEffect {
 	if effects == nil || effects.ColorOverlay == nil {
 		return nil
