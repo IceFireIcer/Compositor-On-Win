@@ -131,6 +131,48 @@ go test ./internal/bridge -run XXX -bench BenchmarkBrushStroke4K -benchmem -coun
 `internal/bridge/brush.go`，超出本票允许新建的路径，所以没做。下面的原版
 对照因此只作量级参考。
 
+## Camera Raw：查表路径与预览倍率（票 78）
+
+对应代码：`internal/render/cameraraw_bench_test.go`。
+
+```sh
+go test ./internal/render -run '^$' -bench 'CameraRaw' -benchtime=3x -count=1
+go test ./internal/bridge -run TestPreviewRendersFewerPixelsThanTheCommitByTheExplainedFactor -v -count=1
+```
+
+### 查表 vs 解析核（2048²，Light/Color 共享子集）
+
+```
+BenchmarkCameraRawTablePath-32       	       3	 358273133 ns/op	17215626 B/op	       6 allocs/op
+BenchmarkCameraRawAnalyticPath-32    	       3	1643763433 ns/op	16777216 B/op	       1 allocs/op
+```
+
+**约 4.6×**：查表每像素一次三线性采样，解析核每像素重算一遍色调数学。4.6× 是这台机器上
+**实测**的值 —— 上游笔记里那个 5–20× 说的不是这件事，见下。
+
+### 5–20× 指的是预览的像素数
+
+上游把预览限在 **2048 最长边**（`filter_session.go` 的 `previewLimit`），所以倍率是纯算术：
+**(最长边 / 2048)²** —— 与滑杆、与滤镜都无关。实测（`TestPreview...ExplainedFactor`）：
+
+| 文档 | 像素 | 预览 | 倍率 |
+| --- | --- | --- | --- |
+| 4000×2666 | 10.7MP | 2.8MP | **3.8×（够不着 5×）** |
+| 4600×3066 | 14.1MP | 2.8MP | 5.0× |
+| 6000×4000（常见照片） | 24.0MP | 2.8MP | 8.6× |
+| 9000×6000 | 54.0MP | 2.8MP | 19.3× |
+
+读法：5–20× 对应最长边约 **4600–9200px**（3:2 下约 14–54MP）。比这小的照片倍率更低，
+比这大的更高 —— 断言里把 4000px 那条**如实标成不达标**，不四舍五入成「达标」。
+
+**提交不走捷径**：同一个测试断言提交用的底图仍是全尺寸那张（`grown`），只有预览源被降采样。
+
+### 与上游笔记的对照（只作量级参考）
+
+上游的 5–20× 是本仓无法直接复现的外部基线（没有原版的机器、原版也没有可跑的 Windows 构建）。
+这里能给的是**可解释**的两件事：查表相对解析核实测约 4.6×，以及预览相对提交的倍率就是
+`(最长边/2048)²`。把两者相乘才是「常见照片预览 vs 全尺寸逐像素重算」的总账，且两项都可复算。
+
 ## 与原版 4K 笔刷笔记的对照
 
 原版数字来自 `reference/Swift/docs/brush-performance.md`（2026-09-12 采集）

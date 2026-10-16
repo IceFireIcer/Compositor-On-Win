@@ -182,3 +182,51 @@ func TestASupersededPreviewNeverOverwritesTheNewerSettings(t *testing.T) {
 		t.Fatalf("预览修订号是 %d，想要 1 —— 先发的慢请求没有被丢弃", rev)
 	}
 }
+
+// 票 78 验收 2：常见照片预览的 5–20 倍来自**渲染的像素数**，不是低精度捷径。
+//
+// 原版把预览限在 2048 最长边；倍率因此是纯算术：(最长边 / 2048)²。写成断言而不是宣称 ——
+// 5–20× 对应最长边约 4600–9200px（3:2 下约 10–40MP），比这小的照片倍率更低，比这大的更高。
+// 同时证明**提交没有走捷径**：预览源是降采样的，提交用的还是全尺寸那张。
+func TestPreviewRendersFewerPixelsThanTheCommitByTheExplainedFactor(t *testing.T) {
+	cases := []struct {
+		longest int
+		wantIn  bool // 倍率是否落在 5–20× 区间内
+	}{
+		{4000, false}, // 8MP：倍率约 3.8×，够不着 5× —— 如实标出来，不四舍五入成「达标」
+		{4600, true},
+		{6000, true}, // 24MP，常见照片
+		{9000, true},
+	}
+	for _, c := range cases {
+		w, h := c.longest, c.longest*2/3
+		svc, _ := newTestService(t, w, h)
+		if _, err := svc.BeginFilterEdit(FilterGaussian, "", `{"radius":4}`, 0, ""); err != nil {
+			t.Fatal(err)
+		}
+		svc.ws.mu.Lock()
+		sess := svc.ws.activeSessionLocked()
+		if sess == nil || sess.filter == nil {
+			svc.ws.mu.Unlock()
+			t.Fatal("滤镜会话不见了")
+		}
+		previewPixels := sess.filter.previewSrc.W * sess.filter.previewSrc.H
+		grownW, grownH := sess.filter.grown.W, sess.filter.grown.H
+		scale := sess.filter.previewScale
+		svc.ws.mu.Unlock()
+
+		ratio := float64(w*h) / float64(previewPixels)
+		t.Logf("最长边 %d：文档 %d×%d = %.1fMP，预览 %.1fMP，倍率 %.1f×",
+			c.longest, w, h, float64(w*h)/1e6, float64(previewPixels)/1e6, ratio)
+		if inRange := ratio >= 5 && ratio <= 20; inRange != c.wantIn {
+			t.Errorf("最长边 %d 的倍率 %.1f×，落在 5–20× 内 = %v，与预期不符", c.longest, ratio, inRange)
+		}
+		// 提交不走捷径：它渲染的是全尺寸那张，预览才是降采样的。
+		if grownW != w || grownH != h {
+			t.Errorf("提交用的底图是 %d×%d，想要全尺寸 %d×%d", grownW, grownH, w, h)
+		}
+		if c.longest > previewLimit && scale >= 1 {
+			t.Errorf("最长边 %d 超过预览上限，预览却没有降采样（scale = %v）", c.longest, scale)
+		}
+	}
+}
