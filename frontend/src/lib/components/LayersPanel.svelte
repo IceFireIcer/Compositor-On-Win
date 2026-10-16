@@ -86,6 +86,7 @@
   // 两个 id 都在这里存下来，免得点菜单时把图层 id 当标签 id 递过去。
   let layerMenu = $state<{ x: number; y: number; layerId: string; tabID: string } | null>(null);
   let menuEl: HTMLDivElement | undefined = $state();
+let layerListEl: HTMLElement | null = $state(null);
 
   // 右键那一层先成为活动层，位深命令（Go 侧只认 ActiveLayerID）才会作用到它；
   // 然后按这一层重取标签，菜单里的项才是它自己的。
@@ -237,6 +238,41 @@
       console.warn("选择蒙版失败", err);
     }
   }
+/**
+ * 票 88：画布选层、键盘切层与跨组选择之后，面板要滚动揭示那一行。
+ *
+ * 依赖刻意只有「哪一行被选中」这一个来源：重命名、缩略图刷新、拖拽意图都不该让面板滚动。
+ * 用 block:"nearest" 是最小滚动量 —— 整行已经可见时它什么都不做，所以已可见行不会闪。
+ */
+// 上一次已经揭示过的键。快照整体替换会让这个 effect 重跑（applyDocumentSnapshot 换了 state 对象），
+// 所以键没变时直接返回 —— 否则每次 rev 刷新都会再滚一次。
+let revealedRowKey = "";
+$effect(() => {
+  const key = rowKey(docState.activeLayerID, maskTargetId);
+  if (key === revealedRowKey) return;
+  revealedRowKey = key;
+  revealSelectedRow(key);
+});
+
+/** rowKey 把「选中的行」编成一个键；参数化是为了让 effect 的依赖只有那两个 id。 */
+function rowKey(layerId: string | null, maskId: string | null): string {
+  return `${layerId ?? ""}|${maskId ?? ""}`;
+}
+
+/**
+ * revealSelectedRow 把当前选中的那一行滚进视野。
+ *
+ * 没有对应行时静默返回：隐藏组里没有这一行、文档关掉了、撤销把层删了，都不该抛错。
+ */
+function revealSelectedRow(key: string): void {
+  if (key === "|" || key === "") return;
+  const list = layerListEl;
+  if (!list) return;
+  const row = list.querySelector<HTMLElement>('[role="option"][aria-selected="true"]');
+  if (!row) return;
+  row.scrollIntoView({ block: "nearest" });
+}
+
 </script>
 
 <div class="panel-title">图层</div>
@@ -244,7 +280,7 @@
 {#if !docState.docId}
   <div class="panel-empty">没有打开的文档</div>
 {:else}
-  <div class="layer-list" role="listbox" aria-label="图层列表">
+  <div class="layer-list" role="listbox" aria-label="图层列表" bind:this={layerListEl}>
     {#each rows as { layer, depth } (layer.id)}
       <div
         class="layer-entry"

@@ -207,3 +207,49 @@ it("accepts real drag events for reorder and nesting into the existing folder", 
   await poll(() => page.locator('[data-layer-id="b"]').getAttribute("data-depth")).toBe("0");
   expect(await page.evaluate(() => window.requests.filter(r => r.op === "place").at(-1).placement)).toBe("after");
 });
+
+it("reveals the selected row with the least scrolling, and only when the selection moves", async () => {
+  const errors = [];
+  page.on("pageerror", (err) => errors.push(String(err)));
+  // 记录 scrollIntoView 的调用，并记下它发生在哪一行。
+  await page.evaluate(() => {
+    window.scrolls = [];
+    const original = Element.prototype.scrollIntoView;
+    window.restoreScrollIntoView = () => { Element.prototype.scrollIntoView = original; };
+    Element.prototype.scrollIntoView = function (options) {
+      window.scrolls.push({ id: this.closest('[data-layer-id]')?.dataset.layerId ?? null, options });
+    };
+  });
+
+  await page.locator('[data-layer-id="a"] .row').click({ position: { x: 290, y: 3 } });
+  await poll(() => page.evaluate(() => window.scrolls.length)).toBeGreaterThan(0);
+  const call = await page.evaluate(() => window.scrolls.at(-1));
+  expect(call.id).toBe("a");
+  // block:"nearest" 是关键：整行已经可见时它什么都不做，所以已可见的行不会闪。
+  expect(call.options).toEqual({ block: "nearest" });
+
+  // 只刷新 rev（选择没动）不该再滚一次 —— 重命名、缩略图刷新都走这条路。
+  const before = await page.evaluate(() => window.scrolls.length);
+  await page.evaluate(() => new Promise((resolve) => {
+    window.rev++; window.apply();
+    requestAnimationFrame(() => requestAnimationFrame(resolve));
+  }));
+  expect(await page.evaluate(() => window.scrolls.length)).toBe(before);
+
+  // 没有选中的层时静默返回：不抛错，也不假装有一个选中行。
+  await page.evaluate(() => new Promise((resolve) => {
+    window.doc.activeLayerID = null; window.rev++; window.apply();
+    requestAnimationFrame(() => requestAnimationFrame(resolve));
+  }));
+  expect(await page.evaluate(() => window.scrolls.length)).toBe(before);
+  expect(errors).toEqual([]);
+
+  // 画布上的蒙版目标也要揭示：那一行是 .mask-row。
+  await page.locator(".mask-row").click({ position: { x: 35, y: 10 } });
+  await poll(() => page.evaluate(() => window.scrolls.length)).toBeGreaterThan(before);
+  expect(await page.evaluate(() => window.scrolls.at(-1).id)).toBe("a");
+  expect(await page.evaluate(() => window.scrolls.at(-1).options)).toEqual({ block: "nearest" });
+
+  await page.evaluate(() => window.restoreScrollIntoView());
+});
+

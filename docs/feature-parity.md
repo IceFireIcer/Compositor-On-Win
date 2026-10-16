@@ -309,7 +309,7 @@
 | U32 | HDR EXR 导出 | 85 | M7 | ✅ 票 85：Export As 加 EXR；拼合结果是 HDR 深层栅格时直接写它（超白不截断，解码回来峰值仍约 4），否则退回 8 位 half 展开（上游 `hdrRaster ?? raster`）。「无超白→16 位层 / 有超白→HDR」的导入规则此前已由 `bitmapFromDeep` 落地（`hdrWithinWhite = 1.001`）。HDR 的 EXR 拒绝改尺寸 |
 | U33 | CMYK 文件导入与配置保留 | 86 | M7 | ◐ **TIFF 已通**：`x/image/tiff` 不认 CMYK（photometric 5 直接 UnsupportedError），自写读取器取油墨平面 + ICC 标签 34675，交 `colorio.ConvertToRGB` 转 sRGB；`rasterio.Decode` 嗅探后走它，导入路径本来就调 `Decode`。缺配置/非 CMYK 配置**明确拒绝**而非猜。**配置也留进会话了**：`colorio.AdoptEmbedded`（上游 `CMYKProfile.embedded` + `adopt`）把文件内嵌配置留存并**选为当前配置**，校样回到那份文件当初针对的油墨。**仍缺**：PSD/JPEG 的 CMYK 变体 |
 | U34 | CMYK JPEG/TIFF/PDF 导出 | 87 | M7 | ◐ **TIFF 与 PDF 已通**：`EncodeCMYKTIFFWithDPI`（基线无压缩 TIFF + ICC 34675）与 `EncodeCMYKPDFWithDPI`（`/ICCBased` N=4 + `/Alternate /DeviceCMYK`），配置取自 View › CMYK › 配置；写出的 TIFF 由票 86 的读取器读回来闭环验证。**JPEG 未做**（四通道要自写熵编码器）——**明确拒绝**而非静默写 RGB。已知差异：油墨极性按 ICC 约定，与 Photoshop 的反相约定未用真文件核对 |
-| U35 | 画布选层后揭示图层 | 88 | M3 | ☐ |
+| U35 | 画布选层后揭示图层 | 88 | M3 | ✅ `LayersPanel.svelte` 的 effect：选中行用 `scrollIntoView({block:"nearest"})`（最小滚动量，已可见即不动，所以不闪），行的定义直接取面板真值 `[role="option"][aria-selected="true"]`（图层行与蒙版行走同一条路）。依赖只有选中层与蒙版目标两个值，所以重命名/缩略图刷新不触发滚动；键没变则直接返回（快照整体替换会让 effect 重跑）。查不到行静默返回。浏览器测试含反向验证 |
 | U36 | 更新窗口发行说明 | 89 | M9 | ☐ |
 | U37 | Camera Raw 色彩族对齐 | 90 | M5 | ☐ |
 | U38 | 上游资源与截图 CI 等价方案 | 91 | M0/M9 | ☐ |
