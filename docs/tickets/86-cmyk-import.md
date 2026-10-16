@@ -46,6 +46,34 @@
 
 绝不猜着解：解出垃圾比报错更糟。
 
+
+## 验收证据审计（2026-10-16，第三轮）
+
+| 变异 | 结果 |
+| --- | --- |
+| `isCMYKTIFF` 恒为假（CMYK TIFF 走普通路径） | ✓ 被抓住 |
+| `isCMYKJPEG` 接受任意分量数 | ✓ 被抓住 |
+| 导入**不再校验**内嵌配置是不是 CMYK 配置 | ✗ **没被抓住 —— 真缺口** |
+
+### 查出并补上的缺口
+
+把 `cmykImportResult` 里那道 `IsCMYKProfile` 校验去掉，全部测试照样通过 —— 也就是说「内嵌的配置
+必须真的是 CMYK 配置」这条规则**没有任何测试**。
+
+行为其实没坏：更深一层的 `ConvertToRGB` 会拦住它。但**错误分类与提示都退化了**，实测失败信息是：
+
+```
+无法读取该图像：文件可能已损坏或不可用: That profile isn't a CMYK output profile.
+```
+
+一个**完全正常**、只是内嵌配置不对的文件，被报成「可能已损坏」——用户换个配置就能用，却被引向
+「文件坏了」。所以补 `TestCMYKTIFFWithANonCMYKProfileIsRefused`：断言错误是 `ErrUnsupported`
+（不是 `ErrUnreadable`）且提示里说明「不是 CMYK 配置」。加上之后重跑变异：立刻失败 ✓。
+
+### 这一轮的方法收获
+
+变异审计有两类产出：一类是「规则完全没测试」（会转出垃圾、会静默降级），另一类是这种「**行为对、
+但错误分类错了**」——后者不看变异结果根本发现不了，因为它不会让任何断言失败。
 ## 验证
 
 | 用例 | 覆盖 |
@@ -54,6 +82,7 @@
 | `TestCMYKTIFFWithoutAProfileIsRefused` | 没有 ICC 标签 → 拒绝且错误里说明缺的是 ICC |
 | `TestCMYKJPEGImportsThroughItsEmbeddedProfile` | 带配置的 CMYK JPEG 走真实导入路径：纸白转成接近白、满黑墨明显偏暗、配置随结果回来 |
 | `TestCMYKJPEGWithoutAProfileIsRefused` | 没有 APP2 配置 → 拒绝且错误里说明缺的是 ICC |
+| `TestCMYKTIFFWithANonCMYKProfileIsRefused` | 内嵌 RGB 配置 → 报成 `ErrUnsupported` 且说明「不是 CMYK 配置」（**变异审计查出的缺口**） |
 | `TestCMYKTIFFWithUnsupportedCompressionIsRefused` | 把 Compression 改成 LZW → 明确报错，而不是解出垃圾 |
 
 夹具是**手工拼**的：`x/image/tiff` 的 writer 不写 CMYK，所以测试按 TIFF 布局逐段拼一份最小的

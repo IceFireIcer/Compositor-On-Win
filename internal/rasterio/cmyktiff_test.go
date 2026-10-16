@@ -8,9 +8,11 @@ package rasterio
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"testing"
 
 	"compositor-win/internal/colorio"
@@ -234,6 +236,58 @@ func TestCMYKJPEGWithoutAProfileIsRefused(t *testing.T) {
 	if !bytes.Contains([]byte(err.Error()), []byte("ICC")) {
 		t.Fatalf("错误应当说明缺的是 ICC 配置，得到 %v", err)
 	}
+}
+
+// 票 86：内嵌配置**不是** CMYK 配置时必须被明确拒绝，而且要报成「不受支持」而不是「读不了」——
+// 这类文件用户换个配置就能用，报成读不了等于把人引到错的方向。
+//
+// 这条是变异审计查出来的：把 cmykImportResult 里那道 IsCMYKProfile 校验去掉，全部测试照样通过。
+// 更深一层的 ConvertToRGB 会拦住它，所以行为没坏 —— 但错误分类与提示都退化了。
+func TestCMYKTIFFWithANonCMYKProfileIsRefused(t *testing.T) {
+	profile := rgbTestProfile(t)
+	data := buildCMYKTIFF(t, 1, 1, []uint8{0, 0, 0, 0}, profile)
+	path := filepath.Join(t.TempDir(), "rgbprofile.tif")
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Decode(path, 1000)
+	if err == nil {
+		t.Fatal("内嵌 RGB 配置的 CMYK TIFF 应当被拒绝")
+	}
+	if !errors.Is(err, ErrUnsupported) {
+		t.Errorf("应当报成不受支持（而不是读不了），得到 %v", err)
+	}
+	if !bytes.Contains([]byte(err.Error()), []byte("不是 CMYK")) {
+		t.Errorf("错误应当说明内嵌的配置不是 CMYK 配置，得到 %v", err)
+	}
+}
+
+// rgbTestProfile 找一份本机的 RGB ICC 配置：ICC 头偏移 16 处写着 "RGB "。
+func rgbTestProfile(t *testing.T) []byte {
+	t.Helper()
+	dir := `C:\Windows\System32\spool\drivers\color`
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Skip("本机没有 ICC 配置目录")
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		ext := strings.ToLower(filepath.Ext(e.Name()))
+		if ext != ".icc" && ext != ".icm" {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(dir, e.Name()))
+		if err != nil || len(data) < 20 {
+			continue
+		}
+		if string(data[16:20]) == "RGB " {
+			return data
+		}
+	}
+	t.Skip("本机没有可用的 RGB ICC 配置")
+	return nil
 }
 
 // 没有内嵌配置的 CMYK TIFF 必须**明确拒绝**，而不是猜一个 sRGB 出来。
