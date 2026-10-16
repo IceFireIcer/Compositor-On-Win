@@ -40,6 +40,12 @@ type Document struct {
 	Height     int
 	Resolution float64
 	Layers     []Record
+	// ICCProfile is image resource 1039: the profile the file carries, if any.
+	//
+	// An RGB file's profile is informational here. A CMYK file's is not: it is
+	// the only thing that says whose inks the channels are, so the import path
+	// has to convert through it rather than assume sRGB (ticket 86).
+	ICCProfile []byte
 }
 
 // LayerKind is the coarse layer classification (PSDLayerKind).

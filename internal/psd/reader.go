@@ -215,7 +215,8 @@ func Read(data []byte, remainingPixels int) (Document, error) {
 		if signature != "8BIM" {
 			break
 		}
-		if _, err := c.u16(); err != nil { // resource id
+		resourceID, err := c.u16()
+		if err != nil {
 			return doc, err
 		}
 		nameLength64, err := c.u8()
@@ -236,6 +237,11 @@ func Read(data []byte, remainingPixels int) (Document, error) {
 			return doc, err
 		}
 		dataStart := c.offset
+		// Resource 1039 is the ICC profile. Copy it out before the cursor moves
+		// on: the resource list is walked by offset.
+		if resourceID == 1039 && int(length) > 0 && c.need(int(length)) {
+			doc.ICCProfile = append([]byte(nil), c.data[c.offset:c.offset+int(length)]...)
+		}
 		if int(length) >= 4 && c.need(4) {
 			// Resource 1005 is the resolution (16.16 fixed point).
 			if read16, err := c.u16(); err == nil {
@@ -266,7 +272,7 @@ func Read(data []byte, remainingPixels int) (Document, error) {
 	}
 	layerSectionEnd := c.offset + layerSection
 	if layerSection < 4 {
-		return Document{Width: canvasWidth, Height: canvasHeight, Resolution: resolution, Layers: nil}, nil
+		return Document{Width: canvasWidth, Height: canvasHeight, Resolution: resolution, Layers: nil, ICCProfile: doc.ICCProfile}, nil
 	}
 	if _, err := checkedLength(c, isPSB); err != nil { // layer info length
 		return doc, err

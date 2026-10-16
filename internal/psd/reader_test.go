@@ -408,6 +408,68 @@ func header(version, depth, mode uint16, width, height uint32) []byte {
 	return file.data
 }
 
+// 票 86 的 PSD 那一半的**前提**：文件的 ICC 配置在图像资源 1039 里，读取器要把它带出来 ——
+// CMYK 支持之后，那是唯一说明「这些通道是谁的油墨」的东西（RGB 文件的配置则只是信息性的）。
+func TestReadCarriesTheEmbeddedICCProfile(t *testing.T) {
+	profile := []byte{0x00, 0x00, 0x02, 0x0C, 'A', 'D', 'B', 'E', 0x04}
+
+	resources := &buf{}
+	resources.str("8BIM")
+	resources.u16(1039)
+	resources.u8(0) // 名字长度 0
+	resources.u8(0) // 名字后的偶数字节填充
+	resources.u32(uint32(len(profile)))
+	resources.raw(profile)
+	if len(profile)%2 == 1 {
+		resources.u8(0) // 资源数据的偶数字节填充
+	}
+
+	file := &buf{}
+	file.str("8BPS")
+	file.u16(1)
+	file.raw(make([]byte, 6))
+	file.u16(3) // 通道数
+	file.u32(4) // 高
+	file.u32(4) // 宽
+	file.u16(8) // 每通道位数
+	file.u16(3) // 色彩模式：RGB
+	file.u32(0) // 色彩模式数据
+	file.u32(uint32(len(resources.data)))
+	file.raw(resources.data)
+	file.u32(0) // 图层段长度 0（< 4）→ 读取器提前返回
+
+	doc, err := Read(file.data, 1<<30)
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	if !bytes.Equal(doc.ICCProfile, profile) {
+		t.Fatalf("ICC 配置回来 % x，想要 % x", doc.ICCProfile, profile)
+	}
+}
+
+// 没有 1039 资源时不该凭空造一份。
+func TestReadWithoutAnICCProfileLeavesItEmpty(t *testing.T) {
+	file := &buf{}
+	file.str("8BPS")
+	file.u16(1)
+	file.raw(make([]byte, 6))
+	file.u16(3)
+	file.u32(4)
+	file.u32(4)
+	file.u16(8)
+	file.u16(3)
+	file.u32(0)
+	file.u32(0)
+	file.u32(0)
+	doc, err := Read(file.data, 1<<30)
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	if len(doc.ICCProfile) != 0 {
+		t.Fatalf("没有 1039 资源时应当是空的，得到 %d 字节", len(doc.ICCProfile))
+	}
+}
+
 func TestUnsupportedHeadersAreRejected(t *testing.T) {
 	if _, err := Read(header(3, 8, 3, 10, 10), 1<<30); err != ErrUnsupportedVersion {
 		t.Fatalf("version 3: %v", err)

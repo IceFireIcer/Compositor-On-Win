@@ -28,7 +28,24 @@
       没有 ICC 标签、或标签里不是 CMYK 配置，都报出具体原因（「没有内嵌 ICC 配置，套用 sRGB
       会把颜色弄错」/「内嵌的配置不是 CMYK 配置」）。上游的「让用户选一份」属于 UI，未做；
       **拒绝**是安全的那一半。
-- [ ] 打开、保存重开和校样显示与 `CMYKTests` 语义一致。**部分**：配置已留进会话，校样可以用它
+- [ ] 打开、保存重开和校样显示与 `CMYKTests` 语义一致。
+      **PSD 的 CMYK 变体：本轮做了前提，主体仍未做**（2026-10-16）。
+
+      已落地并验证：`psd.Read` 现在把图像资源 **1039** 的 ICC 配置带进 `Document.ICCProfile`
+      （`TestReadCarriesTheEmbeddedICCProfile` / `TestReadWithoutAnICCProfileLeavesItEmpty`）。
+      这是 CMYK 支持的前提 —— 那是唯一说明「这些通道是谁的油墨」的东西。
+
+      仍未做，且有两处实打实的障碍：
+
+      1. **色彩模式闸门与通道管线是 RGB 形状的**：`reader.go:196` 只放行 mode 3；`assemble` 按 RGBA
+         建层。要支持 CMYK，得让 mode 4 通过、按 4 个油墨通道解码、再经 `colorio.ConvertToRGB` 转
+         —— 牵动整条通道解码与建层路径，不是加一个分支。
+      2. **没有 CMYK PSD 夹具**。手写一份**分层** PSD（`readRecord` 要完整的图层记录 + 通道数据）
+         可行但工作量不小；写一份**拼合的**更省事，但读取器走不到那里 ——
+         `reader.go:268` 在图层段长度 < 4 时直接返回**零图层**，**根本不读拼合的图像数据**。
+         所以「拼合 PSD」这条路本身也是缺的（与颜色空间无关）。
+
+      如实记下，不当成「快做完了」。**部分**：配置已留进会话，校样可以用它
       （上游 `adopt` 的语义）；**JPEG 的 CMYK 变体已接进导入路径**（`isCMYKJPEG` 走段标记读帧头的
       分量数 → `DecodeCMYKJPEGWithProfile` 从 APP2 的 ICC_PROFILE 分段按段号拼回配置 → 与 TIFF 共用
       `cmykImportResult` 做边界、配置校验与 `ConvertToRGB`）；**PSD 的 CMYK 变体仍未做**（要动票 38
