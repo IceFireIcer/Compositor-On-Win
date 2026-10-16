@@ -22,6 +22,30 @@
   import { requestLayerMask, type LayerMaskOperation } from "../state/layerMask";
   import { depthMenuItemsFor, layerDepth, refreshLayerDepth, runDepthCommand } from "../state/layerDepth";
   import { loadLayerSelection, type SampleMode } from "../state/selectionEdit";
+  import type { EffectKind } from "../state/layerOps";
+
+  /**
+   * 特效行的标题。面板 UI 是中文，所以这里自带一份；`state/layerOps.ts` 的
+   * EFFECT_KIND_TITLES 是**撤销事务名**，不面向用户，保持英文。
+   */
+  const EFFECT_LABELS: Record<EffectKind, string> = {
+    stroke: "描边",
+    shadow: "投影",
+    colorOverlay: "颜色叠加",
+    innerShadow: "内阴影",
+    outerGlow: "外发光",
+    innerGlow: "内发光",
+  };
+
+  /**
+   * 这一层挂着的特效，按 domain.Effects 的字段顺序（与 Go 和原版一致），所以行的次序
+   * 稳定，不会随对象键序变。
+   */
+  function effectKindsOf(layer: DocLayer): EffectKind[] {
+    const effects = layer.effects;
+    if (!effects) return [];
+    return (Object.keys(EFFECT_LABELS) as EffectKind[]).filter((kind) => effects[kind] != null);
+  }
 
   /**
    * Ctrl（macOS 的 ⌘）点缩略图把该层的像素 / 蒙版载入为选区；Shift 加选、Alt 减选
@@ -461,6 +485,21 @@
             </select>
           </div>
         {/if}
+        {#each effectKindsOf(layer) as kind (kind)}
+          <div class="effect-row">
+            <span class="effect-name">{EFFECT_LABELS[kind]}</span>
+            <button
+              class="effect-delete"
+              type="button"
+              title={`删除${EFFECT_LABELS[kind]}`}
+              aria-label={`删除 ${layer.name} 的${EFFECT_LABELS[kind]}`}
+              onclick={(e) => {
+                e.stopPropagation();
+                void layerOps.deleteEffect(layer.id, kind);
+              }}
+            >×</button>
+          </div>
+        {/each}
       </div>
     {:else}
       <div class="panel-empty">暂无图层</div>
@@ -540,6 +579,38 @@
     display: flex;
     flex-direction: column;
     gap: 1px;
+  }
+
+  /* 特效行：缩进在图层名下面，与蒙版行同一层视觉层次。 */
+  .effect-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 1px 4px 1px 26px;
+    font-size: 11px;
+    color: var(--text-dim);
+  }
+
+  .effect-name {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .effect-delete {
+    border: none;
+    background: transparent;
+    color: var(--text-dim);
+    cursor: pointer;
+    font-size: 12px;
+    line-height: 1;
+    padding: 0 4px;
+  }
+
+  .effect-delete:hover {
+    color: var(--text-strong);
   }
 
   .layer-entry[data-drop-placement="before"] { border-top: 2px solid var(--accent); }

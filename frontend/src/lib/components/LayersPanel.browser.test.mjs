@@ -43,7 +43,8 @@ beforeEach(async () => {
     const { getCanvasEditTarget } = await import("/src/lib/state/layerTarget.ts");
     window.editTarget = getCanvasEditTarget;
     window.doc = { documentID: "tab-a", width: 4, height: 4, activeLayerID: "b", layers: [
-      { id: "a", name: "Alpha", isVisible: true, imageFile: "a.png", maskFile: "a.mask.png", transform: { origin: [0, 0], size: [4, 4] } },
+      { id: "a", name: "Alpha", isVisible: true, imageFile: "a.png", maskFile: "a.mask.png", transform: { origin: [0, 0], size: [4, 4] },
+        effects: { shadow: { angle: 90, distance: 2, blur: 4, red: 0, green: 0, blue: 0, opacity: 0.5 } } },
       { id: "b", name: "Beta", isVisible: true, imageFile: "b.png", transform: { origin: [0, 0], size: [4, 4] } },
       { id: "g", name: "Folder", isVisible: true, isGroup: true, transform: { origin: [0, 0], size: [4, 4] } },
     ] };
@@ -74,6 +75,7 @@ beforeEach(async () => {
           if (op === "setActive") window.doc.activeLayerID = payload.id;
           if (op === "setVisible") window.doc.layers.find(l => l.id === payload.id).isVisible = payload.visible;
           if (op === "rename") window.doc.layers.find(l => l.id === payload.id).name = payload.name;
+          if (op === "deleteEffect") delete window.doc.layers.find(l => l.id === payload.id).effects[payload.kind];
           window.rev++;
           return window.snapshot();
         },
@@ -104,6 +106,20 @@ it("clears a mask target when an external action selects another layer", async (
   await page.evaluate(() => { window.doc.activeLayerID = "b"; window.rev++; window.apply(); });
   await poll(() => page.locator(".mask-row.active").count()).toBe(0);
   expect(await page.locator(".panel-actions button").last().textContent()).toMatch(/^\s*删除\s*$/);
+});
+
+// C53：图层挂着的特效在面板里要看得见、删得掉 —— 从 PSD 带进来的特效此前完全没有行。
+it("lists a layer's effects and deletes one from its row", async () => {
+  await poll(() => page.locator('[data-layer-id="a"] .effect-row').count()).toBe(1);
+  await poll(() => page.locator('[data-layer-id="a"] .effect-name').textContent()).toBe("投影");
+  // 没有特效的图层不该长出空行。
+  expect(await page.locator('[data-layer-id="b"] .effect-row').count()).toBe(0);
+
+  await page.locator('[data-layer-id="a"] .effect-delete').click();
+  await poll(() => page.evaluate(() => window.requests.filter(r => r.op === "deleteEffect").length)).toBe(1);
+  expect(await page.evaluate(() => window.requests.find(r => r.op === "deleteEffect").payload))
+    .toEqual({ id: "a", kind: "shadow" });
+  await poll(() => page.locator('[data-layer-id="a"] .effect-row').count()).toBe(0);
 });
 
 it("selects and edits a disabled mask, preserves its target through control keyboard events", async () => {

@@ -112,7 +112,7 @@
 | C50 | Move Layer Up/Down | ] / [ | 17 | M3 | ☑ 票47：Go moveLayer + 图层菜单与快捷键（方向键 Nudge 亦已接，走 nudgeLayer） |
 | C51 | Merge（向下合并/合并所选/合并组，随上下文变标题） | ⌘E | 17 | M3 | ☑ 票47：Go `mergeLayers`（render.Render 合成参与层、剪贴重指向、一步撤销）+ 菜单标题随上下文 |
 | C52 | Flip Layer H/V | — | 33 | M3 | ☑ `actions.ts:717 flipLayer`：开变换会话 → `flipTransform` → `commitTransformSession`（非破坏，走 `ApplyLayerTransformToTab`）；图层菜单两项（`MenuBar.svelte:597,605`）。无快捷键（原版也没有） |
-| C53 | Delete Layer / Layer Mask / Effect（随选中项变标题） | — | 17 | M3 | ◐ 票47：删层（⌫/菜单）与 Go `deleteLayerMask`/`deleteEffect` 已就绪；面板还没有蒙版/特效行的右键入口 |
+| C53 | Delete Layer / Layer Mask / Effect（随选中项变标题） | — | 17 | M3 | ☑ 删层（⌫/菜单，`actions.ts:864` 按选区→蒙版→图层路由）、删蒙版（蒙版行菜单的「删除蒙版」与面板底部按钮，`LayersPanel.svelte:460,477`）都在。**特效行此前根本不存在**——从 PSD 带进来的图层特效既看不见也删不掉；本轮补上：面板在每个图层下列出它挂着的特效（标题按 domain.Effects 字段序，中文），每行一个删除按钮走 `layerOps.deleteEffect(id, kind)` → Go `deleteEffect`（`document.ts:593`）。用例见 `LayersPanel.browser.test.mjs`（列出、按 kind 删除、无特效不长空行） |
 
 ## C. 调整图层（`AdjustmentKind`，12 种，非破坏）
 
