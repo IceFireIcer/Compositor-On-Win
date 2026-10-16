@@ -51,8 +51,15 @@ func EncodePNGWithDPI(b *Bitmap, dpi int) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	return injectPNGPhys(data, dpi), nil
+}
+
+// injectPNGPhys splices a pHYs chunk (pixels per meter, unit 1) right after
+// IHDR, so the resolution survives into print/dialogs. Shared by the 8- and
+// 16-bit PNG paths.
+func injectPNGPhys(data []byte, dpi int) []byte {
 	if dpi <= 0 {
-		return data, nil
+		return data
 	}
 	ppm := uint32(float64(dpi)/0.0254 + 0.5)
 	phys := make([]byte, 0, 21)
@@ -64,12 +71,12 @@ func EncodePNGWithDPI(b *Bitmap, dpi int) ([]byte, error) {
 	phys = binary.BigEndian.AppendUint32(phys, crc32.ChecksumIEEE(phys[4:17]))
 	// Signature (8) + IHDR chunk (25) = 33: the first chunk always ends there.
 	if len(data) < 33 {
-		return data, nil
+		return data
 	}
 	out := make([]byte, 0, len(data)+len(phys))
 	out = append(out, data[:33]...)
 	out = append(out, phys...)
-	return append(out, data[33:]...), nil
+	return append(out, data[33:]...)
 }
 
 // EncodeJPEGWithDPI flattens onto the given opaque background, encodes at

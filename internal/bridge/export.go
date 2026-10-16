@@ -180,6 +180,9 @@ type exportAsRequest struct {
 	Quality     int    `json:"quality"`
 	Background  string `json:"background"`
 	DefaultName string `json:"defaultName"`
+	// SixteenBit keeps 16 bits a channel (ticket 84). Only PNG and TIFF carry
+	// it, and only when the flattened result is a layer's own deep raster.
+	SixteenBit bool `json:"sixteenBit"`
 }
 
 // exportFormat is one Export As format: the menu label, the save dialog's
@@ -362,6 +365,20 @@ func (s *Service) ExportAs(requestJSON string) (string, error) {
 		return "", errNoDocument
 	}
 	format, _ := exportFormatFor(req.Format)
+	// 16 位先在这里定下来：拿不到就在**弹保存对话框之前**报错，用户不必先选路径再被拒。
+	// 失败不碰文档、历史与脏标记（导出本来就是只读）。
+	var deep16 *render.DeepRaster
+	if req.SixteenBit {
+		if format.id != "png" && format.id != "tiff" {
+			return "", fmt.Errorf("16 位每通道只支持 PNG 与 TIFF，%s 不支持", format.label)
+		}
+		if deep16, err = s.ws.sixteenBitExportRaster(); err != nil {
+			return "", fmt.Errorf("16 位导出不可用：%w", err)
+		}
+		if req.Width > 0 && req.Height > 0 && (req.Width != deep16.W || req.Height != deep16.H) {
+			return "", fmt.Errorf("16 位导出不支持改变尺寸（%d×%d → %d×%d）", deep16.W, deep16.H, req.Width, req.Height)
+		}
+	}
 	name := strings.TrimSpace(req.DefaultName)
 	if name == "" {
 		name = "未命名" + format.ext
@@ -369,6 +386,12 @@ func (s *Service) ExportAs(requestJSON string) (string, error) {
 	br, bg, bb := parseBackground(req.Background)
 	return s.writeExport("导出 "+format.label, name, []runtime.FileFilter{format.filter}, format.accepted, format.ext,
 		func(bmp *render.Bitmap, res int) ([]byte, error) {
+			if deep16 != nil {
+				if format.id == "png" {
+					return render.EncodePNG16WithDPI(deep16, res)
+				}
+				return render.EncodeTIFF16WithDPI(deep16, res)
+			}
 			w, h := req.targetSize(bmp.W, bmp.H)
 			sized := bmp
 			if w != bmp.W || h != bmp.H {

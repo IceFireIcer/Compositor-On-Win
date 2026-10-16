@@ -36,6 +36,8 @@
   let width = $state(0);
   let height = $state(0);
   let quality = $state(rememberedQuality());
+  // 票 84：16 位每通道。只对 PNG/TIFF 有意义（上游同样只在 PNG 上给这个开关）。
+  let sixteenBit = $state(false);
   let background = $state("#ffffff");
   let zoom = $state<number | null>(null);
   let ready = $state(false);
@@ -74,7 +76,7 @@
   // 设置变化 → 重编码预览（150ms 防抖，与滤镜/JPEG 预览一致）。
   let debounce: ReturnType<typeof setTimeout> | null = null;
   $effect(() => {
-    const request: ExportPreviewRequest = { format, width, height, quality, background };
+    const request: ExportPreviewRequest = { format, width, height, quality, background, sixteenBit };
     if (!ready || width < 1 || height < 1) return;
     if (debounce) clearTimeout(debounce);
     debounce = setTimeout(() => {
@@ -145,7 +147,7 @@
     exporting = true;
     error = null;
     try {
-      if (await commitExport({ format, width, height, quality, background })) close();
+      if (await commitExport({ format, width, height, quality, background, sixteenBit })) close();
     } catch (err) {
       error = err instanceof Error ? err.message : String(err);
     } finally {
@@ -262,6 +264,14 @@
         <span class="label">质量</span>
         <input class="quality" type="range" min="1" max="100" bind:value={quality} />
         <span class="percent">{quality}%</span>
+      </label>
+    {/if}
+
+    {#if format === "png" || format === "tiff"}
+      <label class="row">
+        <span class="label">16 位</span>
+        <input type="checkbox" bind:checked={sixteenBit} />
+        <span class="hint">每通道 16 位，文件约大一倍（需要 16 位图层且画布上只有它）</span>
       </label>
     {/if}
 

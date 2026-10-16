@@ -159,13 +159,19 @@ export function rememberedQuality(): number {
   return Number.isFinite(value) && value >= 1 && value <= 100 ? Math.round(value) : DEFAULT_QUALITY;
 }
 
-/** 一次导出预览请求：格式、目标像素、JPEG 质量与压平背景色。 */
+/**
+ * 一次导出预览请求：格式、目标像素、JPEG 质量、压平背景色，以及票 84 的「16 位每通道」。
+ *
+ * `sixteenBit` 只对 PNG/TIFF 有意义，而且只在「拼合结果就是某层的深层栅格」时才可用 ——
+ * 条件由 Go 判定，不可用时导出会带着具体原因失败（绝不用 8 位结果套 16 位文件头）。
+ */
 export interface ExportPreviewRequest {
   format: ExportKind;
   width: number;
   height: number;
   quality: number;
   background: string;
+  sixteenBit?: boolean;
 }
 
 /**

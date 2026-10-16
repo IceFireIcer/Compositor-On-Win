@@ -3,7 +3,6 @@ package render
 import (
 	"bytes"
 	"image"
-	"image/color"
 	"image/png"
 	"math"
 )
@@ -191,24 +190,7 @@ func (d *DeepRaster) Peak() float32 {
 // alpha — the same round trip CoreGraphics performs on the macOS side, with
 // the same at-most-one-step rounding (ADR-0007 §6).
 func EncodePNG16(d *DeepRaster) ([]byte, error) {
-	img := image.NewNRGBA64(image.Rect(0, 0, d.W, d.H))
-	for y := 0; y < d.H; y++ {
-		for x := 0; x < d.W; x++ {
-			i := (y*d.W + x) * 4
-			a := uint32(d.Pix[i+3])
-			var c [3]uint16
-			if a != 0 {
-				for k := 0; k < 3; k++ {
-					v := uint32(d.Pix[i+k]) * 65535 / a
-					if v > 65535 {
-						v = 65535
-					}
-					c[k] = uint16(v)
-				}
-			}
-			img.SetNRGBA64(x, y, color.NRGBA64{R: c[0], G: c[1], B: c[2], A: uint16(a)})
-		}
-	}
+	img := deepNRGBA64(d)
 	var buf bytes.Buffer
 	if err := png.Encode(&buf, img); err != nil {
 		return nil, err
