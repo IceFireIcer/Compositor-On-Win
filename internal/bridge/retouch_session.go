@@ -380,9 +380,20 @@ func (s *Service) EndRetouchStroke(token string, cancel bool) (string, error) {
 	return sess.envelope()
 }
 
+// warpResult is WarpStroke.Commit plus the deep reconcile the commit needs:
+// Commit builds a fresh 8-bit raster, so a wide layer's full-precision raster
+// has to be told what the stroke changed, or one blur/smudge/liquify pass
+// would flatten a 16-bit layer to 8 bits (ticket 82). The clone mode's
+// cloneResultFromCoverage does the same for its own raster.
+func (p *retouchSession) warpResult() *render.Bitmap {
+	out := p.warp.Commit()
+	takePainted(out, p.base)
+	return out
+}
+
 func (p *retouchSession) cloneResult() (*render.Bitmap, error) {
 	if p.mode != "clone" {
-		return p.warp.Commit(), nil
+		return p.warpResult(), nil
 	}
 	p.coverage.Finish()
 	return p.cloneResultFromCoverage(p.coverage.View().Bitmap())
@@ -393,7 +404,7 @@ func (p *retouchSession) cloneResult() (*render.Bitmap, error) {
 // to the same token after the HTTP preview completes.
 func (p *retouchSession) previewResult() (*render.Bitmap, error) {
 	if p.mode != "clone" {
-		return p.warp.Commit(), nil
+		return p.warpResult(), nil
 	}
 	return p.cloneResultFromCoverage(p.coverage.View().Bitmap())
 }

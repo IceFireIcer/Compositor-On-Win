@@ -239,6 +239,11 @@ func (s *Service) DrawGradient(tabID string, startX, startY, endX, endY float64,
 		if bytes.Equal(base.Pix, after.Pix) {
 			return nil, nil
 		}
+		// renderDrawingGradient clones the base, so a wide layer's deep raster
+		// rides along untouched: the gradient would show on the canvas but Save
+		// would write the pre-gradient samples back. Fold the changed pixels in,
+		// exactly as the fill and erase paths do (ticket 82).
+		takePainted(after, base)
 		sess.bitmaps[target.key] = after
 		// Pixel edits replace the editable object, as commitRasterEdit does in
 		// Swift. Keep its metadata until a changed result actually commits.

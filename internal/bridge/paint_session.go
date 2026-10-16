@@ -337,6 +337,12 @@ func (s *Service) EndPaintStroke(token string, cancel bool) (string, error) {
 	if !p.targetMask {
 		l.Shape, l.Text = nil, nil
 	}
+	// The stroke commits a fresh 8-bit grid, so a wide layer's deep raster has
+	// to be told what the stroke changed; without this a single brush stroke
+	// flattened a 16-bit layer to 8 bits (ticket 82). The healing path below
+	// does the same. The frontend uses this token path, not BeginStroke/
+	// EndStroke, so this is the one that matters.
+	takePainted(after, p.grid)
 	sess.bitmaps[p.key] = after
 	sess.hist.EndForced(*sess.doc, sess.doc.ActiveLayerID)
 	sess.journalRasters(sess.hist.Revision(), map[string]*render.Bitmap{p.key: p.base}, map[string]*render.Bitmap{p.key: after})

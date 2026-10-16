@@ -309,6 +309,9 @@ func (s *Service) CommitGradientEdit(token string, cancel bool) (string, error) 
 	if !p.targetMask {
 		l.Shape, l.Text = nil, nil
 	}
+	// Same as DrawGradient: the result is a clone of the base, so a wide
+	// layer's deep raster has to be told what the gradient changed (ticket 82).
+	takePainted(after, p.grid)
 	sess.bitmaps[p.key] = after
 	sess.hist.EndForced(*sess.doc, sess.doc.ActiveLayerID)
 	sess.journalRasters(sess.hist.Revision(), map[string]*render.Bitmap{p.key: p.original}, map[string]*render.Bitmap{p.key: after})
