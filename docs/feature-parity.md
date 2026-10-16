@@ -31,7 +31,7 @@
 | # | 命令 | 快捷键 | 故事# | 里程碑 | 状态 |
 | --- | --- | --- | --- | --- | --- |
 | C01 | New Canvas…（欢迎屏） | ⌘N→Ctrl+N | 9 | M0 | ☑ 票02：欢迎屏 + 新建画布表单（`App.svelte:174`、`components/NewCanvasSheet.svelte`），限额来自 Go（`internal/domain/limits.go:40`、`limits_test.go`）；文件菜单与 ⌘N 可达 |
-| C02 | Open Project… / 拖放打开 | ⌘O | 1 | M1/M9 | ◐ 打开对话框/最近/双击关联/命令行参数都通（`state/shell.ts:50 openPath`、`internal/bridge/project_io.go:94`）；但把 .comp 拖到窗口走图像导入（`App.svelte:112 importDroppedPaths` → `internal/bridge/import_images.go:283 rasterio.Decode`），拖放不会打开项目 |
+| C02 | Open Project… / 拖放打开 | ⌘O | 1 | M1/M9 | ☑ 打开对话框/最近/双击关联/命令行参数都通（`state/shell.ts:50 openPath`、`internal/bridge/project_io.go:94`）；**拖放也会开项目**：`App.svelte` 的 `onDroppedPaths` 走 `routeDroppedPaths`（`state/workspace.ts:317`），它按 `isCompProjectPath` 分流 —— `.comp` 走 `OpenPathRPC`（需要转换时回落确认表单），其余才是图像导入。**此前的「把 .comp 拖到窗口走图像导入」已过期**（引用的 `App.svelte:112 importDroppedPaths` 早已改道） |
 | C03 | Open Recent（含清除） | — | 53 | M9 | ☑ 票49：文件菜单逐条列出最近项目（完整路径在 tooltip）+ 清除最近记录；列表上限 10、读取时过滤已移动/删除的文件（RecentProjects.refresh 语义），与 Windows 跳转列表共用一份 |
 | C04 | Import Images… | — | 46 | M7 | ☑ 票40（多选批次，RAW/HEIC 随票41） |
 | C05 | Save / Save As | ⌘S / ⇧⌘S | 49 | M1 | ☑ 票49：保存/另存为共用 `saveProject()`（`state/workspace.ts:128`）→ Go `SaveProjectDialog`（`project_io.go`），原子保存与往返测试（`project/store_test.go`、`document_test.go:671`） |
@@ -211,7 +211,7 @@
 | V02 | 像素网格 ≥800% / 棋盘格 / 文档边界 | `drawPixelGrid` | 5/8 | M3 | ☑ 像素网格 ≥800%（`CanvasSurface.svelte:320`）+ 棋盘格 + 文档边界叠层（`CanvasSurface.svelte:828-857`），`viewport.test.ts` 覆盖阈值 |
 | V03 | 标尺/参考线（拖出/移动/拖回删除/锁定/清除）/布局网格 | `Guides.swift` | 6-7 | M3 | ☑ 标尺（`CanvasSurface.svelte:974-999`）+ 参考线拖出/移动/拖回标尺删除（`:602,635,750`）+ 锁定（`:582`）+ 清除（`MenuBar.svelte:530`）+ 布局网格（`:858`）；持久化走 `SetGuides`（`internal/bridge/guides.go:30`、`guides_test.go`） |
 | V04 | 吸附：参考线/网格/图层/文档边界 + Ctrl 旁路 | `TransformSnap`/`CropSnap` | 35 | M3 | ☑ 内核齐备（`state/snap.ts`、`snap.test.ts`，含 Ctrl 旁路与四目标）且已有消费端：图层拖拽（`CanvasSurface.svelte` 的 `canvasSnapInput`）与裁剪（`CropOverlay.svelte:233,242`）都把 targets 传进 `snap()`；票76 补上总开关门控与偏好持久化 |
-| V05 | 锐利缩小采样（Lanczos 级联） | `DownsampleCache` | 51 | M2 | ☐ 全仓无 Lanczos/降采样实现（internal/render grep = 0），缩放靠 CSS img |
+| V05 | 锐利缩小采样（Lanczos 级联） | `DownsampleCache` | 51 | M2 | ◐ **降采样有，Lanczos 没有**：`render.ResampleBitmap`（`internal/render/export.go:123`）缩小时走 `DownscaleBitmap` 的**盒平均**、放大走双线性，导出与滤镜预览都在用（`export.go:371,323`、`filter_session.go:433`）。原版要的是 Lanczos 级联（更锐的缩小），未实现。**此前的「全仓无降采样实现」不准确** |
 | V06 | 数值拖拽调节（拖标签 scrub）/方向键步进/点击跳转 | `NumericScrub`/`SliderSnap` | 54 | M3 控件 | ◐ 纯函数 + 测试齐备（`components/numeric.ts:68,102,116`、`numeric.test.ts`）；零生产消费者（各表单仍用原生 input） |
 | V07 | 合成徽标光标（加选/减选/吸管/旋转等 ~10 种） | NSCursor 家族 | — | M3 | ☑ 票13：合成徽标光标按工具/修饰键切换（`components/cursors.ts`、`cursors.test.ts`），已接画布（`CanvasSurface.svelte:340`） |
 | V08 | 右键拖拽笔刷 HUD | `EditorCanvas` | 18 | M4 | ☑ `lib/gpu/brushCursor.ts` + `brushCursor.test.ts`；画布右键在笔刷类工具上开 `beginBrushTipDrag`（`CanvasSurface.svelte:1014-1018`，`e.button === 2 && BRUSH_TOOLS.has($activeTool)`），拖动走 `dragBrushTip`（`:1186`） |
