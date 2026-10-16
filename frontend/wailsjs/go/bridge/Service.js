@@ -70,6 +70,10 @@ export function CameraRawAutoWhiteBalance() {
   return window['go']['bridge']['Service']['CameraRawAutoWhiteBalance']();
 }
 
+export function CameraRawGroupDefaults(arg1) {
+  return window['go']['bridge']['Service']['CameraRawGroupDefaults'](arg1);
+}
+
 export function CameraRawDefringeSample(arg1, arg2, arg3) {
   return window['go']['bridge']['Service']['CameraRawDefringeSample'](arg1, arg2, arg3);
 }

@@ -3,6 +3,7 @@ package render
 // 票 80：Camera Raw 的分区重置。
 
 import (
+	"encoding/json"
 	"reflect"
 	"testing"
 
@@ -98,6 +99,94 @@ func TestGroupDefaultDetection(t *testing.T) {
 		if changed.IsGroupDefault(group) {
 			t.Errorf("%s：被改过却算默认 —— 夹具没覆盖到这个分区", group)
 		}
+	}
+}
+
+// jsonValueIsZero reports whether a decoded JSON value is its type's zero, so a
+// group's touched fields can be read off a marshalled struct (which always
+// carries every key).
+func jsonValueIsZero(v any) bool {
+	switch t := v.(type) {
+	case nil:
+		return true
+	case bool:
+		return !t
+	case float64:
+		return t == 0
+	case string:
+		return t == ""
+	case []any:
+		for _, item := range t {
+			if !jsonValueIsZero(item) {
+				return false
+			}
+		}
+		return true
+	case map[string]any:
+		for _, item := range t {
+			if !jsonValueIsZero(item) {
+				return false
+			}
+		}
+		return true
+	}
+	return false
+}
+
+// 键清单必须与 copyCameraRawGroup 实际复制的字段一致。夹具把**每个**字段都改离默认，
+// 所以 KeepingGroup 里非零的那些键就是该分区真正拥有的字段 —— 与清单对不上就说明一边加了
+// 字段另一边没加，重置会悄悄漏掉或多重置。
+func TestGroupJSONKeysMatchTheCopiedFields(t *testing.T) {
+	changed := cameraRawAllChanged()
+	for _, group := range CameraRawGroups {
+		blob, err := json.Marshal(changed.KeepingGroup(group))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var all map[string]any
+		if err := json.Unmarshal(blob, &all); err != nil {
+			t.Fatal(err)
+		}
+		touched := map[string]bool{}
+		for key, value := range all {
+			if !jsonValueIsZero(value) {
+				touched[key] = true
+			}
+		}
+		listed := map[string]bool{}
+		for _, key := range cameraRawGroupJSONKeys[group] {
+			listed[key] = true
+		}
+		for key := range touched {
+			if !listed[key] {
+				t.Errorf("%s：copyCameraRawGroup 复制了 %q，键清单里没有", group, key)
+			}
+		}
+		for key := range listed {
+			if !touched[key] {
+				t.Errorf("%s：键清单里有 %q，copyCameraRawGroup 却没复制（或夹具没改到它）", group, key)
+			}
+		}
+	}
+}
+
+// 回包只带该分区的键，且零值也要在（调用方需要看到「现在曝光是 0」，而不是「没提曝光」）。
+func TestGroupDefaultFieldsCarryOnlyThatGroup(t *testing.T) {
+	fields, err := CameraRawGroupDefaultFields(CameraRawGroupLight)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]bool{"exposure": true, "contrast": true, "highlights": true, "shadows": true, "whites": true, "blacks": true}
+	if len(fields) != len(want) {
+		t.Fatalf("Light 回包有 %d 个键，想要 %d：%v", len(fields), len(want), fields)
+	}
+	for key := range want {
+		if _, ok := fields[key]; !ok {
+			t.Errorf("Light 回包缺少 %q", key)
+		}
+	}
+	if _, err := CameraRawGroupDefaultFields("Nope"); err == nil {
+		t.Fatal("未知分区应当报错")
 	}
 }
 

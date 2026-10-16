@@ -13,6 +13,8 @@ package render
 // CameraRawDetailOptics.swift:5-59、CameraRawGeometryCalibration.swift:213）。
 
 import (
+	"encoding/json"
+	"fmt"
 	"reflect"
 
 	"compositor-win/internal/domain"
@@ -111,6 +113,70 @@ func copyCameraRawGroup(group CameraRawGroup, from CameraRawSettings, to *Camera
 	case CameraRawGroupCalibration:
 		to.Calibration = from.Calibration
 	}
+}
+
+// cameraRawGroupJSONKeys is which top-level settings keys each section owns, in
+// the wire spelling. It mirrors copyCameraRawGroup: a test pins the two
+// together, so a field added to one and not the other fails instead of silently
+// resetting the wrong thing.
+var cameraRawGroupJSONKeys = map[CameraRawGroup][]string{
+	CameraRawGroupLight: {"exposure", "contrast", "highlights", "shadows", "whites", "blacks"},
+	CameraRawGroupColor: {"whiteBalance", "temperature", "tint", "vibrance", "saturation"},
+	CameraRawGroupEffects: {
+		"texture", "clarity", "dehaze",
+		"glow", "glowStyle", "glowRange", "glowSpread", "glowWarmth",
+		"vignetteAmount", "vignetteStyle", "vignetteMidpoint", "vignetteRoundness",
+		"vignetteFeather", "vignetteHighlights",
+		"grainAmount", "grainSize", "grainRoughness",
+	},
+	CameraRawGroupCurve:       {"curve"},
+	CameraRawGroupMixer:       {"mixer"},
+	CameraRawGroupGrading:     {"grading"},
+	CameraRawGroupDetail:      {"detail"},
+	CameraRawGroupOptics:      {"optics"},
+	CameraRawGroupGeometry:    {"geometry"},
+	CameraRawGroupCalibration: {"calibration"},
+}
+
+// ParseCameraRawGroup is the panel's section name as a group, and whether it is
+// one. The names are the panel's own ("Light", "Color Mixer", …).
+func ParseCameraRawGroup(name string) (CameraRawGroup, bool) {
+	for _, group := range CameraRawGroups {
+		if string(group) == name {
+			return group, true
+		}
+	}
+	return "", false
+}
+
+// CameraRawGroupDefaultFields is one section's defaults as a JSON-ready map
+// carrying only that section's keys, so a caller can merge it over its own
+// settings without disturbing the other sections.
+//
+// Only the section's keys are returned, and zero-valued ones are kept: a caller
+// merging this has to see "exposure is 0 now", not "exposure is unmentioned".
+func CameraRawGroupDefaultFields(group CameraRawGroup) (map[string]any, error) {
+	keys, ok := cameraRawGroupJSONKeys[group]
+	if !ok {
+		return nil, fmt.Errorf("未知的 Camera Raw 分区: %q", group)
+	}
+	blob, err := json.Marshal(DefaultCameraRawSettings())
+	if err != nil {
+		return nil, err
+	}
+	var all map[string]any
+	if err := json.Unmarshal(blob, &all); err != nil {
+		return nil, err
+	}
+	out := make(map[string]any, len(keys))
+	for _, key := range keys {
+		value, present := all[key]
+		if !present {
+			return nil, fmt.Errorf("分区 %s 的键 %q 不在设置里 —— 键清单与结构体脱节了", group, key)
+		}
+		out[key] = value
+	}
+	return out, nil
 }
 
 // ResetGroup is resetting: these settings with `group` back to its defaults,

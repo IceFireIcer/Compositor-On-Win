@@ -1360,6 +1360,30 @@ func (s *Service) CameraRawAutoWhiteBalance() (string, error) {
 	return string(out), nil
 }
 
+// CameraRawGroupDefaults returns one Camera Raw panel section's defaults, keyed
+// the way the panel reads them, so a section can be put back to its defaults
+// without the frontend carrying its own copy of them (ticket 80).
+//
+// The defaults are not all zero: the curve's dividers, the glow and vignette
+// styles, the lens profile percentages, the grading blend and the process
+// version all have values. Only the section's own keys come back, so the caller
+// can merge them without disturbing the other sections.
+func (s *Service) CameraRawGroupDefaults(group string) (string, error) {
+	parsed, ok := render.ParseCameraRawGroup(group)
+	if !ok {
+		return "", fmt.Errorf("未知的 Camera Raw 分区: %q", group)
+	}
+	fields, err := render.CameraRawGroupDefaultFields(parsed)
+	if err != nil {
+		return "", err
+	}
+	out, err := json.Marshal(fields)
+	if err != nil {
+		return "", err
+	}
+	return string(out), nil
+}
+
 // CameraRawDefringeSample centers the purple or green hue range on the
 // clicked fringe color (EditorSession.sampleCameraRawDefringe): whichever
 // wheel center (290° purple / 90° green) is nearer, ±25° span, arming the

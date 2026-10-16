@@ -22,108 +22,168 @@ import (
 // CameraRawCurveSettings carries the parametric regions and the four point
 // curves. Point coordinates are 0…1 on both axes.
 type CameraRawCurveSettings struct {
-	Shadows, Darks, Lights, Highlights float64
-	ShadowSplit, DarkSplit, LightSplit float64
-	RGB, Red, Green, Blue              []domain.CurvePoint
-	RefineSaturation                   float64
+	Shadows          float64             `json:"shadows"`
+	Darks            float64             `json:"darks"`
+	Lights           float64             `json:"lights"`
+	Highlights       float64             `json:"highlights"`
+	ShadowSplit      float64             `json:"shadowSplit"`
+	DarkSplit        float64             `json:"darkSplit"`
+	LightSplit       float64             `json:"lightSplit"`
+	RGB              []domain.CurvePoint `json:"rgb"`
+	Red              []domain.CurvePoint `json:"red"`
+	Green            []domain.CurvePoint `json:"green"`
+	Blue             []domain.CurvePoint `json:"blue"`
+	RefineSaturation float64             `json:"refineSaturation"`
 }
 
 // CameraRawPointColor is one picked color and how far its adjustment reaches.
 type CameraRawPointColor struct {
-	Hue, Saturation, Luminance                float64
-	HueShift, SaturationShift, LuminanceShift float64
-	HueRange, SaturationRange, LuminanceRange float64
+	Hue             float64 `json:"hue"`
+	Saturation      float64 `json:"saturation"`
+	Luminance       float64 `json:"luminance"`
+	HueShift        float64 `json:"hueShift"`
+	SaturationShift float64 `json:"saturationShift"`
+	LuminanceShift  float64 `json:"luminanceShift"`
+	HueRange        float64 `json:"hueRange"`
+	SaturationRange float64 `json:"saturationRange"`
+	LuminanceRange  float64 `json:"luminanceRange"`
 }
 
 // CameraRawMixerSettings is the eight color families plus the picked points.
 type CameraRawMixerSettings struct {
-	Hue, Saturation, Luminance [8]float64
-	Points                     []CameraRawPointColor
+	Hue        [8]float64            `json:"hue"`
+	Saturation [8]float64            `json:"saturation"`
+	Luminance  [8]float64            `json:"luminance"`
+	Points     []CameraRawPointColor `json:"points"`
 }
 
 // CameraRawGradeWheel is one color-grading wheel: hue in degrees, saturation
 // and luminance shifts.
 type CameraRawGradeWheel struct {
-	Hue, Saturation, Luminance float64
+	Hue        float64 `json:"hue"`
+	Saturation float64 `json:"saturation"`
+	Luminance  float64 `json:"luminance"`
 }
 
 // CameraRawGradingSettings is the four wheels plus how the three tonal ones
 // overlap (Blending) and which end they favor (Balance).
 type CameraRawGradingSettings struct {
-	Shadows, Midtones, Highlights, Global CameraRawGradeWheel
-	Blending, Balance                     float64
+	Shadows    CameraRawGradeWheel `json:"shadows"`
+	Midtones   CameraRawGradeWheel `json:"midtones"`
+	Highlights CameraRawGradeWheel `json:"highlights"`
+	Global     CameraRawGradeWheel `json:"global"`
+	Blending   float64             `json:"blending"`
+	Balance    float64             `json:"balance"`
 }
 
 // CameraRawDetailSettings is sharpening plus manual noise reduction.
 type CameraRawDetailSettings struct {
-	SharpenAmount, SharpenRadius, SharpenDetail, SharpenMasking  float64
-	NoiseLuminance, NoiseLuminanceDetail, NoiseLuminanceContrast float64
-	NoiseColor, NoiseColorDetail, NoiseColorSmoothness           float64
+	SharpenAmount          float64 `json:"sharpenAmount"`
+	SharpenRadius          float64 `json:"sharpenRadius"`
+	SharpenDetail          float64 `json:"sharpenDetail"`
+	SharpenMasking         float64 `json:"sharpenMasking"`
+	NoiseLuminance         float64 `json:"noiseLuminance"`
+	NoiseLuminanceDetail   float64 `json:"noiseLuminanceDetail"`
+	NoiseLuminanceContrast float64 `json:"noiseLuminanceContrast"`
+	NoiseColor             float64 `json:"noiseColor"`
+	NoiseColorDetail       float64 `json:"noiseColorDetail"`
+	NoiseColorSmoothness   float64 `json:"noiseColorSmoothness"`
 }
 
 // CameraRawOpticsSettings is lens profile toggles, manual distortion,
 // defringe, and lens-vignetting correction.
 type CameraRawOpticsSettings struct {
-	RemoveChromaticAberration, EnableLensProfile bool
-	ProfileDistortion, ProfileVignetting         float64
-	Distortion                                   float64
-	PurpleAmount, PurpleHueLow, PurpleHueHigh    float64
-	GreenAmount, GreenHueLow, GreenHueHigh       float64
-	VignetteAmount, VignetteMidpoint             float64
+	RemoveChromaticAberration bool    `json:"removeChromaticAberration"`
+	EnableLensProfile         bool    `json:"enableLensProfile"`
+	ProfileDistortion         float64 `json:"profileDistortion"`
+	ProfileVignetting         float64 `json:"profileVignetting"`
+	Distortion                float64 `json:"distortion"`
+	PurpleAmount              float64 `json:"purpleAmount"`
+	PurpleHueLow              float64 `json:"purpleHueLow"`
+	PurpleHueHigh             float64 `json:"purpleHueHigh"`
+	GreenAmount               float64 `json:"greenAmount"`
+	GreenHueLow               float64 `json:"greenHueLow"`
+	GreenHueHigh              float64 `json:"greenHueHigh"`
+	VignetteAmount            float64 `json:"vignetteAmount"`
+	VignetteMidpoint          float64 `json:"vignetteMidpoint"`
 }
 
 // CameraRawGeometryGuide is four normalized coordinates: start x/y, end x/y.
 type CameraRawGeometryGuide struct {
-	StartX, StartY, EndX, EndY float64
+	StartX float64 `json:"startX"`
+	StartY float64 `json:"startY"`
+	EndX   float64 `json:"endX"`
+	EndY   float64 `json:"endY"`
 }
 
 // CameraRawGeometrySettings is perspective and affine geometry on the pixel
 // grid (Upright modes fold guide lines into vertical/horizontal/rotate).
 type CameraRawGeometrySettings struct {
-	Upright                         string // "Off" | "Guided"
-	Projection                      string // "Perspective" | "Rectilinear"
-	Vertical, Horizontal, Rotate    float64
-	Aspect, Scale, OffsetX, OffsetY float64
-	ConstrainCrop                   bool
-	Guides                          []CameraRawGeometryGuide
+	Upright       string                   `json:"upright"`    // "Off" | "Guided"
+	Projection    string                   `json:"projection"` // "Perspective" | "Rectilinear"
+	Vertical      float64                  `json:"vertical"`
+	Horizontal    float64                  `json:"horizontal"`
+	Rotate        float64                  `json:"rotate"`
+	Aspect        float64                  `json:"aspect"`
+	Scale         float64                  `json:"scale"`
+	OffsetX       float64                  `json:"offsetX"`
+	OffsetY       float64                  `json:"offsetY"`
+	ConstrainCrop bool                     `json:"constrainCrop"`
+	Guides        []CameraRawGeometryGuide `json:"guides"`
 }
 
 // CameraRawCalibrationSettings is camera calibration before the main grade.
 type CameraRawCalibrationSettings struct {
-	Process int // 1…6, the kernel's processVersion
-	ShadowTint, RedHue, RedSaturation, GreenHue, GreenSaturation,
-	BlueHue, BlueSaturation float64
+	Process         int     `json:"process"` // 1…6, the kernel's processVersion
+	ShadowTint      float64 `json:"shadowTint"`
+	RedHue          float64 `json:"redHue"`
+	RedSaturation   float64 `json:"redSaturation"`
+	GreenHue        float64 `json:"greenHue"`
+	GreenSaturation float64 `json:"greenSaturation"`
+	BlueHue         float64 `json:"blueHue"`
+	BlueSaturation  float64 `json:"blueSaturation"`
 }
 
 // CameraRawSettings is the whole Camera Raw filter (Filters.swift nests this
 // under FilterSettings.cameraRaw).
 type CameraRawSettings struct {
-	WhiteBalance                           string // "Custom" | "Auto" (UI state, no kernel effect)
-	Temperature, Tint                      float64
-	Exposure, Contrast                     float64
-	Highlights, Shadows                    float64
-	Whites, Blacks                         float64
-	Vibrance, Saturation                   float64
-	Texture, Clarity, Dehaze               float64
-	Glow                                   float64
-	GlowStyle                              int // 0 diffusion, 1 bloom, 2 halation
-	GlowRange, GlowSpread, GlowWarmth      float64
-	VignetteAmount                         float64
-	VignetteStyle                          int // 0 highlight priority, 1 color priority, 2 paint overlay
-	VignetteMidpoint, VignetteRoundness    float64
-	VignetteFeather, VignetteHighlights    float64
-	GrainAmount, GrainSize, GrainRoughness float64
-	Curve                                  CameraRawCurveSettings
-	Mixer                                  CameraRawMixerSettings
-	Grading                                CameraRawGradingSettings
-	Detail                                 CameraRawDetailSettings
-	Optics                                 CameraRawOpticsSettings
-	Geometry                               CameraRawGeometrySettings
-	Calibration                            CameraRawCalibrationSettings
+	WhiteBalance       string                       `json:"whiteBalance"` // "Custom" | "Auto" (UI state, no kernel effect)
+	Temperature        float64                      `json:"temperature"`
+	Tint               float64                      `json:"tint"`
+	Exposure           float64                      `json:"exposure"`
+	Contrast           float64                      `json:"contrast"`
+	Highlights         float64                      `json:"highlights"`
+	Shadows            float64                      `json:"shadows"`
+	Whites             float64                      `json:"whites"`
+	Blacks             float64                      `json:"blacks"`
+	Vibrance           float64                      `json:"vibrance"`
+	Saturation         float64                      `json:"saturation"`
+	Texture            float64                      `json:"texture"`
+	Clarity            float64                      `json:"clarity"`
+	Dehaze             float64                      `json:"dehaze"`
+	Glow               float64                      `json:"glow"`
+	GlowStyle          int                          `json:"glowStyle"` // 0 diffusion, 1 bloom, 2 halation
+	GlowRange          float64                      `json:"glowRange"`
+	GlowSpread         float64                      `json:"glowSpread"`
+	GlowWarmth         float64                      `json:"glowWarmth"`
+	VignetteAmount     float64                      `json:"vignetteAmount"`
+	VignetteStyle      int                          `json:"vignetteStyle"` // 0 highlight priority, 1 color priority, 2 paint overlay
+	VignetteMidpoint   float64                      `json:"vignetteMidpoint"`
+	VignetteRoundness  float64                      `json:"vignetteRoundness"`
+	VignetteFeather    float64                      `json:"vignetteFeather"`
+	VignetteHighlights float64                      `json:"vignetteHighlights"`
+	GrainAmount        float64                      `json:"grainAmount"`
+	GrainSize          float64                      `json:"grainSize"`
+	GrainRoughness     float64                      `json:"grainRoughness"`
+	Curve              CameraRawCurveSettings       `json:"curve"`
+	Mixer              CameraRawMixerSettings       `json:"mixer"`
+	Grading            CameraRawGradingSettings     `json:"grading"`
+	Detail             CameraRawDetailSettings      `json:"detail"`
+	Optics             CameraRawOpticsSettings      `json:"optics"`
+	Geometry           CameraRawGeometrySettings    `json:"geometry"`
+	Calibration        CameraRawCalibrationSettings `json:"calibration"`
 }
 
-// cameraClampRange is ImageAdjustmentPixels.clamp: out-of-range and
-// non-finite values fall back.
 func cameraClampRange(v, lo, hi, fallback float64) float64 {
 	if math.IsNaN(v) || math.IsInf(v, 0) {
 		return fallback

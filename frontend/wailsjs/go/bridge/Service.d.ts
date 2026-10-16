@@ -37,6 +37,8 @@ export function BeginStroke(arg1:number,arg2:number):Promise<string>;
 
 export function CameraRawAutoWhiteBalance():Promise<string>;
 
+export function CameraRawGroupDefaults(arg1:string):Promise<string>;
+
 export function CameraRawDefringeSample(arg1:number,arg2:number,arg3:string):Promise<string>;
 
 export function CameraRawScope():Promise<string>;

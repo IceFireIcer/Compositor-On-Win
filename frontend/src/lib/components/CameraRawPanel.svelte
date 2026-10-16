@@ -7,6 +7,7 @@
     armedEyedropper,
     autoWhiteBalance,
     readCameraRawScope,
+    resetCameraRawSection,
   } from "../state/filters";
   import { document } from "../state/document";
   import { untrack } from "svelte";
@@ -454,6 +455,14 @@
               onclick={() => eye(section)}
             >
               {eyeOn(section) ? "◉" : "◌"}
+            </button>
+            <button
+              class="reset"
+              title={`${SECTION_LABELS[section]} 恢复默认`}
+              aria-label={`${SECTION_LABELS[section]} 恢复默认`}
+              onclick={() => void resetCameraRawSection(section)}
+            >
+              ↺
             </button>
           </div>
 
@@ -908,6 +917,18 @@
 
   .eye.off {
     opacity: 0.4;
+  }
+
+  .reset {
+    background: transparent;
+    border: none;
+    font-size: 13px;
+    padding: 0 4px;
+    opacity: 0.7;
+  }
+
+  .reset:hover {
+    opacity: 1;
   }
 
   .controls {

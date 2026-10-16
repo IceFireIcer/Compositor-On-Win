@@ -17,6 +17,7 @@ import {
   eyedropperClick,
   watchFilterPreviews,
   readCameraRawScope,
+  resetCameraRawSection,
   autoLevels,
   sampleLevels,
 } from "./filters";
@@ -49,6 +50,7 @@ const bridge = {
   CameraRawAutoWhiteBalance: vi.fn(),
   CameraRawWhiteBalanceSample: vi.fn(),
   CameraRawDefringeSample: vi.fn(),
+  CameraRawGroupDefaults: vi.fn(),
   CameraRawScope: vi.fn(),
   LevelsAuto: vi.fn(),
   ApplyLevelsSample: vi.fn(),
@@ -240,6 +242,28 @@ describe("filter dialog session through the Wails boundary", () => {
     expect(bridge.UpdateFilterPreview).not.toHaveBeenCalled();
     workspace.set({ tabs, activeId: "filter-doc" });
     expect(get(filterSession)?.settings.cameraRaw.exposure).toBe(2);
+  });
+
+  // 票 80：分区重置。默认值来自 Go（它们不是零值），这里只合并该分区的键、把它的眼睛打开，
+  // 别的分区一个键都不许动。
+  it("resets one section to Go's defaults and leaves the others alone", async () => {
+    await beginFilter("cameraRaw", "Raw", true);
+    updateFilterSettings({ cameraRaw: { exposure: 2, contrast: 7, temperature: 11 } });
+    updateFilterSettings({ cameraRawShows: { light: false } });
+    bridge.CameraRawGroupDefaults.mockResolvedValue(JSON.stringify({
+      exposure: 0, contrast: 0, highlights: 0, shadows: 0, whites: 0, blacks: 0,
+    }));
+    bridge.UpdateFilterPreview.mockClear();
+    await resetCameraRawSection("light");
+    await vi.advanceTimersByTimeAsync(60);
+    expect(bridge.CameraRawGroupDefaults).toHaveBeenCalledWith("light");
+    const payload = JSON.parse(bridge.UpdateFilterPreview.mock.calls.at(-1)![0]);
+    expect(payload.cameraRaw.exposure).toBe(0);
+    expect(payload.cameraRaw.contrast).toBe(0);
+    // 别的分区没被碰。
+    expect(payload.cameraRaw.temperature).toBe(11);
+    // 该分区重新显示，否则下一次改动会看不见。
+    expect(payload.cameraRawShows.light).toBe(true);
   });
 
   it("sends the resumed preview after an older RPC from that tab finishes", async () => {

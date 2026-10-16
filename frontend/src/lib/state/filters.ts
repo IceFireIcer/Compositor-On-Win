@@ -345,6 +345,26 @@ function requestPreview(): void {
 }
 
 /** Opens a filter dialog session on the active layer. */
+/**
+ * 把一个 Camera Raw 分区恢复默认（票 80）。默认值由 Go 给出 —— 它们**不是零值**（曲线的
+ * 分割点、辉光与暗角的样式、镜头配置百分比、分级混合、校准 Process…），前端不该再存一份。
+ * 该分区同时重新显示：它的眼睛只在「会改变画面」时才有意义，留着隐藏会让下一次改动看不见。
+ *
+ * 上游还顺带清两处草稿状态（混色器点索引归零、几何引导线草稿清空），但那两处在本仓的
+ * 面板里还不存在（引导线 UI 尚未实现），所以这里没有对应动作。
+ */
+export async function resetCameraRawSection(section: string): Promise<void> {
+  const session = get(filterSession);
+  if (!session || session.kind !== "cameraRaw") return;
+  const defaults = JSON.parse(await BridgeService.CameraRawGroupDefaults(section)) as Record<string, unknown>;
+  const current = get(filterSession);
+  if (!current || current.seed !== session.seed) return;
+  updateFilterSettings({
+    cameraRaw: { ...current.settings.cameraRaw, ...defaults },
+    cameraRawShows: { ...current.settings.cameraRawShows, [section]: true },
+  });
+}
+
 export async function beginFilter(
   kind: string,
   label: string,

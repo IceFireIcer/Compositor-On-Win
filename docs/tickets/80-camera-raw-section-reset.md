@@ -4,15 +4,32 @@
 
 **Blocked by:** 28 — Camera Raw：光/色/曲线; 34 — Camera Raw 面板与示波器。
 
-**Status:** in-progress（2026-10-16；Go 侧的分区逻辑已落地并有测试，面板接线待做）
+**Status:** done（2026-10-16）
 
 - [x] 十个分区逐一恢复滑块、曲线、选择项和中点默认值，其他分区不变。
       `internal/render/cameraraw_reset.go`：`ResetGroup` / `KeepingGroup` / `IsGroupDefault`，
-      对应上游的 `resetting` / `keeping` / `isDefault`。**面板接线待做**。
-- [ ] 重置后该分区重新显示；混色器点索引归零、几何引导草稿清除。**待做**（上游在
-      `EditorSession.resetCameraRaw` 里：`setShows(group, true)`、混色器点索引 0、几何引导草稿清空）。
-- [ ] 重置是一次可撤销的预览更新，提交/取消不会污染其他分区。**待做**（走既有的
-      `updateFilterSettings` 预览通道即可，它本来就落在滤镜会话的提交/取消里）。
+      对应上游的 `resetting` / `keeping` / `isDefault`；面板每个分区标题上有 ↺ 按钮，默认值由
+      `Service.CameraRawGroupDefaults` 给出（前端不自己存一份）。
+- [x] 重置后该分区重新显示。**混色器点索引与几何引导草稿在本仓没有对应状态**：上游清的是
+      `edit.cameraRawPointIndex` 与 `edit.cameraRawGuideDraft`，而我们的面板既没有独立的点索引
+      状态，也还没有引导线 UI（票 30 的几何部分尚未做到那一步）。**没有凭空造状态**，如实记录。
+- [x] 重置是一次可撤销的预览更新：走既有的 `updateFilterSettings` 预览通道，本来就落在滤镜
+      会话的提交/取消里，不写文档。
+
+## 接线（2026-10-16）
+
+`Service.CameraRawGroupDefaults(group)` 只回**该分区**的键（`CameraRawGroupDefaultFields`），
+前端把它合并进 `cameraRaw` 并把该分区的眼睛打开。零值也照回：调用方需要看到「现在曝光是 0」，
+而不是「没提曝光」—— 否则旧值会留在原地。
+
+键清单（`cameraRawGroupJSONKeys`）与 `copyCameraRawGroup` 覆盖的字段由
+`TestGroupJSONKeysMatchTheCopiedFields` 钉在一起：夹具把每个字段都改离默认，于是 `KeepingGroup`
+里非零的键就是该分区真正拥有的字段，与清单对不上即失败。
+
+**顺带修掉一类根因**：`render.CameraRawSettings` 及其子结构体原先没有 JSON tag，Go→前端回包
+是 Go 的字段名（`"Optics"`），而面板按小写读。去紫边吸管就栽在这上面（上一轮修）。现在这些
+结构体都带上了与面板一致的 camelCase tag；该结构体不进 `.comp`（`project` 包里没有它），所以
+这不是格式变更。
 
 ## 已落地：分区逻辑（2026-10-16）
 
