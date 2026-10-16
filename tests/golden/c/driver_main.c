@@ -738,6 +738,53 @@ int main(int argc, char **argv) {
         free(out);
         for (int i = 0; i < n; i++) free(runs[i]);
         free(deep_bytes);
+    } else if (!strcmp(command, "camera_raw_compose")) {
+        // argv: tablesPath specPath. The 8-bit input is unused. The tables are
+        // the real decoded resource, written by the test; the spec says which
+        // of them each stage blends:
+        //
+        //   grid size count
+        //   idx:weight [idx:weight ...]     one line a stage, up to 8 pairs
+        if (argc < argi + 2) die("camera_raw_compose needs a tables raw and a spec");
+        size_t tables_length;
+        uint8_t *tables = read_file(argv[argi], &tables_length);
+        FILE *spec = fopen(argv[argi + 1], "rb");
+        if (!spec) die("cannot open the compose spec");
+        int grid = 0, size = 0, count = 0;
+        if (fscanf(spec, "%d %d %d", &grid, &size, &count) != 3) die("bad spec header");
+        if (grid < 2 || size < 2 || count < 0 || count > 64) die("bad spec geometry");
+        size_t cells = (size_t)size * size * size;
+        if (tables_length < cells * 3) die("the tables raw is too short");
+        static CameraRawStage stages[64];
+        char line[1024];
+        if (!fgets(line, sizeof line, spec)) die("the spec has no stage lines");
+        for (int s = 0; s < count; ++s) {
+            if (!fgets(line, sizeof line, spec)) die("the spec has too few stage lines");
+            memset(&stages[s], 0, sizeof stages[s]);
+            int slot = 0;
+            for (char *token = strtok(line, " \t\r\n"); token && slot < 8; token = strtok(NULL, " \t\r\n")) {
+                int index = 0;
+                float weight = 0;
+                if (sscanf(token, "%d:%f", &index, &weight) != 2) die("bad stage entry");
+                // -1 is a nil table: the stage passes that slot's colour through.
+                if (index < 0) {
+                    stages[s].table[slot] = NULL;
+                } else {
+                    if ((size_t)index >= tables_length / (cells * 3)) die("table index out of range");
+                    stages[s].table[slot] = tables + (size_t)index * cells * 3;
+                }
+                stages[s].weight[slot] = weight;
+                slot++;
+            }
+        }
+        fclose(spec);
+        size_t out_length = (size_t)grid * grid * grid * 3 * sizeof(float);
+        float *out = malloc(out_length);
+        if (!out) die("out of memory");
+        camera_raw_compose(out, grid, stages, count, size);
+        set_alt_output(out, out_length);
+        free(out);
+        free(tables);
     } else if (!strcmp(command, "dither")) {
         if (argc < argi + 17) die("dither needs 17 parameters");
         DitherParams params;

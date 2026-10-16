@@ -41,10 +41,42 @@ README 里。`go:embed` 打进二进制 —— 产品代码不该去读只读基
 | `TestCameraRawTableHeaderValidation` | 过短/标识不符/几何不符/步长为零/载荷损坏都报错 |
 | `TestCameraRawTableAtBounds` | `tableAt` 越界返回 nil |
 
+## 阶段管线（2026-10-16 第二块）
+
+`internal/render/camerastage.go`，逐行对应 `tests/golden/c/AdjustPixels.c` 的
+`table_lookup`（:246）、`camera_raw_stage_color`（:298）、`camera_raw_compose`（:269）、
+`camera_raw_compose_onto`（:284）与 `composed_lookup`（:312）：
+
+- `cameraRawStage` = `CameraRawStage`（至多八张表 + 权重；nil 表表示该槽直通）；
+- `cameraTableLookup`：17³ 网格上的三线性查找，输出 0…1；
+- `cameraStageColor`：逐槽查找（nil 直通）后按权重混合再钳制；
+- `cameraComposeStages` / `cameraComposeOnto`：把整条链作用到 grid³ 点阵上，
+  逐像素之后只需查一次；
+- `cameraComposedLookup`：合成表上的三线性查找；
+- `cameraRawBetween` / `cameraRawTableStage` / `cameraRawExposureStage` = 上游的
+  `between` / `stage` / 曝光阶段（21 张表，−5…5 步长 0.5）。
+
+**踩到并修正的两处**：
+
+1. `camera_raw_compose` **总是**写入点阵（空链也写），只有 `_onto` 变体在空链时提前返回。
+   我一开始让前者委托给后者，空链就留下全零 —— 被自己的测试抓到。
+2. 权重全为 0 的阶段（或一个槽都没有）结果是**全零**，不是「原样通过」（C 对 `w == 0`
+   直接 `continue`，`next` 保持零）。真实的阶段永远至少有一个非零权重，所以这是要
+   对齐的语义，不是缺陷。这条我先写错了断言。
+
+## 对拍
+
+驱动新增 `camera_raw_compose`：Go 把**解码后的真实测量表**写成 raw、给出一份阶段规格
+（`grid size count` + 每行 `idx:weight`，`-1` 表示 nil 表），C 合成出点阵，Go 与自己的
+`cameraComposeStages` 比。夹具 `testdata/camera_raw_compose_expected.raw`（9³ × 3 × float32
+= 8748 字节），用 `GOLDEN_REGENERATE=1` 重生成。规格里刻意放了双表混合、四槽权重分配、
+以及 nil 表与真表混合三种形状。
+
 ## 还剩什么
 
-1. 把 `tableAt` 接进各滑杆的阶段管线（曝光 21 张、白平衡 9×9 混合四张、对比/高光/阴影按
-   亮度自适应、混色器/校准/参数曲线/颜色分级）。这是票 63 与票 90 缺的那一步。
+1. 把各滑杆的阶段接上：白平衡 9×9 混四张、对比/高光/阴影按亮度自适应（含
+   `camera_raw_statistics` 的三个统计量）、混色器/校准/参数曲线/颜色分级。曝光阶段与
+   通用构造器已经就位。这是票 63 与票 90 缺的那一步。
 2. Camera Raw 预览取消旧任务的专项用例（验收 1 后半）。
 3. 5–20× 的可解释基准（验收 2）。
 4. 预览/提交/撤销一致性与透明像素统计（验收 3）。
