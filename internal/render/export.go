@@ -115,8 +115,8 @@ func EncodeJPEGWithDPI(b *Bitmap, quality, dpi int, bgR, bgG, bgB uint8) ([]byte
 // Export As (ticket 59)
 
 // ResampleBitmap resizes src to w×h for Export As — the original's
-// ImageExporter.resized at "high" interpolation. Shrinking box-averages
-// (deterministic, the DownscaleBitmap kernel); growing interpolates
+// ImageExporter.resized at "high" interpolation. Shrinking runs the Lanczos-3
+// kernel (ticket V05, DownsampleCache's filter); growing interpolates
 // bilinearly in premultiplied space, so translucent edges stay premultiplied
 // like every other pixel in the pipeline. A 1:1 request copies, never aliases
 // the held raster.
@@ -131,7 +131,10 @@ func ResampleBitmap(src *Bitmap, w, h int) *Bitmap {
 		return src.Clone()
 	}
 	if w <= src.W && h <= src.H {
-		return DownscaleBitmap(src, w, h)
+		// Shrinking goes through the Lanczos kernel (ticket V05): a box
+		// average looks at only the block under each output pixel, so a 4x or
+		// 8x reduction came out soft. The mixed case below still grows.
+		return LanczosResample(src, w, h)
 	}
 	return upscaleBilinear(src, w, h)
 }
