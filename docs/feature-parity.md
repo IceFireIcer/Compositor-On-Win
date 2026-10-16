@@ -16,7 +16,7 @@
 | T07 | 污点修复 (J)：内容感知/创建纹理/临近匹配 | `.spotHealing` + `HealPixels.c` | 21 | M6 | ☑ 票35 |
 | T08 | 仿制图章 (S)：对齐开关、单层/全层取样、⌥点设源 | `.cloneStamp` | 20 | M4 | ☑ 内核 `CloneStamp` + 13 测试（`internal/render/stampfill.go:60`、`stampfill_test.go`）；**RPC 是 `BeginRetouchStroke` 的 kind `clone`**（`retouch_session.go:122`，`cloneResultFromCoverage` 折深层）；画布分支 `CanvasSurface.svelte:1150`，**⌥ 点设源**在 `:1152`（`setCanvasCloneSource`），取样范围在 `retouch_session.go` 的 `SampleAllLayers` |
 | T09 | 涂抹 (R)：模糊/涂抹/液化三模式 | `.blur` + `MetalWarp` | 22 | M4 | ☑ 内核 `WarpStroke` 三模式 + 测试（`internal/render/smudge.go:40,111`、`smudge_test.go`）；**RPC 是 `BeginRetouchStroke` 的 kind `blur`/`smudge`/`liquify`**（`retouch_session.go:79,109,111`）；画布分支 `CanvasSurface.svelte:1150`（`$activeTool === "blur"`，`:1162` 的失败提示就叫「涂抹失败」） |
-| T10 | 渐变 (G)：可再编辑渐变层 | `.gradient` | 23 | M4 | ◐ 只有未接线的栅格化原语 `GradientFill`（`internal/render/gradient.go:76`，无测试、无调用者）；无渐变会话/RPC/UI |
+| T10 | 渐变 (G)：可再编辑渐变层 | `.gradient` | 23 | M4 | ☑ `render.GradientFill`（`gradient.go:76`）有调用者：`gradient_session.go:71` 的交互式会话（拖动预览 + 松手一步提交）与 `DrawGradient`（`drawing.go:213`）两条路；前端 `state/canvasDrawing.ts:21` 接 RPC，画布有渐变拖拽分支。票面自记的差异：**不产生可再编辑的渐变层**，落成栅格 |
 | T11 | 形状 (U)：矩形(圆角)/椭圆/线，Shift-U 切换，保持可编辑 | `.shape` + `ShapeKind` | 24 | M4 | ◐ 形状渲染已接合成（`internal/layerrender/shape.go`、`internal/render/composite.go:203`）；无创建会话/RPC，Shift-U 未注册（`table.ts:149`） |
 | T12 | 文字 (T)：段落框/内联多行/IME | `.type` + `TypeTool.swift` | 43-45 | M8 | ☑ 票44+45：创建/编辑/提交/取消/IME/合成/往返 + 逐 run 样式与段落框缩放 |
 | T13 | 吸管 (I)：取样环（可开关） | `.eyedropper` + `showsSampleRing` | 25 | M3 | ☑ `state/color.ts:180` samplePixel + `color.test.ts`；画布有吸管分支（`CanvasSurface.svelte:1107`）、取样环（`:1467` 读 `$showsSampleRing`）、滤镜吸管吞点击（`:1055` `eyedropperClick`）；取样环开关在工具选项栏（`ToolOptionsBar.svelte:355` → `setShowsSampleRing`）。**此前的「零消费者、0 命中」已过期** |
@@ -58,7 +58,7 @@
 | # | 命令 | 快捷键 | 故事# | 里程碑 | 状态 |
 | --- | --- | --- | --- | --- | --- |
 | C18 | Fit Canvas / Actual Pixels / Zoom In/Out | ⌘0/⌘1/=/- | 3 | M3 | ☑ 票13+47：视口命令 + 快捷键/视图菜单 |
-| C19 | Pixel Grid 开关（≥800%） | — | 5 | M3 | ◐ 像素网格 ≥800% 自动显示（`CanvasSurface.svelte:320,852`，`PIXEL_GRID_ZOOM` ← `state/viewport.ts:32`）；原版的 showsPixelGrid 开关没有 store/入口，`Menus:Show Grid`（`actions.ts:683`）绑的是布局网格（原版 Show ▸ Grid，属 C22） |
+| C19 | Pixel Grid 开关（≥800%） | — | 5 | M3 | ☑ 像素网格 ≥800% 且在开关打开时显示（`CanvasSurface.svelte:406` 的 `$showsPixelGrid && zoom >= PIXEL_GRID_ZOOM`）；**开关本身有 store 与视图菜单项**（`state/view.ts:32` → `MenuBar.svelte:787` 切换、`:162` 读）。**此前的「showsPixelGrid 没有 store/入口」已过期**；`Menus:Show Grid`（`actions.ts:683`）是另一件事（布局网格，见 C22） |
 | C20 | Snap 总开关 | — | 7 | M3 | ☑ 票76：总开关与四个子目标都接上并持久化（`state/view.ts` 的 `snapEnabled`/`snapToggles`，键名照抄原版 ToolDefaults）；菜单「对齐」+ ⇧⌘; + 命令面板动态勾选；消费端见 V04 |
 | C21 | Show Transform Controls | ⌘H | 34 | M3 | ☑ `showsTransformControls`（`transformSession.ts:1081`）+ 测试；⌘H 与菜单项都是 `toggleTransformControls()`（`actions.ts:792`、`MenuBar.svelte:845-853`，菜单项带勾），画布两处消费：旋转把手只在开着时才抓（`CanvasSurface.svelte:895`）、控件组本身（`:1492`）。**⌘H 只切可见性，⌘T 才开会话**（`actions.ts:560` 的注释即此语义）。此前的「零消费者、⌘H 接到 beginTransformSession」是错的 |
 | C22 | Grid ' / Guides ; / Rulers ⌘R 开关 | ' ; ⌘R | 6 | M3 | ☑ 三个开关都接上并可见：`state/view.ts:29,32,35` + 菜单勾（`MenuBar.svelte:485-510`）+ ⌘'/⌘;/⌘R（`table.ts:94-96`）；画布真的画布局网格/参考线/标尺（`CanvasSurface.svelte:858,888,974`），`view.test.ts` 覆盖 |
@@ -73,9 +73,9 @@
 | C26 | All / Deselect / Inverse | ⌘A/⌘D/⇧⌘I | 29 | M3 | ☑ All/Deselect/Inverse 经 `actions.ts:657-659` 注册，走纯函数 `state/selectionCommands.ts:29-39`；⌘A/⌘D/⇧⌘I（`table.ts:75-77`）+ `selectionCommands.test.ts` |
 | C27 | Layer's Pixels（载入图层像素为选区） | — | 29 | M3 | ☐ 无入口也无通路：Go 无 layerPixels/SelectLayerPixels（grep = 0），前端无动作、无 RPC |
 | C28 | Subject（选择主体） | ⌥⌘A | 28 | M6 | ☑ 票37 |
-| C29 | Color Range…（色彩范围表单） | — | 29 | M3 | ◐ 内核 + 黄金基准齐备（`internal/render/wand.go` ColorRangeMask、`tests/golden/cases/color-range.json`、`golden_test.go:50`）；色彩范围表单/菜单/RPC 全缺（frontend grep = 0） |
+| C29 | Color Range…（色彩范围表单） | — | 29 | M3 | ☑ 内核 + 黄金基准（`internal/render/wand.go` ColorRangeMask、`tests/golden/cases/color-range.json`、`golden_test.go:50`）；**表单与菜单都有**：`MenuBar.svelte:302` 的「色彩范围…」→ `editSelection("colorRange")` → `SelectionEditSheet`（`App.svelte:548` 挂载，`SelectionEditSheet.svelte:57,80,123` 处理含/排除色）。**此前的「表单/菜单/RPC 全缺」已过期** |
 | C30 | Mask's Black Areas（载入蒙版黑色区） | — | 29 | M3 | ☐ 无入口也无通路（Go grep MaskBlackAreas = 0，前端无动作） |
-| C31 | Expand… / Contract… / Feather… | — | 31 | M3 | ◐ 纯函数 + 测试齐备（`state/selectionCommands.ts:103,109,118`、`selectionCommands.test.ts`）；无扩展/收缩/羽化表单与菜单项 |
+| C31 | Expand… / Contract… / Feather… | — | 31 | M3 | ☑ 纯函数 + 测试齐备（`state/selectionCommands.ts:103,109,118`、`selectionCommands.test.ts`）；**菜单项与表单都有**：`MenuBar.svelte:303-305` 三项 → `editSelection` → `SelectionEditSheet`。**此前的「无表单与菜单项」已过期** |
 
 **Image**
 
@@ -104,7 +104,7 @@
 | --- | --- | --- | --- | --- | --- |
 | C43 | New Adjustment Layer（12 种） | — | 37 | M5 | ☐ 无「新建调整层」入口也无 RPC：Go LayerOp 表（`internal/bridge/document.go:117-303`）没有 addAdjustmentLayer，前端 grep `New Adjustment` = 0 |
 | C44 | Edit Adjustment… | — | 37 | M5 | ☑ 票31+34：图层面板「编辑」按钮（`LayersPanel.svelte:155-171`）→ `beginFilter(kind, …, layerID, adjustment)` → Go `setAdjustment`（`internal/bridge/document.go:227`）/`ApplyAdjustment`（`internal/render/adjustment.go:19`），调整层渲染有测试（`adjustment_render_test.go`） |
-| C45 | Transform Layer / Transform Selection | ⌘T | 32-34 | M3 | ◐ 变换图层全链路（⌘T `table.ts:85` → `state/transform.ts:75` → `ApplyLayerTransform` `layer_transform.go:30`，`layer_transform_test.go`）；Transform Selection 分支未接（`state/selectionCommands.ts:138` 零消费者） |
+| C45 | Transform Layer / Transform Selection | ⌘T | 32-34 | M3 | ☑ 变换图层全链路（⌘T `table.ts:85` → `state/transform.ts:75` → `ApplyLayerTransform` `layer_transform.go:30`，`layer_transform_test.go`）；**Transform Selection 已接**：`transformSelection`（`state/selectionCommands.ts:174`）被 `state/selectionEdit.ts:95` 消费，入口是「变换选区…」（`MenuBar.svelte:306`）→ `SelectionEditSheet` |
 | C46 | Duplicate Layer / Layer via Copy | ⌘J | 16 | M3 | ☑ 票47：Go `duplicateLayer`（子树/剪贴链/位图独立拷贝）+ 菜单与快捷键 |
 | C47 | Create/Release Clipping Mask | ⌥⌘G | 15 | M3 | ☑ 票47：Go `setClippingMask`（共享基底链）+ 菜单项随状态改名 |
 | C48 | Group ⌘G / Ungroup ⇧⌘G / Move Out of Folder | ⌘G/⇧⌘G | 12 | M3 | ◐ 票47：编组/取消编组（Go op + 菜单 + 快捷键）；移出文件夹仍是前端纯函数（`moveActiveLayerOutOfGroup`），Go 无 op |
@@ -175,8 +175,8 @@
 | --- | --- | --- | --- | --- | --- |
 | S01 | 魔棒匹配：容差/连续/全局/取样半径(点/3×3/5×5) | `WandPixels.c` | 27 | M3 | ☑ 内核 + 黄金逐位（`internal/render/wand.go`、`golden_test.go:71-82`，ε=0）；**画布交互已接**：`CanvasSurface.svelte:1114` 的 wand 分支 → `pickSelection`，模式（wand/object）在 `ToolOptionsBar.svelte:73-81`、**容差**在 `:92-93`（`updateWandSettings`） |
 | S02 | 像素边描迹 → 蚂蚁线闭环路径 | `wand_trace` | 30 | M3 | ◐ 描迹与闭环路径齐备（Go `wand_trace` + `state/selection.ts:117 outlineLoops`、`selection.test.ts`），画布也画蚂蚁线（`CanvasSurface.svelte:846`）；但无创建入口（同 S01） |
-| S03 | 色彩范围（采样含/排除色+羽化度） | `color_range_mask` | 29 | M3 | ◐ 同 C29：内核 + 黄金基准齐备；采样含/排除色 + 羽化度的表单不存在 |
-| S04 | 扩展/收缩/羽化（蒙版域操作） | `SelectionEdits.swift` | 31 | M3 | ◐ 同 C31：扩展/收缩/羽化纯函数 + 测试齐备，无 UI 入口 |
+| S03 | 色彩范围（采样含/排除色+羽化度） | `color_range_mask` | 29 | M3 | ☑ 同 C29：内核 + 黄金基准齐备，且**表单存在**（`SelectionEditSheet.svelte` 的 `colorRange` 分支，含/排除色与容差） |
+| S04 | 扩展/收缩/羽化（蒙版域操作） | `SelectionEdits.swift` | 31 | M3 | ☑ 同 C31：纯函数 + 测试齐备，UI 入口在 `MenuBar.svelte:303-305` + `SelectionEditSheet` |
 | S05 | 选区剪贴板/选区内移动复制/边缘自动滚动 | `FloatingSelection` | 30 | M3 | ◐ 票48+16：选区剪贴板（拷/切/粘贴/⌘J）完成；浮动选区搬运已接（方向键 → `MoveSelectedPixels`，`internal/bridge/selection_commands.go:186`、`pixel_move_test.go`、`actions.ts:758-765`）；边缘自动滚动仍是零消费者的纯函数（`state/selection.ts:322`），无拖拽浮层 |
 | S06 | 对象选择/主体/移除背景 + 引导滤波抠边 | Vision→ONNX（ADR-0005） | 28 | M6 | ☑ 票37 |
 | S07 | 内容感知填充（可延伸出画布） | `PatchPixels.c` | 42 | M6 | ☑ 票35 |
