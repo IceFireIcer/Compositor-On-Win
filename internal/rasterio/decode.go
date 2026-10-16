@@ -78,6 +78,10 @@ func Decode(path string, remainingPixels int) (*Result, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrUnreadable, err)
 	}
+	// 票 86：CMYK TIFF 走自己的读取器 —— image.DecodeConfig 对它直接 UnsupportedError。
+	if (ext == "tif" || ext == "tiff") && isCMYKTIFF(data) {
+		return decodeCMYKImport(path, data, remainingPixels)
+	}
 	cfg, format, err := image.DecodeConfig(bytes.NewReader(data))
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrUnreadable, err)
