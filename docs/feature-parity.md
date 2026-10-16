@@ -284,7 +284,7 @@
 | U07 | 独立 Scanlines 滤镜 | 60 | M5/M6 | ☑ |
 | U08 | Navigator 导航缩略图 | 61 | M3 | ☑ |
 | U09 | WebP 与相机 HEIF 导入 | 62 | M7 | ☑ |
-| U10 | Camera Raw 光影数值对齐 | 63 | M5 | ◐ 曝光/去雾/纹理/清晰度/锐化已对齐；对比/高光/阴影对齐到被 `75147a2` 取代的祖先算法，且无活样本（票 78/90） |
+| U10 | Camera Raw 光影数值对齐 | 63 | M5 | ✅ 曝光/对比/高光/阴影/白平衡/白/黑/饱和/自然饱和/校准原色现在走 **Photoshop 的测量表**（票 78 的接线：`applyCameraRawTable` → `cameraRawTableStages` → 合成表 → 逐像素查一次），不再是被 `75147a2` 取代的祖先解析算法；整条路与 C 端到端逐字节对拍。去雾/纹理/清晰度/锐化/降噪已对齐。**仍缺**：混色器与颜色分级仍走解析路径（票 90） |
 | U11 | RAW 显影降噪与高光修复 | 64 | M7 | ◐ 降噪/量化已对齐；镜头校正 `supports_lens_correction=0`，控件永久置灰 |
 | U12 | PatchMatch 内容感知修复 | 65 | M6 | ☑ |
 | U13 | Gaussian Blur 保留透明度 | 66 | M5 | ☑ |
@@ -299,7 +299,7 @@
 | U22 | 中键平移与修饰键缩放 | 75 | M3 | ✅ |
 | U23 | Snap 总开关与命令状态 | 76 | M3/M9 | ✅ |
 | U24 | 文件夹直接子图像批量导入 | 77 | M7 | ✅ 普通文件夹展开成**直接子级**图像（`bridge/imagefolder.go`：常规文件 + 可导入类型 + 跳过隐藏、自然序），展开点在 `beginImport` 这个三入口的汇聚处，所以对话框/画布/标签栏/外壳行为一致；另加「导入文件夹…」菜单项（`PickImageFolder`）。空文件夹作为一条明确错误报出。`imagefolder_test.go` 6 条 |
-| U25 | Camera Raw 查表与预览性能 | 78 | M5/M10 | ◐ **查表资源与加载器已落地**：`CameraRawTables.bin` 逐字节拷入 `internal/render/assets/`（来源与格式见该目录 README），`go:embed` 打进二进制，`cameratables.go` 按上游校验标识/几何/解压长度并解码 763 张表，`main()` 开窗口前 `ValidateCameraRawTables()` 解一次。**解码正确性有硬证据**：五张滑杆取 0 的表恰好等于恒等。**阶段管线已就位**：`camerastage.go` 逐行对应 `AdjustPixels.c` 的 `table_lookup`/`camera_raw_stage_color`/`camera_raw_compose`/`composed_lookup`，曝光阶段与通用构造器（`between`/`stage`）已接，**与 C 逐位对拍通过**（`TestCameraRawComposeMatchesC`）。**阶段构造器也已落地**：自适应（对比/高光/阴影按画面亮度取四张表）、白平衡（9×9 四角混合）、`fifty`、以及上游 `stages(for:brightness:)` 的完整顺序（Calibration → Exposure → 白平衡 → 对比 → 高光 → 阴影 → 白/黑/饱和/自然饱和 → 参数曲线），夹具里两条阶段由构造器生成并对拍。**逐像素应用也已落地并与 C 端到端逐字节对拍**（`cameraRawApplyTable` = `adjust_camera_raw`，三种裁剪预览各有夹具）。**仍缺（下一步）**：把这些阶段接进 `ApplyCameraRawFilter` —— 那一步会**真正改变用户看到的数值**（现在的解析近似要换成 Photoshop 的测量表），所以单独一轮做；另有混色器/颜色分级各阶段、预览取消旧任务的专项用例、5–20× 基准 |
+| U25 | Camera Raw 查表与预览性能 | 78 | M5/M10 | ◐ **查表资源与加载器已落地**：`CameraRawTables.bin` 逐字节拷入 `internal/render/assets/`（来源与格式见该目录 README），`go:embed` 打进二进制，`cameratables.go` 按上游校验标识/几何/解压长度并解码 763 张表，`main()` 开窗口前 `ValidateCameraRawTables()` 解一次。**解码正确性有硬证据**：五张滑杆取 0 的表恰好等于恒等。**阶段管线已就位**：`camerastage.go` 逐行对应 `AdjustPixels.c` 的 `table_lookup`/`camera_raw_stage_color`/`camera_raw_compose`/`composed_lookup`，曝光阶段与通用构造器（`between`/`stage`）已接，**与 C 逐位对拍通过**（`TestCameraRawComposeMatchesC`）。**阶段构造器也已落地**：自适应（对比/高光/阴影按画面亮度取四张表）、白平衡（9×9 四角混合）、`fifty`、以及上游 `stages(for:brightness:)` 的完整顺序（Calibration → Exposure → 白平衡 → 对比 → 高光 → 阴影 → 白/黑/饱和/自然饱和 → 参数曲线），夹具里两条阶段由构造器生成并对拍。**逐像素应用已落地并与 C 端到端逐字节对拍**（`cameraRawApplyTable` = `adjust_camera_raw`，三种裁剪预览各有夹具）。**已接进 `ApplyCameraRawFilter`**：Light/Color 走测量表，解析内核降为查表不可用时的兜底；接线时发现上游的 calibration 只画 Shadow Tint（原色在表里），我们的调用传了全部参数、接表后会双重应用，已按上游分叉。**仍缺**：混色器/颜色分级各阶段（票 90）、预览取消旧任务的专项用例、5–20× 基准 |
 | U26 | 半透明像素的图层特效着色 | 79 | M5 | ☑ 六种图层特效全部实现：描边（E01）与颜色叠加（E03）早已有；投影（E02）、外发光（E05）、内阴影（E04）、内发光（E06）本轮补齐。半透明像素的着色语义按上游 source-atop（保留原 alpha） |
 | U27 | Camera Raw 分区重置 | 80 | M5 | ☐ |
 | U28 | 快捷键清除与旧配置迁移 | 81 | M9 | ☐ |

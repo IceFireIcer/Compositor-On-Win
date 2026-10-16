@@ -407,6 +407,39 @@ func cameraUnit(on bool) float64 {
 	return 0
 }
 
+// CameraRawTablesAvailable reports whether the measured resource decoded. It is
+// the switch between the table path and the analytic fallback, so a build with
+// a missing resource still grades — just not by Photoshop's own numbers.
+func CameraRawTablesAvailable() bool {
+	_, err := CameraRawTables()
+	return err == nil
+}
+
+// applyCameraRawTable grades with the measured tables: the Light and Color
+// sliders (Calibration's primaries included) become one composed table, and
+// every pixel costs a single lookup. Reports whether it ran; a false return
+// means the resource is missing and the caller should use the analytic kernels.
+func applyCameraRawTable(b *Bitmap, s CameraRawSettings, clipping int) bool {
+	set, err := CameraRawTables()
+	if err != nil {
+		return false
+	}
+	// Only the adaptive sliders need the picture measured; the rest of the chain
+	// does not look at it (CameraRaw.swift:228-230).
+	brightness := cameraRawBrightness{brightest: 0.5, luminance: 0.5, logBrightest: 0.5}
+	if s.Contrast != 0 || s.Highlights != 0 || s.Shadows != 0 {
+		brightness = cameraRawStatistics(b)
+	}
+	stages := cameraRawTableStages(set, &s, brightness)
+	var table []float32
+	if len(stages) > 0 {
+		table = cameraComposeStages(cameraRawGrid, stages, set.size)
+	}
+	// A nil table is still meaningful: the clipping previews run without a grade.
+	cameraRawApplyTable(b, table, cameraRawGrid, clipping)
+	return true
+}
+
 // cameraRawFifty is CameraRawTables.fifty: a slider on a run of five tables
 // −100…100 by 50.
 func cameraRawFifty(set *cameraRawTableSet, start int, value float64) cameraRawStage {

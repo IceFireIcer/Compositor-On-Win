@@ -2402,14 +2402,26 @@ func ApplyCameraRawFilter(b *Bitmap, settings CameraRawSettings, opts CameraRawO
 	if opts.Clipping == 0 && !opts.SharpenMask && opts.VisualizePointColor < 0 && s.Geometry.Adjusts() {
 		src = ApplyCameraRawGeometry(src, s.Geometry)
 	}
+	// The measured tables carry Calibration's primaries; without them the
+	// analytic kernel has to.
+	useTables := CameraRawTablesAvailable()
 	if opts.Clipping == 0 && !opts.SharpenMask && s.Calibration.Adjusts() {
 		c := s.Calibration
-		ApplyCameraRawCalibration(src, c.ShadowTint, c.RedHue, c.RedSaturation,
-			c.GreenHue, c.GreenSaturation, c.BlueHue, c.BlueSaturation, c.Process)
+		if useTables {
+			// CameraRawSettings.applyCalibration draws Shadow Tint alone, because
+			// the primaries' hue and saturation come from the measured tables with
+			// Light and Color. Passing them here too would apply them twice.
+			ApplyCameraRawCalibration(src, c.ShadowTint, 0, 0, 0, 0, 0, 0, c.Process)
+		} else {
+			ApplyCameraRawCalibration(src, c.ShadowTint, c.RedHue, c.RedSaturation,
+				c.GreenHue, c.GreenSaturation, c.BlueHue, c.BlueSaturation, c.Process)
+		}
 	}
 	if s.adjustsLight() || s.adjustsColor() || opts.Clipping != 0 {
-		ApplyCameraRaw(src, gainsR, gainsG, gainsB, s.Exposure, s.Contrast, s.Highlights,
-			s.Shadows, s.Whites, s.Blacks, s.Vibrance, s.Saturation, opts.Clipping)
+		if !useTables || !applyCameraRawTable(src, s, opts.Clipping) {
+			ApplyCameraRaw(src, gainsR, gainsG, gainsB, s.Exposure, s.Contrast, s.Highlights,
+				s.Shadows, s.Whites, s.Blacks, s.Vibrance, s.Saturation, opts.Clipping)
+		}
 	}
 	if paintColor {
 		curve := s.Curve

@@ -123,6 +123,25 @@ C 的「先乘 255 再除回来」写法以保逐位一致）→ 查合成表 �
 对**真实像素**跑完整条路。夹具三份（clipping 0/1/2），`TestCameraRawApplyMatchesC` 与 C
 **逐字节**一致 —— 包括那条全透明列，两边都跳过。
 
+## 接线（2026-10-16 第六块）
+
+`ApplyCameraRawFilter` 的 Light/Color 段现在走测量表：`applyCameraRawTable` 按设置构造阶段
+（`cameraRawTableStages`）、合成一张 33³ 表、逐像素查一次。解析内核保留为**查表不可用时的
+兜底**（`CameraRawTablesAvailable()` 为假时），启动时 `ValidateCameraRawTables` 已经告过警。
+
+**接线时发现并修掉一处会双重应用的地方**：上游 `applyCalibration` 的注释写明「原色的色相与
+饱和度来自测量表」，所以它给 `adjust_camera_raw_calibration` 传的色相/饱和度参数**全是零**，
+只画 Shadow Tint。我们的 `ApplyCameraRawCalibration` 却把六个原色参数都传了 —— 一旦表路径生效，
+原色就会被应用两次。现在按上游分叉：表可用时只传 Shadow Tint，表不可用时才传全部。
+
+**为什么单独一轮做**：这一步真正改变用户看到的数值。接线前先打了对照（曝光 +1 的灰阶）：解析
+路径把输入 204 起就削到 255，测量表保留高光滚降、只在最亮处到 255 —— 差异方向符合 Photoshop 的
+行为，不是噪声。
+
+**既有测试全绿是个陷阱**：接线前后 `go test ./internal/render/` 都是绿的，因为既有用例没有钉住
+色调数值。所以另加了 `TestCameraRawFilterGradesWithTheMeasuredTables`：既断言曝光 +1 不再削顶，
+也断言过滤器结果与直接走表**逐字节一致** —— 光靠既有测试看不出走的是哪条路。
+
 ## 还剩什么
 
 1. 把各滑杆的阶段接上：白平衡 9×9 混四张、对比/高光/阴影按亮度自适应（含

@@ -41,6 +41,9 @@ const (
 	// resource than the one the code was written for.
 	cameraRawTableSize  = 17
 	cameraRawTableCount = 763
+	// cameraRawGrid is the lattice the stages are composed onto, finer than the
+	// tables so composing blurs little (CameraRawTables.swift:11).
+	cameraRawGrid = 33
 )
 
 // cameraRawTableSet is the decoded resource: the tables plus the geometry and
