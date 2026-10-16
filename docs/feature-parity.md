@@ -127,7 +127,7 @@
 | A07 | Add Noise（位置+种子确定性） | `noise_add_at` | 37 | M5 | ☑ 票27：`ApplyAddNoise`（位置 + 种子确定性，`kernels.go`）+ 黄金（`golden_test.go:107`）+ 调整层渲染测试；新建入口见 C43 |
 | A08 | Gaussian Blur（溢出层边缘） | CI blur 语义 | 37 | M5 | ☑ `adjustment.go:62-67` 的 `AdjustmentGaussianBlur` 分支复用破坏式滤镜的同一个 `ApplyGaussianBlur`（半径缺失或非正时不动），`TestRenderAdjustmentGaussianBlurChangesPixels`（`adjustment_render_test.go:151`）；破坏式入口见 C37。**此前的「dispatch 没有 blur 分支」已过期——12 种 kind 全部有内核，`default` 分支对已知 kind 不可达** |
 | A09 | Motion Blur | CI motion 语义 | 37 | M5 | ☑ `adjustment.go:68-77` 的 `AdjustmentMotionBlur` 分支（`ApplyMotionBlur`，`MotionRadiusPerPixel` 与破坏式滤镜同一条换算），`TestRenderAdjustmentMotionBlurChangesPixels`（`adjustment_render_test.go:174`） |
-| A10 | Invert | CPU | 37 | M5 | ◐ 内核已移植（`internal/render/kernels.go:324` ApplyInvert，真值 PixelInvert.swift）且反相菜单可达（C34 ☑）；但 `tests/golden/c/` 无 invert 内核、render 测试里也没有 ApplyInvert 断言——缺参照/回归测试 |
+| A10 | Invert | CPU | 37 | M5 | ◐ 内核已移植（`internal/render/kernels.go:324` ApplyInvert，真值 PixelInvert.swift）且反相菜单可达（C34 ☑）；`internal/render/invert_test.go` 已补内核级断言（**部分透明**的像素才是定义性的：`A − C` 与朴素的 `255 − C` 在全不透明时同值）；黄金 C 内核**不该造** —— 上游反相是 Swift + vImage，没有 C 内核，凭空的「黄金 C」会把参照降级成手写期望 |
 | A11 | Black & White（6 通道权重+着色） | `adjust_black_white` | 37 | M5 | ☑ 票27：`ApplyBlackWhite`（6 通道权重 + 着色，`kernels.go`）+ 黄金逐位（`golden_test.go:87`）+ 调整层渲染测试；破坏式入口 C33 ☑ |
 | A12 | Color Balance（保明度） | `adjust_color_balance` | 37 | M5 | ☑ 票27：`ApplyColorBalance`（保明度，`kernels.go`）+ 黄金逐位（`golden_test.go:96`）+ 调整层渲染测试；破坏式入口 C33 ☑ |
 
