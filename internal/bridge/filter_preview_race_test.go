@@ -129,3 +129,56 @@ func TestUpdateFilterPreviewRepliesAreSafeDuringWorkerWrites(t *testing.T) {
 		t.Fatalf("取消预览改变了文档或修订未前进: rev %d/%d", before.Rev, got.Rev)
 	}
 }
+
+// 票 78 验收 1 后半：预览取消旧任务，不让旧结果覆盖新设置。
+//
+// 判据是**预览修订号前进几次**。cancel/replace 语义下先发的慢请求会被丢弃，所以两次请求之后
+// 修订号只该前进一次（后发的那次落地）；守卫若失效，慢的先发晚一点落地，会把它推到 2。
+//
+// 先发的那次必须真的慢，否则它先完成，这条什么也考不到。高斯模糊不行 —— 它是盒式近似，半径
+// 拉满也不比半径 1 慢（第一版就是这么写的，去掉守卫照样通过）。动感模糊可以：代价随拖尾距离
+// 增长，实测 distance 2000 在 500ms 内回不来，而 distance 1 是毫秒级。
+func TestASupersededPreviewNeverOverwritesTheNewerSettings(t *testing.T) {
+	svc, _ := newTestService(t, 256, 256)
+	if _, err := svc.BeginFilterEdit(FilterMotion, "", `{"angle":0,"distance":1}`, 0, ""); err != nil {
+		t.Fatal(err)
+	}
+	// 先发：拖尾拉满，慢。
+	if _, err := svc.UpdateFilterPreview(`{"angle":0,"distance":2000}`); err != nil {
+		t.Fatal(err)
+	}
+	// 后发：立刻到，快。它必须赢，而先发的那次要被丢掉。
+	if _, err := svc.UpdateFilterPreview(`{"angle":0,"distance":1}`); err != nil {
+		t.Fatal(err)
+	}
+
+	// 等后发的落地。
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		svc.ws.mu.Lock()
+		sess := svc.ws.activeSessionLocked()
+		rev := 0
+		if sess != nil && sess.filter != nil {
+			rev = sess.filter.previewRev
+		}
+		svc.ws.mu.Unlock()
+		if rev >= 1 || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	// 先发的那次要跑得比这久，才可能「晚到」；给足时间让它落地（若守卫失效的话）。
+	time.Sleep(3 * time.Second)
+	svc.ws.mu.Lock()
+	sess := svc.ws.activeSessionLocked()
+	if sess == nil || sess.filter == nil {
+		svc.ws.mu.Unlock()
+		t.Fatal("滤镜会话不见了")
+	}
+	rev := sess.filter.previewRev
+	svc.ws.mu.Unlock()
+	if rev != 1 {
+		t.Fatalf("预览修订号是 %d，想要 1 —— 先发的慢请求没有被丢弃", rev)
+	}
+}
