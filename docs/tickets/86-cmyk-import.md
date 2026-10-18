@@ -4,13 +4,15 @@
 
 **Blocked by:** 38 — PSD/PSB 解析器; 72 — CMYK ICC 校样与色域警告。
 
-**Status:** in-progress（2026-10-16）—— **TIFF 与 JPEG 两条都通**；只剩 PSD 的 CMYK 变体。
+**Status:** in-progress（2026-10-19 回写）—— **TIFF / JPEG / PSD（拼合 + 分层）四条路都通**，配置都能留进会话；**只剩第 3 条没验证**：目前没有「打开 CMYK → 保存 `.comp` → 重开 → 校样」的往返测试，所以「与 `CMYKTests` 语义一致」还勾不了。
 
 （票面原标 `blocked-by-decision`。核对下来它并不真的卡在票 72 上：**导入**只需要文件**内嵌**的
 配置，而票 72 缺的是「随包内置的通用配置」（发行准备项）。`colorio.ConvertToRGB` 的注释里就
 写着「CMYK import path needs it」，API 早已备好。）
 
-- [x] CMYK **TIFF 与 JPEG** 的颜色按嵌入配置转换为可编辑 RGB 表示。
+- [x] CMYK **TIFF / JPEG / PSD** 的颜色按嵌入配置转换为可编辑 RGB 表示。
+      **PSD 的两种形态都通了**（2026-10-16/19）：拼合（无图层段，读图像数据段）与分层（`decodeChannels`
+      按 `unpackedCMYKChannelIDs` 切通道集合）都按 4 个油墨通道解码、**反相**后交 `colorio.ConvertToRGB`。
       JPEG：`rasterio` 的 `isCMYKJPEG`（走段标记找帧头的分量数）→ `render.DecodeCMYKJPEGWithProfile`
       （四分量读回 ICC 约定油墨，并从 APP2 的 ICC_PROFILE 分段按段号拼回配置）→ 与 TIFF 共用
       `cmykImportResult` 做边界、配置校验与 `colorio.ConvertToRGB`。导出侧也补上了配置嵌入
@@ -31,6 +33,12 @@
       会把颜色弄错」/「内嵌的配置不是 CMYK 配置」）。上游的「让用户选一份」属于 UI，未做；
       **拒绝**是安全的那一半。
 - [ ] 打开、保存重开和校样显示与 `CMYKTests` 语义一致。
+      **还差哪一步**（2026-10-19 核对）：导入与导出两侧、以及「配置留进会话」都有测试
+      （`TestImportingACMykTIFFAdoptsItsEmbeddedProfile`、`TestLoadingACMykPSDAdoptsItsProfile`、
+      `cmyk_proof_test.go`），但**没有一条**覆盖「打开 CMYK 文件 → 保存 `.comp` → 重开 → 像素与配置
+      仍一致」。这条不勾。
+
+      —— 以下是 PSD 支持的过程记录 ——
       **PSD 的 CMYK 变体：拼合这条已通**（2026-10-16）。
 
       `mode 4` 通过头部闸门；拼合（没有图层段）的 CMYK PSD 按 4 个油墨通道解码，**反相**后交

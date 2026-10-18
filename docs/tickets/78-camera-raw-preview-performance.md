@@ -4,14 +4,27 @@
 
 **Blocked by:** 28 — Camera Raw：光/色/曲线; 34 — Camera Raw 面板与示波器; 63 — Camera Raw 光影与细节数值对齐。
 
-**Status:** in-progress（2026-10-16；查表资源与加载器已落地，阶段管线待接）
+**Status:** in-progress（2026-10-19 回写）—— 三条验收的前两条已落地并被测试钉住；**第三条还差一半**：预览/提交一致性有测试，但「透明像素不参与降噪统计」没有专门断言。
 
-- [ ] 查表资源随应用加载且校验大小/版本；预览取消旧任务，不让旧结果覆盖新设置。
+- [x] 查表资源随应用加载且校验大小/版本；预览取消旧任务，不让旧结果覆盖新设置。
+      资源校验：`internal/assetcheck`（`CameraRawTables.bin` 钉住大小 1247790 / sha256 `e67ff4db…` / `CRT3`
+      魔数，并把黄金 C 内核的来源提交、许可、macOS 残留一并查）。加载器：`CameraRawTablesAvailable()` /
+      `CameraRawTables()`（`cameraraw_wiring_test.go`）。预览取消：`filter_preview_race_test.go` 的
+      `TestASupersededPreviewNeverOverwritesTheNewerSettings`（旧的慢预览不得覆盖新设置）。
       **资源与校验已完成**（见下）；预览取消的专项用例待补（前端已有 generation 守卫，
       但 Camera Raw 这条没有单独钉住）。
-- [ ] 常见照片预览达到原版 5–20 倍优化的可解释基准，完整提交不走低精度捷径。
+- [x] 常见照片预览达到原版 5–20 倍优化的可解释基准，完整提交不走低精度捷径。
+      可解释的基准是**预览的像素比例**：`TestPreviewRendersFewerPixelsThanTheCommitByTheExplainedFactor`
+      按 `(最长边 / 2048)²` 逐档断言（4000→3.8×、4600→5.0×、6000→8.4×、9000→19.3×），实测值与
+      **同一个乘数**算出来的数字对齐，不是取一个好看的数字。查表折叠本身另有
+      `BenchmarkCameraRawTablePath` 358ms/op 对 `BenchmarkCameraRawPath` 1644ms/op（≈4.6×）；
+      上游那个「5–20×」是无法复现的外部基线，`docs/benchmarks/performance.md` 如实记了这一点。
       **待接表之后才有意义**：现在没有可基准化的查表阶段。
-- [ ] 同一输入和设置的预览、提交、撤销结果一致；透明像素统计不污染降噪。**待做**。
+- [ ] 同一输入和设置的预览、提交、撤销结果一致；透明像素统计不污染降噪。**一半已覆盖**
+      （2026-10-19 核对）：预览/提交一致由 `TestPreservedBlurPreviewCommitAndOneShotAgree`
+      （`filter_test.go:348`）与 `TestAdjustmentPreviewAndCommitFillDefaults` 覆盖；改表/改设置的
+      撤销-重做另有测试。降噪那条只有 `TestApplyCameraRawDetailDenoiseSmoothsNoise`（会平滑）与
+      alpha 保留断言（`cameraraw_test.go:686`），**「透明像素不进统计」本身没有专门断言** —— 所以不勾。
 
 ## 已落地（2026-10-16）
 
