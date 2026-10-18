@@ -65,7 +65,8 @@ beforeEach(async () => {
     await tick();
   })()`);
   await page.waitForTimeout(500);
-});
+  // 并发跑整套时，建 page + 导航 + 挂整壳会超过 hook 的默认超时（约 10s），显式放宽。
+}, 40000);
 
 it("fits a small window without overflowing or overlapping", async () => {
   const errors = [];

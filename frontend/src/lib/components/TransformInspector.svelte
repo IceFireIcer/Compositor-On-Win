@@ -10,8 +10,21 @@
     transformSession,
   } from "../state/transform";
   import { SAMPLINGS, type NumericInput, type Sampling } from "../state/transformSession";
+  // 票 54/V06：拖标签 scrub、方向键步进、输入钳制。语义在 numeric.ts（移植自
+  // NumericScrub.swift 与 ArrowStepper），这里只做接线。
+  import { arrows, direct, scrub, type ValueRange } from "./numeric";
 
   type NumericKey = "x" | "y" | "w" | "h" | "rotation";
+
+  // 每个字段的范围与每像素增量。Swift 里 px 字段的 sensitivity 是 1（BrushControls.swift:39），
+  // 角度同样是 1。拖拽按整数吸附（step 1），输入不吸附。
+  const FIELD_LIMITS: Record<NumericKey, ValueRange & { step: number; sensitivity: number }> = {
+    x: { min: -30000, max: 30000, step: 1, sensitivity: 1 },
+    y: { min: -30000, max: 30000, step: 1, sensitivity: 1 },
+    w: { min: 1, max: 30000, step: 1, sensitivity: 1 },
+    h: { min: 1, max: 30000, step: 1, sensitivity: 1 },
+    rotation: { min: -360, max: 360, step: 1, sensitivity: 1 },
+  };
 
   const draft = $derived($transformDraft);
   const pending = $derived($transformCommitPending);
@@ -30,12 +43,40 @@
 
   function applyNumericField(key: NumericKey, event: Event): boolean {
     if (!(event.currentTarget instanceof HTMLInputElement)) return false;
-    const raw = event.currentTarget.value.trim();
-    if (raw === "") return false;
-    const value = Number(raw);
-    if (!Number.isFinite(value)) return false;
+    const limits = FIELD_LIMITS[key];
+    // 输入走 direct()：解析并钳制，解析不出来就保留旧值（Swift 的 commit-on-submit 语义）。
+    const value = direct(event.currentTarget.value, { min: limits.min, max: limits.max });
+    if (value === null) return false;
     const input: NumericInput = { [key]: value } as NumericInput;
     return applyTransformNumeric(input);
+  }
+
+  // 标签拖拽：按下时记住起点值，每帧算 起点 + 位移 × 增量，吸附并钳制。
+  let scrubGesture: { key: NumericKey; startX: number; startValue: number } | null = null;
+
+  function beginScrub(event: PointerEvent, key: NumericKey): void {
+    if (pending || event.button !== 0) return;
+    const value = numericValue(key);
+    if (value === undefined) return;
+    scrubGesture = { key, startX: event.clientX, startValue: value };
+    (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+    event.preventDefault();
+  }
+
+  function moveScrub(event: PointerEvent): void {
+    const gesture = scrubGesture;
+    if (!gesture || pending) return;
+    const limits = FIELD_LIMITS[gesture.key];
+    const next = scrub(event.clientX - gesture.startX, gesture.startValue, {
+      sensitivity: limits.sensitivity,
+      step: limits.step,
+      range: { min: limits.min, max: limits.max },
+    });
+    applyTransformNumeric({ [gesture.key]: next } as NumericInput);
+  }
+
+  function endScrub(): void {
+    scrubGesture = null;
   }
 
   function setSampling(event: Event): void {
@@ -44,6 +85,21 @@
   }
 
   function onKeydown(event: KeyboardEvent, numericKey?: NumericKey): void {
+    // 方向键步进（ArrowStepper 只认上下）：↑ 加一步、↓ 减一步，Shift 把步长乘十。
+    if ((event.key === "ArrowUp" || event.key === "ArrowDown") && numericKey !== undefined && !pending) {
+      const current = numericValue(numericKey);
+      if (current !== undefined) {
+        const limits = FIELD_LIMITS[numericKey];
+        event.preventDefault();
+        const next = arrows(event.key === "ArrowUp" ? "up" : "down", current, {
+          step: limits.step,
+          shift: event.shiftKey,
+          range: { min: limits.min, max: limits.max },
+        });
+        applyTransformNumeric({ [numericKey]: next } as NumericInput);
+        return;
+      }
+    }
     if (event.key === "Escape" && !pending) {
       event.preventDefault();
       cancelTransformSession();
@@ -77,7 +133,7 @@
     </div>
 
     <div class="fields">
-      <label for="transform-x">X</label>
+      <label for="transform-x" class="scrub" onpointerdown={(e) => beginScrub(e, "x")} onpointermove={moveScrub} onpointerup={endScrub} onpointercancel={endScrub}>X</label>
       <input
         id="transform-x"
         aria-label="X"
@@ -91,7 +147,7 @@
         onkeydown={(event) => onKeydown(event, "x")}
       />
 
-      <label for="transform-y">Y</label>
+      <label for="transform-y" class="scrub" onpointerdown={(e) => beginScrub(e, "y")} onpointermove={moveScrub} onpointerup={endScrub} onpointercancel={endScrub}>Y</label>
       <input
         id="transform-y"
         aria-label="Y"
@@ -105,7 +161,7 @@
         onkeydown={(event) => onKeydown(event, "y")}
       />
 
-      <label for="transform-width">W</label>
+      <label for="transform-width" class="scrub" onpointerdown={(e) => beginScrub(e, "w")} onpointermove={moveScrub} onpointerup={endScrub} onpointercancel={endScrub}>W</label>
       <input
         id="transform-width"
         aria-label="W"
@@ -119,7 +175,7 @@
         onkeydown={(event) => onKeydown(event, "w")}
       />
 
-      <label for="transform-height">H</label>
+      <label for="transform-height" class="scrub" onpointerdown={(e) => beginScrub(e, "h")} onpointermove={moveScrub} onpointerup={endScrub} onpointercancel={endScrub}>H</label>
       <input
         id="transform-height"
         aria-label="H"
@@ -133,7 +189,7 @@
         onkeydown={(event) => onKeydown(event, "h")}
       />
 
-      <label for="transform-rotation">Rotation</label>
+      <label for="transform-rotation" class="scrub" onpointerdown={(e) => beginScrub(e, "rotation")} onpointermove={moveScrub} onpointerup={endScrub} onpointercancel={endScrub}>Rotation</label>
       <input
         id="transform-rotation"
         aria-label="Rotation"
@@ -252,6 +308,13 @@
   label {
     color: var(--text-dim);
     font-size: 12px;
+  }
+
+  /* 可拖调的值标签（票 54/V06）：横向拖动 = 改值，所以光标与禁止选中文字。 */
+  label.scrub {
+    cursor: ew-resize;
+    user-select: none;
+    touch-action: none;
   }
 
   input,
