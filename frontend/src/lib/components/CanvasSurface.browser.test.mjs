@@ -110,3 +110,66 @@ it.each(["cpu", "gpu"])("shows an erased full-document preview without the commi
     await page.close();
   }
 }, 30000);
+
+// 票 15/37 的**接线**：魔棒工具下点画布，必须真的走到 SelectWandAt，并把回来的蒙版装进选区。
+//
+// 内核与黄金基准另有 Go 侧测试，但「画布有没有这条分支」只有挂真实组件才测得到 ——
+// 对等矩阵 T04 曾长期写着「画布无魔棒分支」，实际早已接线；这条钉住它，防再退回去。
+it("runs the wand kernel from a canvas click and installs the selection", async () => {
+  const page = await browser.newPage();
+  try {
+    await page.addInitScript(() => Object.defineProperty(navigator, "gpu", { value: undefined }));
+    await page.goto(`${server.resolvedUrls.local[0]}canvas-preview-test`);
+    const mask = Buffer.alloc(8 * 8);
+    for (let y = 0; y < 8; y++) for (let x = 0; x < 4; x++) mask[y * 8 + x] = 255;
+    const maskB64 = mask.toString("base64");
+    const body = { contentType: "image/png", body: Buffer.from([0]) };
+    await page.route("**/render/**", (route) => route.fulfill(body));
+    await page.route("**/pixel/**", (route) => route.fulfill(body));
+    // page.evaluate 传**字符串**：传函数会被 Vite 的 SSR 转换破坏（动态 import 会变成
+    // __vite_ssr_dynamic_import__），同文件上面那条测试也是这么写的。
+    await page.addInitScript((m) => { window.__maskB64 = m; }, maskB64);
+    await page.evaluate(`(async () => {
+      const { mount, tick } = await import("/node_modules/.vite-canvas-browser/deps/svelte.js");
+      const { default: Surface } = await import("/src/lib/components/CanvasSurface.svelte");
+      const { applyDocumentSnapshot } = await import("/src/lib/state/document.ts");
+      const { workspace } = await import("/src/lib/state/workspace.ts");
+      const { activeTool, toolModes } = await import("/src/lib/state/tools.ts");
+      const doc = { documentID: "tab-a", width: 8, height: 8, resolution: 72, activeLayerID: "layer", layers: [{
+        id: "layer", name: "Layer", isVisible: true, opacity: 1, blendMode: "Normal", imageFile: "layer.png",
+        transform: { origin: [0, 0], size: [8, 8], sampling: "Nearest" } }] };
+      const tab = { id: "tab-a", name: "Wand", width: 8, height: 8, resolution: 72, dirty: false };
+      window.__wandCalls = [];
+      const { currentSelection } = await import("/src/lib/state/selection.ts");
+      currentSelection.subscribe((value) => { window.__selection = value; });
+      window.go = { bridge: { Service: {
+        SelectWandAt: async (tabID, x, y, tolerance, radius, contiguous, allLayers) => {
+          window.__wandCalls.push({ tabID, x, y, tolerance, radius, contiguous, allLayers });
+          return JSON.stringify({ tabId: tabID, selection: { w: 8, h: 8, mask: "${maskB64}" } });
+        },
+      } } };
+      workspace.set({ activeId: "tab-a", tabs: [tab] });
+      applyDocumentSnapshot(JSON.stringify({ rev: 1, filterRev: 0, doc }));
+      activeTool.set("wand");
+      toolModes.update((value) => ({ ...value, wand: "wand" }));
+      mount(Surface, { target: document.getElementById("canvas"), props: { doc: tab } });
+      await tick();
+    })()`);
+    await poll(() => page.locator(".doc").isVisible()).toBe(true);
+    await page.locator(".doc").click({ position: { x: 2, y: 2 } });
+    await poll(async () => (await page.evaluate(() => window.__wandCalls.length)) === 1).toBe(true);
+    const calls = await page.evaluate(() => window.__wandCalls);
+    expect(calls[0].tabID).toBe("tab-a");
+    // 选区是异步装进 store 的（后端 reply → selectionFromMask → set），所以轮询等它落地。
+    await poll(() => page.evaluate(`(() => !!window.__selection)()`)).toBe(true);
+    const selected = await page.evaluate(`(() => {
+      const sel = window.__selection;
+      if (!sel) return null;
+      return { width: sel.width, height: sel.height, leftTop: sel.mask[0], rightTop: sel.mask[4], loopCount: sel.loops.length };
+    })()`);
+    // 蒙版原样装进选区（左半边选中、右半边没有），并且描迹出了闭环。
+    expect(selected).toEqual({ width: 8, height: 8, leftTop: 255, rightTop: 0, loopCount: 1 });
+  } finally {
+    await page.close();
+  }
+}, 30000);
