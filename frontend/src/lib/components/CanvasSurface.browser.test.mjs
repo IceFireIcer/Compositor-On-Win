@@ -173,3 +173,66 @@ it("runs the wand kernel from a canvas click and installs the selection", async 
     await page.close();
   }
 }, 30000);
+
+// 票 30/S05：选区拖到视口边缘时自动滚动。
+//
+// `edgeAutoScroll` 是现成的纯函数（`selection.test.ts` 有单测），但此前**零消费者** —— 拖选区到边缘
+// 什么都不会发生。这条钉住接线：贴边拖 → 视口平移；在中间拖 → 不平移（后半句才是判别性的，
+// 一个「总是平移」的实现过不了它）。
+it("auto-scrolls the viewport when a marquee drag reaches the edge", async () => {
+  const page = await browser.newPage({ viewport: { width: 900, height: 700 } });
+  try {
+    await page.addInitScript(() => Object.defineProperty(navigator, "gpu", { value: undefined }));
+    await page.goto(`${server.resolvedUrls.local[0]}canvas-preview-test`);
+    const body = { contentType: "image/png", body: Buffer.from([0]) };
+    await page.route("**/render/**", (route) => route.fulfill(body));
+    await page.route("**/pixel/**", (route) => route.fulfill(body));
+    await page.evaluate(`(async () => {
+      const { mount, tick } = await import("/node_modules/.vite-canvas-browser/deps/svelte.js");
+      const { default: Surface } = await import("/src/lib/components/CanvasSurface.svelte");
+      const { applyDocumentSnapshot } = await import("/src/lib/state/document.ts");
+      const { workspace } = await import("/src/lib/state/workspace.ts");
+      const { activeTool, toolModes } = await import("/src/lib/state/tools.ts");
+      const { viewport } = await import("/src/lib/state/viewport.ts");
+      viewport.subscribe((value) => { window.__viewport = value; });
+      const doc = { documentID: "tab-a", width: 400, height: 400, resolution: 72, activeLayerID: "layer", layers: [{
+        id: "layer", name: "Layer", isVisible: true, opacity: 1, blendMode: "Normal", imageFile: "layer.png",
+        transform: { origin: [0, 0], size: [400, 400], sampling: "Nearest" } }] };
+      const tab = { id: "tab-a", name: "Marquee", width: 400, height: 400, resolution: 72, dirty: false };
+      workspace.set({ activeId: "tab-a", tabs: [tab] });
+      applyDocumentSnapshot(JSON.stringify({ rev: 1, filterRev: 0, doc }));
+      activeTool.set("marquee");
+      toolModes.update((value) => ({ ...value, marquee: "rect" }));
+      mount(Surface, { target: document.getElementById("canvas"), props: { doc: tab } });
+      await tick();
+    })()`);
+    // 余量是按**舞台**（.canvas-stage）的边缘算的，不是按文档区域。
+    const stage = page.locator(".canvas-stage");
+    await poll(() => stage.isVisible()).toBe(true);
+    const box = await stage.boundingBox();
+    const midY = box.y + box.height / 2;
+
+    // 中间拖：不该平移。
+    const before = await page.evaluate(() => ({ panX: window.__viewport.panX, panY: window.__viewport.panY }));
+    await page.mouse.move(box.x + box.width / 2, midY);
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width / 2 + 40, midY + 40, { steps: 4 });
+    await page.waitForTimeout(250);
+    const midDrag = await page.evaluate(() => ({ panX: window.__viewport.panX, panY: window.__viewport.panY }));
+    expect(midDrag).toEqual(before);
+
+    // 贴右边缘拖：视口应当往左平移（panX 增大）。
+    await page.mouse.move(box.x + box.width - 8, midY, { steps: 4 });
+    await page.waitForTimeout(350);
+    const edgeDrag = await page.evaluate(() => window.__viewport.panX);
+    await page.mouse.up();
+    expect(edgeDrag).toBeGreaterThan(midDrag.panX + 0.5);
+    // 松手后停止：再等一会，panX 不再变化。
+    await page.waitForTimeout(250);
+    const after = await page.evaluate(() => window.__viewport.panX);
+    await page.waitForTimeout(250);
+    expect(await page.evaluate(() => window.__viewport.panX)).toBe(after);
+  } finally {
+    await page.close();
+  }
+}, 30000);

@@ -39,6 +39,7 @@
   } from "../state/progressiveBlur";
   import {
     currentSelection,
+    edgeAutoScroll,
     ellipseRegion,
     lassoRegion,
     rectRegion,
@@ -673,6 +674,7 @@
       finishStroke(true);
       finishDrawing(true);
       clearStrokePreview();
+      stopEdgeScroll();
       selectionGesture = null;
       sampling = false;
       samplePending = null;
@@ -806,7 +808,44 @@
     return true;
   }
 
+  // 选区拖拽到视口边缘时自动滚动（票 30/S05）。`edgeAutoScroll` 是现成的纯函数，这里只负责在
+  // 指针停在边缘时按帧推动视口 —— 鼠标不动时 pointermove 不再触发，所以必须自己起一个 rAF 循环，
+  // 松手或离开余量就停。
+  const EDGE_SCROLL_SPEED = 12; // 每帧最多推这么多像素
+
+  let edgeScrollFrame = 0;
+  let edgeScrollPoint = { clientX: 0, clientY: 0 };
+
+  function stopEdgeScroll(): void {
+    if (edgeScrollFrame) cancelAnimationFrame(edgeScrollFrame);
+    edgeScrollFrame = 0;
+  }
+
+  function noteEdgeScroll(e: PointerEvent): void {
+    edgeScrollPoint = { clientX: e.clientX, clientY: e.clientY };
+    if (edgeScrollFrame || !stage) return;
+    const tick = (): void => {
+      edgeScrollFrame = 0;
+      const gesture = selectionGesture;
+      if (!gesture || gesture.kind !== "marquee" || !stage) return;
+      const r = stage.getBoundingClientRect();
+      const { clientX, clientY } = edgeScrollPoint;
+      const left = edgeAutoScroll(clientX - r.left, EDGE_SCROLL_SPEED);
+      const right = edgeAutoScroll(r.right - clientX, EDGE_SCROLL_SPEED);
+      const top = edgeAutoScroll(clientY - r.top, EDGE_SCROLL_SPEED);
+      const bottom = edgeAutoScroll(r.bottom - clientY, EDGE_SCROLL_SPEED);
+      if (left === 0 && right === 0 && top === 0 && bottom === 0) return;
+      panByStore(right - left, bottom - top);
+      // 视口动了，框的端点要按同一指针位置重算，否则框会停在原处。
+      const p = documentPoint(get(viewport), clientX - r.left, clientY - r.top, doc.width, doc.height);
+      gesture.current = { x: Math.min(doc.width, Math.max(0, p.x)), y: Math.min(doc.height, Math.max(0, p.y)) };
+      edgeScrollFrame = requestAnimationFrame(tick);
+    };
+    edgeScrollFrame = requestAnimationFrame(tick);
+  }
+
   function finishSelection(): void {
+    stopEdgeScroll();
     const gesture = selectionGesture;
     if (!gesture || (gesture.kind === "lasso" && gesture.polygon)) return;
     const region = selectionRegionFor(gesture);
@@ -815,6 +854,7 @@
   }
 
   function finishPolygonSelection(): void {
+    stopEdgeScroll();
     const gesture = selectionGesture;
     if (!gesture || gesture.kind !== "lasso" || !gesture.polygon) return;
     const points = gesture.points.slice();
@@ -1236,6 +1276,7 @@
     if (selectionGesture) {
       if (selectionGesture.kind === "marquee") {
         selectionGesture.current = selectionPointOf(e);
+        noteEdgeScroll(e);
       } else if (!selectionGesture.polygon) {
         const p = selectionPointOf(e);
         const last = selectionGesture.points[selectionGesture.points.length - 1];

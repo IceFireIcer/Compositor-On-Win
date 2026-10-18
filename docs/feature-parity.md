@@ -177,7 +177,7 @@
 | S02 | 像素边描迹 → 蚂蚁线闭环路径 | `wand_trace` | 30 | M3 | ◐ 描迹与闭环路径齐备（Go `wand_trace` + `state/selection.ts:117 outlineLoops`、`selection.test.ts`），画布也画蚂蚁线（`CanvasSurface.svelte:846`）；但无创建入口（同 S01） |
 | S03 | 色彩范围（采样含/排除色+羽化度） | `color_range_mask` | 29 | M3 | ☑ 同 C29：内核 + 黄金基准齐备，且**表单存在**（`SelectionEditSheet.svelte` 的 `colorRange` 分支，含/排除色与容差） |
 | S04 | 扩展/收缩/羽化（蒙版域操作） | `SelectionEdits.swift` | 31 | M3 | ☑ 同 C31：纯函数 + 测试齐备，UI 入口在 `MenuBar.svelte:303-305` + `SelectionEditSheet` |
-| S05 | 选区剪贴板/选区内移动复制/边缘自动滚动 | `FloatingSelection` | 30 | M3 | ◐ 票48+16：选区剪贴板（拷/切/粘贴/⌘J）完成；浮动选区搬运已接（方向键 → `MoveSelectedPixels`，`internal/bridge/selection_commands.go:186`、`pixel_move_test.go`、`actions.ts:758-765`）；边缘自动滚动仍是零消费者的纯函数（`state/selection.ts:322`），无拖拽浮层 |
+| S05 | 选区剪贴板/选区内移动复制/边缘自动滚动 | `FloatingSelection` | 30 | M3 | ◐ 票48+16：选区剪贴板（拷/切/粘贴/⌘J）完成；浮动选区搬运已接（方向键 → `MoveSelectedPixels`，`internal/bridge/selection_commands.go:186`、`pixel_move_test.go`、`actions.ts:758-765`）；**边缘自动滚动已接线**（2026-10-19）：`edgeAutoScroll` 不再零消费者 —— 矩形选区拖拽进视口边缘 32px 余量时按帧推视口（`CanvasSurface.svelte` 的 rAF 循环，鼠标停住时 `pointermove` 不再触发，所以必须自己推帧；松手/取消即停），并把框的端点按同一指针位置重算。浏览器测试钉住「贴边拖会平移、中间拖不平移、松手后停止」，去掉挂钩即失败。**仍无拖拽浮层** |
 | S06 | 对象选择/主体/移除背景 + 引导滤波抠边 | Vision→ONNX（ADR-0005） | 28 | M6 | ☑ 票37 |
 | S07 | 内容感知填充（可延伸出画布） | `PatchPixels.c` | 42 | M6 | ☑ 票35 |
 
