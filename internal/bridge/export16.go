@@ -38,9 +38,10 @@ func (w *Workspace) sixteenBitExportRaster() (*render.DeepRaster, error) {
 // through bytes.
 //
 // The gate is still narrow, and still says which layer and which property stops
-// it: a group, an adjustment, a missing raster, a mask, a clip, effects, or a
-// blend mode other than normal. Anything it cannot describe is refused rather
-// than downgraded.
+// it: a group, a missing raster, a mask, a clip, effects, or a blend mode other
+// than normal. Anything it cannot describe is refused rather than downgraded.
+// Adjustment layers are accepted (ticket 71): CompositeDeep applies them on the
+// deep raster, so highlights survive into them.
 func (w *Workspace) composeDeepExportRaster() (*render.DeepRaster, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -65,7 +66,9 @@ func (w *Workspace) composeDeepExportRaster() (*render.DeepRaster, error) {
 		case l.IsGroupLayer():
 			return nil, fmt.Errorf("图层「%s」是组，16 位合成不支持组", name)
 		case l.Adjustment != nil:
-			return nil, fmt.Errorf("图层「%s」是调整图层，16 位合成不支持调整", name)
+			// 调整图层现在由 CompositeDeep 在**深层**上作用（票 71）：曝光原生吃 uint16，其余内核走
+			// 归一化/还原，所以超白高光不会再在到达调整之前被裁掉。它自己会拒绝剪贴/特效/蒙版/
+			// 非正常混合，这里不重复判断。
 		case l.ImageFile == nil:
 			return nil, fmt.Errorf("图层「%s」没有位图", name)
 		case l.MaskFile != nil && (l.MaskEnabled == nil || *l.MaskEnabled):
@@ -76,6 +79,10 @@ func (w *Workspace) composeDeepExportRaster() (*render.DeepRaster, error) {
 			return nil, fmt.Errorf("图层「%s」有图层特效，16 位合成不支持特效", name)
 		case l.BlendMode != nil && *l.BlendMode != domain.BlendNormal:
 			return nil, fmt.Errorf("图层「%s」的混合模式不是「正常」", name)
+		}
+		if l.Adjustment != nil {
+			// 调整层没有自己的位图（它作用在下面积累出来的结果上）。
+			continue
 		}
 		if bmp := sess.bitmaps[*l.ImageFile]; bmp == nil || bmp.Deep == nil {
 			return nil, fmt.Errorf("图层「%s」没有 16 位栅格", name)

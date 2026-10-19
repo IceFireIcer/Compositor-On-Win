@@ -216,6 +216,60 @@ func TestExportAsSixteenBitRefusesWhatTheCompositeCannotDescribe(t *testing.T) {
 	}
 }
 
+// exportSixteenBitSamples 导出一张 16 位 PNG，返回第一行各像素的 16 位红通道样本。
+func exportSixteenBitSamples(t *testing.T, adj *domain.Adjustment) [4]uint32 {
+	t.Helper()
+	svc, _ := newTestService(t, 4, 1)
+	deepLayerForExport(t, svc)
+	if adj != nil {
+		sess := activeSessionOf(t, svc)
+		opacity := 1.0
+		sess.doc.Layers = append(sess.doc.Layers, domain.Layer{
+			ID: "adj", Name: "Levels", IsVisible: true, Opacity: &opacity, Adjustment: adj,
+		})
+	}
+	dir := t.TempDir()
+	stubExportSaveDialog(t, filepath.Join(dir, "adj"))
+	reply, err := svc.ExportAs(`{"format":"png","sixteenBit":true,"defaultName":"adj.png"}`)
+	if err != nil {
+		t.Fatalf("16 位导出: %v", err)
+	}
+	data, err := os.ReadFile(parseJSON[map[string]string](t, reply)["path"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	img, err := png.Decode(bytes.NewReader(data))
+	if err != nil {
+		t.Fatalf("导出的 PNG 应可重新打开核验: %v", err)
+	}
+	var out [4]uint32
+	for x := 0; x < 4; x++ {
+		r, _, _, _ := img.At(x, 0).RGBA()
+		out[x] = r
+	}
+	return out
+}
+
+// 票 71：调整图层现在在**深层**上作用（`CompositeDeep` → `deepAdjust`），所以 16 位导出不再因为
+// 「有调整层」被拒 —— 而且色阶要真的改到像素，不是被跳过。
+func TestExportAsSixteenBitAppliesAnAdjustmentLayer(t *testing.T) {
+	base := exportSixteenBitSamples(t, nil)
+
+	dark := domain.LevelsSettings{Ranges: [4]domain.LevelRange{
+		{Black: 51, Gamma: 1, White: 204, OutputBlack: 0, OutputWhite: 255},
+		{Black: 51, Gamma: 1, White: 204, OutputBlack: 0, OutputWhite: 255},
+		{Black: 51, Gamma: 1, White: 204, OutputBlack: 0, OutputWhite: 255},
+		domain.IdentityLevelRange(),
+	}}
+	adjusted := exportSixteenBitSamples(t, &domain.Adjustment{Kind: domain.AdjustmentLevels, Levels: dark})
+
+	for x := 0; x < 4; x++ {
+		if adjusted[x] >= base[x] {
+			t.Fatalf("像素 %d：色阶调整层应当压暗，得到 %d → %d", x, base[x], adjusted[x])
+		}
+	}
+}
+
 func TestExportAsSixteenBitRefusesOtherFormatsAndResizes(t *testing.T) {
 	svc, _ := newTestService(t, 4, 1)
 	deepLayerForExport(t, svc)
