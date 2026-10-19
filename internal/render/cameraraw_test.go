@@ -434,6 +434,40 @@ func TestApplyCameraRawDetailSharpenStrengthensEdges(t *testing.T) {
 	}
 }
 
+// 票 78 第三条第后半句：**透明像素不参与色彩降噪的统计**。
+//
+// 上游把这条写在注释里（AdjustPixels.c:1147-1148「Each pixel counts by its alpha, so transparent
+// pixels add no color of their own and don't pull the colors beside them toward gray」），实现是
+// 红/蓝差值与 **coverage 平面**一起模糊、再除以 coverage 的模糊值。
+//
+// 分辨力在**边界**：图右半边全透明。若统计不加权（把透明像素当 0 一起平均），贴着边界那列彩色
+// 像素会被拉向灰；加权则原样保留 —— 左边是均匀纯红，加权下结果与输入相同。
+//
+// 注意**亮度**降噪不在此列：上游那条（AdjustPixels.c:1108）确实把透明像素记为 0 并参与模糊，
+// 我们照抄，所以这里只开色彩降噪。
+func TestCameraRawColorDenoiseIgnoresTransparentPixels(t *testing.T) {
+	b := NewBitmap(16, 1)
+	for x := 0; x < 8; x++ {
+		i := x * 4
+		b.Pix[i], b.Pix[i+1], b.Pix[i+2], b.Pix[i+3] = 255, 0, 0, 255
+	}
+	// 右半边（x=8..15）保持全透明（NewBitmap 已清零）。
+	ApplyCameraRawDetail(b, 0, 0, 0, 0 /*noiseLuminance*/, 0, 0, 0 /*noiseColor*/, 100, 50, 50, 1)
+
+	// 贴着边界的那一列必须还是饱和的红。
+	i := 7 * 4
+	if b.Pix[i+3] != 255 {
+		t.Fatalf("alpha 被改了：%v", b.Pix[i:i+4])
+	}
+	if int(b.Pix[i])-int(b.Pix[i+1]) < 200 {
+		t.Fatalf("贴边像素被透明区域拉向灰：%v（纯红应当是 r−g≈255）", b.Pix[i:i+4])
+	}
+	// 透明像素本身不该被写成不透明。
+	if a := b.Pix[8*4+3]; a != 0 {
+		t.Fatalf("透明像素的 alpha 变成了 %d", a)
+	}
+}
+
 func TestApplyCameraRawDetailDenoiseSmoothsNoise(t *testing.T) {
 	bmp := NewBitmap(16, 16)
 	for y := 0; y < 16; y++ {
