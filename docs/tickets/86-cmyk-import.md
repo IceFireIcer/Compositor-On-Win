@@ -4,7 +4,7 @@
 
 **Blocked by:** 38 — PSD/PSB 解析器; 72 — CMYK ICC 校样与色域警告。
 
-**Status:** in-progress（2026-10-19 回写）—— **TIFF / JPEG / PSD（拼合 + 分层）四条路都通**，配置都能留进会话；**只剩第 3 条没验证**：目前没有「打开 CMYK → 保存 `.comp` → 重开 → 校样」的往返测试，所以「与 `CMYKTests` 语义一致」还勾不了。
+**Status:** done（2026-10-19）—— TIFF / JPEG / PSD（拼合 + 分层）四条路都通，配置都能留进会话；「打开 → 保存 `.comp` → 重开」的往返也补上了（像素逐字节一致、配置持久化经直接查文件确认）。
 
 （票面原标 `blocked-by-decision`。核对下来它并不真的卡在票 72 上：**导入**只需要文件**内嵌**的
 配置，而票 72 缺的是「随包内置的通用配置」（发行准备项）。`colorio.ConvertToRGB` 的注释里就
@@ -32,11 +32,18 @@
       没有 ICC 标签、或标签里不是 CMYK 配置，都报出具体原因（「没有内嵌 ICC 配置，套用 sRGB
       会把颜色弄错」/「内嵌的配置不是 CMYK 配置」）。上游的「让用户选一份」属于 UI，未做；
       **拒绝**是安全的那一半。
-- [ ] 打开、保存重开和校样显示与 `CMYKTests` 语义一致。
-      **还差哪一步**（2026-10-19 核对）：导入与导出两侧、以及「配置留进会话」都有测试
-      （`TestImportingACMykTIFFAdoptsItsEmbeddedProfile`、`TestLoadingACMykPSDAdoptsItsProfile`、
-      `cmyk_proof_test.go`），但**没有一条**覆盖「打开 CMYK 文件 → 保存 `.comp` → 重开 → 像素与配置
-      仍一致」。这条不勾。
+- [x] 打开、保存重开和校样显示与 `CMYKTests` 语义一致。
+      `TestCMYKImportSurvivesSaveAndReopen`（2026-10-19）串起整条链：打开 CMYK TIFF → 保存 `.comp`
+      → 全新 workspace/service 重开 → **像素逐字节一致**、图层结构一致、`cmyk.json` 里记着的仍是
+      导入时采纳的那份配置（校样与 CMYK 导出都用它）。
+
+      **两个测试缺口是被变异逼出来的，值得记**：
+      1. 第一版挑的是**第一份** CMYK 配置，而 `Chosen()` 的回退恰好也回退到它 —— 「持久化了」与
+         「回退了」分辨不出来。改成挑**不是回退**的那份，并在回退恰好是它时跳过。
+      2. 更隐蔽的一条：`adopt` 会把配置**复制进 colorio 目录**，副本名字与采纳的一致，于是
+         `Chosen().Name` 在「写了 cmyk.json」与「没写、回退到副本」两种情况下**看起来一样**。
+         所以断言改成**直接查 `cmyk.json` 文件**。把 `adopt` 里两处 `SetChosen` 去掉，改前测试
+         照样通过，改后立刻失败。
 
       —— 以下是 PSD 支持的过程记录 ——
       **PSD 的 CMYK 变体：拼合这条已通**（2026-10-16）。

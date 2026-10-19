@@ -4,9 +4,11 @@ package bridge
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"compositor-win/internal/colorio"
@@ -105,6 +107,124 @@ func TestLoadingACMykPSDAdoptsItsProfile(t *testing.T) {
 	}
 	if chosen.Name != target.Name {
 		t.Fatalf("选中的是 %q，想要被采纳的那份 %q", chosen.Name, target.Name)
+	}
+}
+
+// 票 86 第 3 条：**打开 CMYK → 保存 .comp → 重开**，像素与配置都要还在。
+//
+// 这条原先一直没勾，是因为导入/导出两侧、「配置留进会话」都各有测试，但**没有一条**串起
+// 「落盘再读回来」。它验证三件事：
+//  1. 重开后像素与保存前逐字节一致（.comp 里存的是转换后的 sRGB，转换不会因为往返而漂移）；
+//  2. 图层结构还在；
+//  3. 校样用的那份配置仍是导入时采纳的那份（`cmyk.json` 持久化在 colorio 数据目录里）。
+func TestCMYKImportSurvivesSaveAndReopen(t *testing.T) {
+	dataDir := t.TempDir()
+	t.Setenv("COMPOSITOR_COLORIO_DATA_DIR", dataDir)
+	colorio.ClearProofCache()
+	if err := colorio.SetChosen(""); err != nil {
+		t.Fatal(err)
+	}
+
+	// 挑一份**不是回退**的 CMYK 配置：`Chosen()` 在没选过时会回退到 Generic 或第一份，
+	// 若挑的正好是它，「持久化了」与「回退了」就分辨不出来 —— 第一版就是这么写错的，
+	// 把 `adopt` 里的 SetChosen 去掉，测试照样通过。
+	var target colorio.Profile
+	for i := len(colorio.Installed()) - 1; i >= 0; i-- {
+		p := colorio.Installed()[i]
+		if data, err := os.ReadFile(p.Path); err == nil && colorio.IsCMYKProfile(data) {
+			target = p
+			break
+		}
+	}
+	if target.Path == "" {
+		t.Skip("本机没有可用的 CMYK 配置")
+	}
+	if before := colorio.Chosen(); before != nil && before.Name == target.Name {
+		t.Skip("回退恰好就是目标配置，这条测试分辨不出采纳")
+	}
+	profile, err := os.ReadFile(target.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "cmyk.tif")
+	if err := os.WriteFile(srcPath, bridgeCMYKTIFF(t, profile), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// 1. 打开。
+	svc, _ := newTestService(t, 4, 4)
+	if _, err := svc.beginImport([]string{srcPath}); err != nil {
+		t.Fatalf("导入 CMYK TIFF: %v", err)
+	}
+	adopted := colorio.Chosen()
+	if adopted == nil {
+		t.Fatal("导入后应当有一份被选中的 CMYK 配置")
+	}
+	// 持久化本身要**直接查文件**，不能靠 Chosen() 去猜：adopt 会把配置复制进 colorio 目录，
+	// 副本名字与采纳的一致，于是「没写 cmyk.json、回退到副本」与「写了 cmyk.json」在
+	// Chosen().Name 上看起来一模一样 —— 第一版就是这么写的，把 adopt 里的 SetChosen 全去掉，
+	// 测试照样通过。
+	chosenJSON, err := os.ReadFile(filepath.Join(dataDir, "cmyk.json"))
+	if err != nil {
+		t.Fatalf("采纳后应当写下 cmyk.json: %v", err)
+	}
+	if !strings.Contains(string(chosenJSON), adopted.Name) {
+		t.Fatalf("cmyk.json 里应当记着 %q，得到 %s", adopted.Name, chosenJSON)
+	}
+	sess := activeSessionOf(t, svc)
+	var asset string
+	for i := range sess.doc.Layers {
+		if sess.doc.Layers[i].ImageFile != nil {
+			asset = *sess.doc.Layers[i].ImageFile
+			break
+		}
+	}
+	if asset == "" {
+		t.Fatal("导入后应当有一个带位图的图层")
+	}
+	before := append([]uint8(nil), sess.bitmaps[asset].Pix...)
+	layerCount := len(sess.doc.Layers)
+
+	// 2. 保存。
+	savePath := filepath.Join(dir, "roundtrip.comp")
+	svc.saveDialog = func(context.Context) (string, error) { return savePath, nil }
+	if _, err := svc.SaveProjectDialog(); err != nil {
+		t.Fatalf("保存: %v", err)
+	}
+
+	// 3. 重开：全新 workspace/service，**同一个 colorio 数据目录**。
+	ws2 := NewWorkspace()
+	svc2 := NewService(ws2)
+	svc2.openDialog = func(context.Context) (string, error) { return savePath, nil }
+	if _, err := svc2.OpenProjectDialog(); err != nil {
+		t.Fatalf("重开: %v", err)
+	}
+	sess2 := activeSessionOf(t, svc2)
+	if len(sess2.doc.Layers) != layerCount {
+		t.Fatalf("重开后图层数 = %d，想要 %d", len(sess2.doc.Layers), layerCount)
+	}
+	reopened := sess2.bitmaps[asset]
+	if reopened == nil {
+		t.Fatalf("重开后位图库缺少 %s", asset)
+	}
+	if len(reopened.Pix) != len(before) {
+		t.Fatalf("重开后位图长度 = %d，想要 %d", len(reopened.Pix), len(before))
+	}
+	for i := range before {
+		if reopened.Pix[i] != before[i] {
+			t.Fatalf("像素 %d：保存前 %d，重开后 %d —— 往返把颜色改了", i, before[i], reopened.Pix[i])
+		}
+	}
+
+	// 4. 校样用的仍是导入时采纳的那份配置。
+	again := colorio.Chosen()
+	if again == nil {
+		t.Fatal("重开后应当仍有一份被选中的 CMYK 配置")
+	}
+	if again.Name != adopted.Name {
+		t.Fatalf("重开后的配置是 %q，想要 %q", again.Name, adopted.Name)
 	}
 }
 
