@@ -28,7 +28,15 @@ func (w *Workspace) sixteenBitExportRaster() (*render.DeepRaster, error) {
 		}
 		return deep, nil
 	}
-	return w.composeDeepExportRaster()
+	deep, err := w.composeDeepExportRaster()
+	if err != nil {
+		return nil, err
+	}
+	// 多图层里只要有一层是 HDR，合成结果就是 HDR —— 16 位 PNG/TIFF 装不下超白值，照样拒绝。
+	if deep.HDR {
+		return nil, fmt.Errorf("合成结果是 HDR（有超白值），走 EXR（16 位 PNG/TIFF 装不下）")
+	}
+	return deep, nil
 }
 
 // composeDeepExportRaster is the multi-layer path (ticket 84's U31 remainder):
@@ -106,13 +114,13 @@ func (w *Workspace) composeDeepExportRaster() (*render.DeepRaster, error) {
 // — the values really are the 8-bit ones — unlike claiming 16 bits for an 8-bit
 // composite.
 func (w *Workspace) hdrExportRaster() (*render.DeepRaster, error) {
-	deep, err := w.flattenIsTheDeepRaster()
-	if err != nil {
-		// A document this gate cannot describe is not an error for EXR: fall back
-		// to the flattened raster rather than refusing the format.
-		return nil, nil
+	if deep, err := w.flattenIsTheDeepRaster(); err == nil && deep.HDR {
+		return deep, nil
 	}
-	if !deep.HDR {
+	// 多图层（含调整图层）：让深层合成器试一次。它描述不了这份文档不是 EXR 的错误 ——
+	// 退回 8 位拼合照写，值确实是 8 位的，比谎称 16 位诚实。
+	deep, err := w.composeDeepExportRaster()
+	if err != nil || !deep.HDR {
 		return nil, nil
 	}
 	return deep, nil

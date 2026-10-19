@@ -51,6 +51,147 @@ func deepCompositeFixture(t *testing.T) (*domain.Document, PixelSource) {
 	}
 }
 
+// hdrCompositeFixture 造一份「一层 HDR 像素（4.0 白、不透明、铺满画布）」的文档。
+func hdrCompositeFixture(t *testing.T, w, h int) (*domain.Document, PixelSource) {
+	t.Helper()
+	deep := NewDeep(w, h, true)
+	for i := 0; i < len(deep.Pix); i += 4 {
+		for c := 0; c < 3; c++ {
+			deep.Pix[i+c] = FloatToHalf(4)
+		}
+		deep.Pix[i+3] = FloatToHalf(1)
+	}
+	bmp := deep.ToBitmap()
+	bmp.Deep = deep
+	l := benchLayer("hdr", "hdr.png", w, h, nil)
+	doc := &domain.Document{
+		Format: domain.FormatID, Version: domain.FormatVersion,
+		ColorSpace: domain.ColorSpaceSRGB, DocumentID: "hdr",
+		Width: w, Height: h,
+		Layers: []domain.Layer{l},
+	}
+	return doc, func(string) (*Bitmap, error) { return bmp, nil }
+}
+
+// HDR 上的 source-over 必须在半浮点上算。底层 4.0、上层预乘 0.5（alpha 0.5）：
+// out = 0.5 + 4.0×(1−0.5) = 2.5。直接对位模式算会得到完全不同的数。
+//
+// 这条是变异审计逼出来的：先前只有一个 HDR 层的夹具，dst 是透明的，source-over 退化成复制，
+// 于是把 HDR 分支删掉测试照样通过 —— 分支等于没测。
+func TestDeepSourceOverBlendsHalfFloats(t *testing.T) {
+	dst := NewDeep(1, 1, true)
+	src := NewDeep(1, 1, true)
+	for c := 0; c < 3; c++ {
+		dst.Pix[c] = FloatToHalf(4)
+		src.Pix[c] = FloatToHalf(0.5) // 预乘后颜色样本
+	}
+	dst.Pix[3] = FloatToHalf(1)
+	src.Pix[3] = FloatToHalf(0.5)
+
+	deepSourceOver(dst, src)
+
+	if got := HalfToFloat(dst.Pix[0]); got < 2.4 || got > 2.6 {
+		t.Fatalf("半浮点 source-over = %.3f，想要 2.5", got)
+	}
+}
+
+// deepScaleAlpha 在 HDR 上也要解码后缩放（颜色与 alpha 同时缩，保持预乘关系）。
+func TestDeepScaleAlphaScalesHalfFloats(t *testing.T) {
+	d := NewDeep(1, 1, true)
+	for c := 0; c < 3; c++ {
+		d.Pix[c] = FloatToHalf(4)
+	}
+	d.Pix[3] = FloatToHalf(1)
+
+	deepScaleAlpha(d, 0.5)
+
+	if got := HalfToFloat(d.Pix[0]); got < 1.9 || got > 2.1 {
+		t.Fatalf("半浮点 alpha 缩放后颜色 = %.3f，想要 2.0", got)
+	}
+	if got := HalfToFloat(d.Pix[3]); got < 0.45 || got > 0.55 {
+		t.Fatalf("半浮点 alpha 缩放后 alpha = %.3f，想要 0.5", got)
+	}
+}
+
+// 两层 HDR 叠在一起（上层半透明），端到端确认累积栅格与两个辅助函数一起对。
+func TestDeepCompositeBlendsTwoHDRLayers(t *testing.T) {
+	const w, h = 2, 2
+	bottom := NewDeep(w, h, true)
+	top := NewDeep(w, h, true)
+	for i := 0; i < len(bottom.Pix); i += 4 {
+		for c := 0; c < 3; c++ {
+			bottom.Pix[i+c] = FloatToHalf(4)
+			top.Pix[i+c] = FloatToHalf(1)
+		}
+		bottom.Pix[i+3] = FloatToHalf(1)
+		top.Pix[i+3] = FloatToHalf(1)
+	}
+	bottomBmp := bottom.ToBitmap()
+	bottomBmp.Deep = bottom
+	topBmp := top.ToBitmap()
+	topBmp.Deep = top
+	opacity := 0.5
+	doc := &domain.Document{
+		Format: domain.FormatID, Version: domain.FormatVersion,
+		ColorSpace: domain.ColorSpaceSRGB, DocumentID: "hdr2",
+		Width: w, Height: h,
+		Layers: []domain.Layer{
+			benchLayer("bottom", "bottom.png", w, h, nil),
+			benchLayer("top", "top.png", w, h, func(l *domain.Layer) { l.Opacity = &opacity }),
+		},
+	}
+	srcs := map[string]*Bitmap{"bottom.png": bottomBmp, "top.png": topBmp}
+	deep, err := CompositeDeep(doc, func(name string) (*Bitmap, error) { return srcs[name], nil })
+	if err != nil {
+		t.Fatalf("CompositeDeep: %v", err)
+	}
+	// 上层 1.0 先按不透明度 0.5 缩成预乘 0.5，再盖在 4.0 上：0.5 + 4.0×0.5 = 2.5。
+	if got := HalfToFloat(deep.Pix[0]); got < 2.4 || got > 2.6 {
+		t.Fatalf("两层 HDR 合成 = %.3f，想要 2.5", got)
+	}
+}
+
+// 票 71：累积栅格必须按「有 HDR 层就 HDR」决定 —— 否则超白值在 source-over 里就被截断了。
+func TestDeepCompositeKeepsSuperWhiteAcrossLayers(t *testing.T) {
+	doc, src := hdrCompositeFixture(t, 2, 2)
+	deep, err := CompositeDeep(doc, src)
+	if err != nil {
+		t.Fatalf("CompositeDeep: %v", err)
+	}
+	if !deep.HDR {
+		t.Fatal("有一层是 HDR，累积栅格就应当是 HDR")
+	}
+	if got := HalfToFloat(deep.Pix[0]); got < 3.9 || got > 4.1 {
+		t.Fatalf("合成后高光 = %.3f，想要 4.0（被截断会得到 1.0）", got)
+	}
+}
+
+// 票 71 的核心那条：HDR 层 + 曝光调整层，合成后高光**仍可恢复**。
+// 8 位路径会先把 4.0 裁成 1.0 再算，得到 ≈0.54 —— 这条差别就是本条的验收意义。
+func TestDeepCompositeAppliesAnAdjustmentLayerOverHDR(t *testing.T) {
+	doc, src := hdrCompositeFixture(t, 2, 2)
+	doc.Layers = append(doc.Layers, benchLayer("adj", "", 2, 2, func(l *domain.Layer) {
+		l.ImageFile = nil
+		l.Adjustment = &domain.Adjustment{
+			Kind:             domain.AdjustmentExposure,
+			ExposureSettings: &domain.ExposureSettings{Exposure: -2, Gamma: 1},
+		}
+	}))
+
+	deep, err := CompositeDeep(doc, src)
+	if err != nil {
+		t.Fatalf("CompositeDeep: %v", err)
+	}
+	if !deep.HDR {
+		t.Fatal("累积栅格应当是 HDR")
+	}
+	got := HalfToFloat(deep.Pix[0])
+	// 曝光在线性光里算：4.0 encoded ≈ 线性 16，×0.25 = 4，编码回来 ≈ 2.22。
+	if got < 2.0 {
+		t.Fatalf("4.0 经调整层 -2 档 = %.3f，想要 ≈2.22（8 位路径会得到 ≈0.54）", got)
+	}
+}
+
 // 票 71 的调整层那一半：8 位路径里调整作用在**已经裁好的**合成图上，超白高光在到达它之前就没了。
 // 深层这条把它作用在 uint16（HDR 时是半浮点）样本上，所以高光能被拉回可见范围。
 func TestDeepAdjustExposureBringsASuperWhiteHighlightBack(t *testing.T) {

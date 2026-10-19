@@ -24,16 +24,13 @@ import (
 // the canvas size. Layers are drawn in manifest order, bottom first, exactly as
 // renderScope walks them.
 func CompositeDeep(doc *domain.Document, src PixelSource) (*DeepRaster, error) {
-	out := NewDeep(doc.Width, doc.Height, false)
+	// 先把图层的栅格都取出来：既是为了只加载一次，也是为了先决定累积栅格要不要 HDR ——
+	// 只要有一层是 HDR，累积栅格就必须是 HDR，否则超白值在 source-over 里会被截断。
+	loaded := make([]*Bitmap, len(doc.Layers))
+	hdr := false
 	for i := range doc.Layers {
 		l := &doc.Layers[i]
-		if !l.IsVisible {
-			continue
-		}
-		if l.Adjustment != nil {
-			if err := deepAdjustmentLayer(l, out); err != nil {
-				return nil, err
-			}
+		if !l.IsVisible || l.Adjustment != nil {
 			continue
 		}
 		if l.ImageFile == nil {
@@ -46,9 +43,24 @@ func CompositeDeep(doc *domain.Document, src PixelSource) (*DeepRaster, error) {
 		if layer == nil || layer.Deep == nil {
 			return nil, fmt.Errorf("图层 %s 没有 16 位栅格", l.ID)
 		}
+		loaded[i] = layer
 		if layer.Deep.HDR {
-			return nil, fmt.Errorf("图层 %s 是 HDR 栅格，16 位 PNG/TIFF 装不下超白值", l.ID)
+			hdr = true
 		}
+	}
+	out := NewDeep(doc.Width, doc.Height, hdr)
+	for i := range doc.Layers {
+		l := &doc.Layers[i]
+		if !l.IsVisible {
+			continue
+		}
+		if l.Adjustment != nil {
+			if err := deepAdjustmentLayer(l, out); err != nil {
+				return nil, err
+			}
+			continue
+		}
+		layer := loaded[i]
 		// 采样方式取自图层本身（Place 就是这么做的）：写死一种会在缩放或旋转的边缘上与
 		// 8 位路径产生肉眼可见的差异，而这两条路本该给出同一个结果。
 		placed := DrawTransformedDeep(layer.Deep, l.Transform, 1, 1, doc.Width, doc.Height, 0, 0, l.Transform.Sampling)
@@ -168,6 +180,14 @@ func deepScaleAlpha(d *DeepRaster, factor float64) {
 	if factor < 0 {
 		factor = 0
 	}
+	if d.HDR {
+		// HDR 样本是半浮点位模式，缩放必须在解码后做。
+		f := float32(factor)
+		for i := range d.Pix {
+			d.Pix[i] = FloatToHalf(HalfToFloat(d.Pix[i]) * f)
+		}
+		return
+	}
 	for i := range d.Pix {
 		d.Pix[i] = uint16(float64(d.Pix[i]) * factor)
 	}
@@ -179,6 +199,27 @@ func deepScaleAlpha(d *DeepRaster, factor float64) {
 // samples that is the same sum, so the two agree up to the rounding of the
 // 8-bit store.
 func deepSourceOver(dst, src *DeepRaster) {
+	// 两边都是 HDR 时才在半浮点上算；一边是非 HDR 的情况不该出现（CompositeDeep 按「有 HDR 层
+	// 就整体 HDR」决定累积栅格），真出现了也退回整数路径而不是猜。
+	if dst.HDR && src.HDR {
+		for i := 0; i+3 < len(dst.Pix) && i+3 < len(src.Pix); i += 4 {
+			sA := HalfToFloat(src.Pix[i+3])
+			if !(sA > 0) {
+				continue
+			}
+			inv := 1 - sA
+			for c := 0; c < 3; c++ {
+				v := HalfToFloat(src.Pix[i+c]) + HalfToFloat(dst.Pix[i+c])*inv
+				dst.Pix[i+c] = FloatToHalf(v)
+			}
+			a := sA + HalfToFloat(dst.Pix[i+3])*inv
+			if a > 1 {
+				a = 1
+			}
+			dst.Pix[i+3] = FloatToHalf(a)
+		}
+		return
+	}
 	for i := 0; i+3 < len(dst.Pix) && i+3 < len(src.Pix); i += 4 {
 		sA := int(src.Pix[i+3])
 		if sA == 0 {

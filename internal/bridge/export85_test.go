@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"compositor-win/internal/domain"
 	"compositor-win/internal/hdrio"
 	"compositor-win/internal/render"
 )
@@ -109,6 +110,41 @@ func TestExportAsEXRKeepsLightBrighterThanWhite(t *testing.T) {
 	}
 	if math.Abs(float64(peak)-4) > 0.01 {
 		t.Fatalf("峰值 = %v，想要约 4", peak)
+	}
+}
+
+// 票 71：HDR 层上再压一个调整层，EXR 导出必须走**深层合成**（不是退回 8 位），所以高光仍在。
+// 退回 8 位会把 4.0 裁成 1.0、再 -2 档 → 峰值 ≈0.54。
+func TestExportAsEXRAppliesAnAdjustmentLayerOverHDR(t *testing.T) {
+	svc, _ := newTestService(t, 4, 1)
+	hdrLayerForExport(t, svc)
+	sess := activeSessionOf(t, svc)
+	opacity := 1.0
+	sess.doc.Layers = append(sess.doc.Layers, domain.Layer{
+		ID: "adj", Name: "Exposure", IsVisible: true, Opacity: &opacity,
+		Adjustment: &domain.Adjustment{
+			Kind:             domain.AdjustmentExposure,
+			ExposureSettings: &domain.ExposureSettings{Exposure: -2, Gamma: 1},
+		},
+	})
+	dir := t.TempDir()
+	stubExportSaveDialog(t, filepath.Join(dir, "hdr-adj"))
+	reply, err := svc.ExportAs(`{"format":"exr","defaultName":"hdr-adj.exr"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(parseJSON[map[string]string](t, reply)["path"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	back, err := hdrio.DecodeEXR(data)
+	if err != nil {
+		t.Fatalf("导出的 EXR 应可重新打开核验: %v", err)
+	}
+	peak := back.Peak()
+	// 曝光在线性光里算：4.0 → ≈2.22。
+	if peak < 2.0 {
+		t.Fatalf("峰值 = %v，想要 ≈2.22（退回 8 位会得到 ≈0.54）", peak)
 	}
 }
 

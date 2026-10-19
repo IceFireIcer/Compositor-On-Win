@@ -4,17 +4,17 @@
 
 **Blocked by:** 70 — 决策门槛与 .comp v13 / HDR 图层导入; 83 — 16 位色调调整与滤镜。
 
-**Status:** in-progress（2026-10-19）——图层上的曝光、色阶、模糊、绘画与变换都已按上游规则保留高光。**调整图层在深层上合成已通一半**：调整层现在作用在 `DeepRaster` 上（曝光原生吃 uint16，其余走归一化/还原），16 位导出的闸门也放开了；**仍缺 HDR 感知的合成器**（累积栅格还是非 HDR，HDR 图层仍被拒），所以整条链还没打通。
+**Status:** done（2026-10-19）——图层上的曝光、色阶、模糊、绘画与变换都按上游规则保留高光；**调整图层也在深层上合成了**：调整层作用在 `DeepRaster` 上（曝光原生吃 uint16，其余走归一化/还原），合成器按「有 HDR 层就 HDR」决定累积栅格，source-over/alpha 缩放都在半浮点上算，EXR 导出因此能吃「HDR 层 + 调整层」（4.0 经 -2 档峰值仍 ≈2.22）。
 
-- [ ] 曝光、色阶、调整层、模糊、变换和绘画按上游 HDR 精度/降级规则工作，未触及高光可恢复。
+- [x] 曝光、色阶、调整层、模糊、变换和绘画按上游 HDR 精度/降级规则工作，未触及高光可恢复。
   - [x] 曝光：走精确线性光内核（`HDRExposure`），不经 8 位查找表。
   - [x] 色阶/模糊/其余滤镜：先按像素归一化到白内、跑内核、再按比例乘回（`HDRFilterNormalize`/`HDRFilterRestore`），选区内外分别对账。
   - [x] 绘画/修复/仿制/填充/剪切：只把改过的像素折进深层栅格（`DeepTakePainted`）。
   - [x] 变换：只改 placement，不重采样；图像尺寸另走 `DrawTransformedDeep`。
-  - [ ] 调整**图层**：`renderAdjustment` 仍在 8 位合成图上作用，高光在到达它之前已被裁掉。
-        原先记「属票 82」，而**票 82 已经 done**（16 位合成器落地）—— **阻塞已解除**。
+  - [x] 调整**图层**：原先 `renderAdjustment` 在 8 位合成图上作用，高光在到达它之前就被裁掉。
+        原先记「属票 82」，而**票 82 已经 done**（16 位合成器落地）—— 阻塞解除后两步做完了：
 
-        **已落地的第一半**（2026-10-19）：调整层现在作用在**深层**上。
+        **第一步（2026-10-19）**：调整层现在作用在**深层**上。
         - `render/deepcomposite.go` 新增 `deepAdjustmentLayer` / `deepAdjust` / `deepFadeToward`：
           `CompositeDeep` 遇到调整层就在累积的深栅格上跑内核，再按不透明度交叉淡入。
         - **曝光**原生吃 uint16（`HDRExposure` 在线性光里算），超白高光被精确保留：4.0 经 -2 档得
@@ -28,9 +28,21 @@
         - 两处变异验证：去掉 `deepAdjust` 的 HDR 分支 → 曝光测试失败；去掉 `deepFadeToward` 的
           半浮点分支 → 插值测试失败；闸门重新拒绝调整层 → 导出测试失败。
 
-        **仍缺的一半**：`CompositeDeep` 的累积栅格是 `NewDeep(..., false)`，**HDR 图层仍被拒绝**，
-        所以上面那条 HDR 调整路径在生产链路上还够不到 —— 要先把合成器做成 HDR 感知（累积栅格
-        按需为 HDR、source-over 在半浮点上算）。这一步没做，所以本条不勾。
+        **第二步（2026-10-19）**：合成器做成 **HDR 感知**，整条链通了。
+        - `CompositeDeep` 先加载各层栅格再决定累积栅格：**只要有一层是 HDR，累积栅格就是 HDR**
+          （否则超白值在 source-over 里被截断）。原先「HDR 图层直接拒绝」那条删掉了。
+        - `deepSourceOver` / `deepScaleAlpha` 在 HDR 上**解码半浮点后算**：两层 HDR 叠（上层预乘 0.5、
+          底层 4.0）得 2.5；直接对位模式算会得到别的数。
+        - `sixteenBitExportRaster` 在**合成结果**是 HDR 时仍然拒绝（16 位 PNG/TIFF 装不下超白值），
+          而 `hdrExportRaster` 改成先试深层合成 —— EXR 于是能吃「HDR 层 + 调整层」。
+
+        **变异审计逼出的两个测试缺口**（值得记一笔）：第一版只有单层 HDR 夹具，dst 是透明的，
+        source-over 退化成复制，于是把 HDR 分支删掉测试**照样通过**；不透明度又都是 1，没走到 alpha
+        缩放。补了 `TestDeepSourceOverBlendsHalfFloats`、`TestDeepScaleAlphaScalesHalfFloats`、
+        `TestDeepCompositeBlendsTwoHDRLayers` 之后，两个变异都被抓住。
+
+        端到端：`TestExportAsEXRAppliesAnAdjustmentLayerOverHDR` —— 4.0 经调整层 -2 档，EXR 峰值
+        ≈2.22；把它改回「不试深层合成」，峰值落到 **0.537**（正是 8 位裁断后的值），测试立刻失败。
 - [x] 屏幕显示有受控映射，预览不把原始高光永久截断为白色（显示副本派生自深层栅格、每次编辑后重算、从不写回）。
 - [x] HDR 转 16 位的用户命令、位深标签、撤销及状态刷新正确。
 - [x] 保存重开与撤销后高光仍可恢复，按 `DeepLayerTests` 的高光保真用例验证；EXR 导出另见 85。
