@@ -389,6 +389,14 @@ func planLayerOp(op string, payload string) (string, func(*session) error, error
 			return nil
 		}, nil
 
+	// Ticket 53 / C48: Move Out of Folder. The op works on the active layer
+	// (like addAdjustment), never on a payload id: the menu and the original
+	// both act on whatever is selected.
+	case "moveOutOfGroup":
+		return "移出文件夹", func(sess *session) error {
+			return moveActiveLayerOutOfGroup(sess)
+		}, nil
+
 	// Ticket 47: the C46–C53 layer command family (internal/bridge/layer_commands.go).
 	case "duplicateLayer":
 		return planDuplicateLayer(payload)
@@ -410,6 +418,49 @@ func planLayerOp(op string, payload string) (string, func(*session) error, error
 	default:
 		return "", nil, fmt.Errorf("未知操作 %q", op)
 	}
+}
+
+// moveActiveLayerOutOfGroup ports Swift moveActiveLayerOutOfGroup
+// (LayerGroups.swift:319-323): the active layer leaves its folder for the
+// folder's own level, immediately above the folder in the flat array. Only the
+// layer record moves — its own children keep their slots and stay under it,
+// exactly like placeLayer. placeWithin (layer_commands.go) does the parent
+// rewrite plus the clipping fixes Swift runs while rearranging; the mutator
+// works on a copy so a rejected hierarchy leaves the document untouched.
+func moveActiveLayerOutOfGroup(sess *session) error {
+	doc := sess.doc
+	if doc.ActiveLayerID == nil {
+		return fmt.Errorf("没有活动图层")
+	}
+	id := *doc.ActiveLayerID
+	active := layerAt(doc, id)
+	if active == nil {
+		return fmt.Errorf("活动图层不存在: %s", id)
+	}
+	groupID := parentIDOf(active)
+	if groupID == "" {
+		return fmt.Errorf("图层 %s 不在文件夹中，无法移出", id)
+	}
+	group := layerAt(doc, groupID)
+	if group == nil {
+		return fmt.Errorf("图层 %s 的父级文件夹 %s 不存在", id, groupID)
+	}
+
+	candidate := *doc
+	candidate.Layers = append([]domain.Layer(nil), doc.Layers...)
+	if !placeWithin(&candidate, id, parentIDOf(group), groupID) {
+		return fmt.Errorf("移出文件夹失败: %s", id)
+	}
+	candidate.ActiveLayerID = idPtr(id)
+	if err := validateClipGraph(&candidate); err != nil {
+		return err
+	}
+	if err := candidate.Validate(); err != nil {
+		return err
+	}
+	sess.doc.Layers = candidate.Layers
+	sess.doc.ActiveLayerID = candidate.ActiveLayerID
+	return nil
 }
 
 // newAdjustmentDefaults builds the complete initial record for a new

@@ -54,6 +54,7 @@ import { geometrySheet } from "../state/geometry";
 import {
   canUngroupLayers,
   mergePlan,
+  moveActiveLayerOutOfGroup as moveOutOfGroupPlan,
   type LayerContext,
 } from "../state/layerOps";
 import { activeTool, cycleShapeKind, cycleToolMode, setBrushMode, updateToolModes } from "../state/tools";
@@ -382,6 +383,23 @@ async function ungroupActiveLayer(): Promise<void> {
   const layer = activeLayerEntry();
   if (!layer || !layer.isGroup) return;
   await layerOps.ungroupLayer(layer.id);
+}
+
+/**
+ * 移出文件夹：活动图层从所在文件夹移到文件夹上方、文件夹所在那一层，改
+ * parentID 并进 Go 历史（一步可撤销）。只有活动图层有父级时可执行 ——
+ * 可用性由 state/layerOps.ts 的 moveActiveLayerOutOfGroup 纯函数判定，菜单
+ * 与 Swift 的 activeLayer?.parentID == nil 条件一致。
+ *
+ * op 名走现有的 runLayerOp 通道（快照应用与错误日志都复用），并已在
+ * state/document.ts 的 LayerOpName 联合里登记 —— 运行时契约由 Go 的 planLayerOp
+ * 决定（internal/bridge/document.go），Go 侧的 layerop_contract_test 会扫描这行
+ * 字面量，op 名不会静默漂移。
+ */
+export async function moveActiveLayerOutOfGroup(): Promise<void> {
+  const layer = activeLayerEntry();
+  if (!layer || layer.parentID === null) return;
+  await runLayerOp("moveOutOfGroup", {});
 }
 
 /**
@@ -951,6 +969,8 @@ export interface LayerMenuState {
   canMerge: boolean;
   canGroup: boolean;
   canUngroup: boolean;
+  /** 移出文件夹：活动图层必须有父级（原版的 activeLayer?.parentID != nil）。 */
+  canMoveOutOfGroup: boolean;
   clippingTitle: string;
   canClip: boolean;
   canDuplicate: boolean;
@@ -968,6 +988,7 @@ export function layerMenuState(doc: DocumentState): LayerMenuState {
     canMerge: false,
     canGroup: false,
     canUngroup: false,
+    canMoveOutOfGroup: false,
     clippingTitle: "创建剪贴蒙版",
     canClip: false,
     canDuplicate: false,
@@ -995,6 +1016,7 @@ export function layerMenuState(doc: DocumentState): LayerMenuState {
     canMerge: plan !== null,
     canGroup: true,
     canUngroup: canUngroupLayers(ctx),
+    canMoveOutOfGroup: moveOutOfGroupPlan(ctx) !== null,
     clippingTitle: clipped ? "释放剪贴蒙版" : "创建剪贴蒙版",
     canClip: clipped || (below !== null && !below.isGroup),
     canDuplicate: true,

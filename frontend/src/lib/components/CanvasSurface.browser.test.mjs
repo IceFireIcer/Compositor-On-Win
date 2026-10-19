@@ -236,3 +236,66 @@ it("auto-scrolls the viewport when a marquee drag reaches the edge", async () =>
     await page.close();
   }
 }, 30000);
+// 票 53/S02 的**显示端**：像素边描迹出的闭环必须真的变成画布上的蚂蚁线。
+//
+// 内核有黄金基准、outlineLoops 有单测、「点击 → 选区装进 store」也有用例，
+// 但「store 里的 loops → 蚂蚁线 SVG」这一段此前没人钉住：删掉覆盖层、闭环不
+// 闭合（去掉 Z）、或退回「每个闭环一个 <path>」，现有测试都不会报错。这条用
+// 左半边带一个洞的 8×8 蒙版，断言描迹结果原样出现在 SVG 上 —— 两条路径（白色
+// 实线打底 + 黑色虚线在上面走），两个闭环是同一条复合路径里的两个子路径。
+it("draws the traced pixel edges as animated marching ants", async () => {
+  const page = await browser.newPage();
+  try {
+    await page.addInitScript(() => Object.defineProperty(navigator, "gpu", { value: undefined }));
+    await page.goto(`${server.resolvedUrls.local[0]}canvas-preview-test`);
+    const mask = Buffer.alloc(8 * 8);
+    for (let y = 0; y < 8; y++) for (let x = 0; x < 4; x++) mask[y * 8 + x] = 255;
+    mask[2 * 8 + 2] = 0;
+    const maskB64 = mask.toString("base64");
+    const body = { contentType: "image/png", body: Buffer.from([0]) };
+    await page.route("**/render/**", (route) => route.fulfill(body));
+    await page.route("**/pixel/**", (route) => route.fulfill(body));
+    await page.evaluate(`(async () => {
+      const { mount, tick } = await import("/node_modules/.vite-canvas-browser/deps/svelte.js");
+      const { default: Surface } = await import("/src/lib/components/CanvasSurface.svelte");
+      const { applyDocumentSnapshot } = await import("/src/lib/state/document.ts");
+      const { workspace } = await import("/src/lib/state/workspace.ts");
+      const { activeTool, toolModes } = await import("/src/lib/state/tools.ts");
+      const doc = { documentID: "tab-a", width: 8, height: 8, resolution: 72, activeLayerID: "layer", layers: [{
+        id: "layer", name: "Layer", isVisible: true, opacity: 1, blendMode: "Normal", imageFile: "layer.png",
+        transform: { origin: [0, 0], size: [8, 8], sampling: "Nearest" } }] };
+      const tab = { id: "tab-a", name: "Ants", width: 8, height: 8, resolution: 72, dirty: false };
+      window.go = { bridge: { Service: {
+        SelectWandAt: async (tabID) => JSON.stringify({ tabId: tabID, selection: { w: 8, h: 8, mask: "${maskB64}" } }),
+      } } };
+      workspace.set({ activeId: "tab-a", tabs: [tab] });
+      applyDocumentSnapshot(JSON.stringify({ rev: 1, filterRev: 0, doc }));
+      activeTool.set("wand");
+      toolModes.update((value) => ({ ...value, wand: "wand" }));
+      mount(Surface, { target: document.getElementById("canvas"), props: { doc: tab } });
+      await tick();
+    })()`);
+    await poll(() => page.locator(".doc").isVisible()).toBe(true);
+    await page.locator(".doc").click({ position: { x: 2, y: 2 } });
+    // 白线 + 黑虚线：两个节点；两个闭环合成一条复合路径（而不是一个闭环一个节点）。
+    await poll(() => page.locator(".ants path").count()).toBe(2);
+    const paths = await page.evaluate(`(() => Array.from(document.querySelectorAll(".ants path")).map((path) => {
+      const style = getComputedStyle(path);
+      const dash = style.strokeDasharray === "none" ? [] : style.strokeDasharray.split(/[ ,]+/).filter(Boolean).map(parseFloat);
+      return { d: path.getAttribute("d"), stroke: style.stroke, width: parseFloat(style.strokeWidth), dash };
+    }))()`);
+    // 外框顺时针、洞逆时针，边走边闭合：与 Go wand_trace / outlineLoops 的约定一致。
+    const outline = "M 0 0 L 4 0 L 4 8 L 0 8 Z M 2 2 L 2 3 L 3 3 L 3 2 Z";
+    expect(paths.map((path) => path.d)).toEqual([outline, outline]);
+    expect(paths).toEqual([
+      { d: outline, stroke: "rgb(255, 255, 255)", width: 1, dash: [] },
+      { d: outline, stroke: "rgb(0, 0, 0)", width: 1, dash: [4, 4] },
+    ]);
+    // 蚂蚁线得真的「走」：原版每 0.12s 把相位推 1px（0.96s 一个周期）。
+    const dashOffset = () => page.evaluate(`(() => getComputedStyle(document.querySelector(".ants .ants-dashes")).strokeDashoffset)()`);
+    const first = await dashOffset();
+    await poll(async () => (await dashOffset()) !== first).toBe(true);
+  } finally {
+    await page.close();
+  }
+}, 30000);

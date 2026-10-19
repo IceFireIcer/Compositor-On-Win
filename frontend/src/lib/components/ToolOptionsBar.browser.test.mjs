@@ -84,3 +84,103 @@ it("does not scroll at all when there is room", async () => {
   expect(wide.scrollWidth).toBeLessThanOrEqual(wide.clientWidth + 1);
   expect(wide.scrollHeight).toBeLessThanOrEqual(wide.clientHeight + 1);
 });
+
+// 票 53/V06：工具栏的数值选项改用 NumericField —— 拖标签改值、↑/↓ 步进（Shift ×10）、
+// 输入解析并钳制，三种语义都来自 numeric.ts。这里钉的是「真的接上了」，纯函数本身由
+// numeric.test.ts 覆盖。
+async function brushDiameter() {
+  // 字符串形式求值：函数体里的动态 import 会被 Vitest 的 SSR 转换破坏。
+  return page.evaluate(`(async () => {
+    const { brushSettings } = await import("/src/lib/state/tools.ts");
+    let diameter = null;
+    brushSettings.subscribe((settings) => { diameter = settings.diameter; })();
+    return diameter;
+  })()`);
+}
+
+it("scrubs, steps and clamps the numeric tool options", async () => {
+  await page.evaluate(() => window.setTool("brush"));
+  await poll(() => page.locator(".options").textContent()).toMatch(/Diameter/);
+  // 放宽工具栏，避免 320px 下横滚把后面的字段裁出可视区、鼠标坐标落空。
+  await page.evaluate(() => { document.getElementById("bar").style.width = "1600px"; });
+
+  const field = page.locator(".numeric-field").filter({ hasText: "Diameter" });
+  const input = field.locator("input");
+  const label = field.locator("label");
+  await poll(() => input.inputValue()).toBe("40");
+
+  // 拖标签：右移 7px → 40 + 7 = 47（灵敏度 1、步进 1，和 TransformInspector 同一套语义）。
+  const box = await label.boundingBox();
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width / 2 + 7, box.y + box.height / 2, { steps: 4 });
+  await page.mouse.up();
+  await poll(() => input.inputValue()).toBe("47");
+  // 输入框显示的是 store 回写的结果，所以这条同时证明 onchange 真的写进了 store。
+  await poll(() => brushDiameter()).toBe(47);
+
+  // ↑ 加一步，Shift+↑ 走十步（ArrowStepper 把步长乘十，不是调细），↓ 减一步。
+  await input.focus();
+  await page.keyboard.press("ArrowUp");
+  await poll(() => input.inputValue()).toBe("48");
+  await page.keyboard.press("Shift+ArrowUp");
+  await poll(() => input.inputValue()).toBe("58");
+  await page.keyboard.press("ArrowDown");
+  await poll(() => input.inputValue()).toBe("57");
+  await poll(() => brushDiameter()).toBe(57);
+
+  // 输入超范围：钳到 2000，不回绕。
+  //
+  // 注意：store 自己也会把直径夹在 1…2000，所以这条是**行为**断言（用户看到的是钳制结果，
+  // 不是 99999）；direct() 的钳制逻辑本身由 numeric.test.ts 的单测钉住。
+  await input.fill("99999");
+  await input.blur();
+  await poll(() => input.inputValue()).toBe("2000");
+  await poll(() => brushDiameter()).toBe(2000);
+
+  // 解析不出来（清空）就保留旧值，而不是写进 NaN 或 0。
+  await input.fill("");
+  await input.blur();
+  await poll(() => input.inputValue()).toBe("2000");
+  await poll(() => brushDiameter()).toBe(2000);
+});
+
+// 工具栏那条「钳到 2000」是行为断言：store 自己也会把直径夹在 1…2000，所以它证明不了
+// NumericField 在调用 onchange 之前就钳好了。这里直接挂一个 NumericField，用回调记录它交给
+// 父组件的值 —— 这才是组件级钳制的判别点。
+it("clamps typed input before handing it to its parent", async () => {
+  await page.evaluate(`(async () => {
+    const { mount, tick } = await import("/node_modules/.vite-toolbar-browser/deps/svelte.js");
+    const { default: NumericField } = await import("/src/lib/components/NumericField.svelte");
+    const host = document.createElement("div");
+    host.id = "numeric-field";
+    document.body.append(host);
+    window.__numericChanges = [];
+    mount(NumericField, {
+      target: host,
+      props: {
+        label: "Tolerance",
+        value: 32,
+        min: 0,
+        max: 255,
+        step: 1,
+        onchange: (value) => window.__numericChanges.push(value),
+      },
+    });
+    await tick();
+  })()`);
+  const input = page.locator("#numeric-field input");
+  await poll(() => input.inputValue()).toBe("32");
+
+  // 超上界：onchange 收到的是钳制后的 255，不是 999。
+  await input.fill("999");
+  await input.blur();
+  await poll(() => page.evaluate(() => window.__numericChanges.at(-1))).toBe(255);
+  await poll(() => input.inputValue()).toBe("255");
+
+  // 解析不出来：onchange 不该被调用，显示回到旧值。
+  await input.fill("");
+  await input.blur();
+  await poll(() => input.inputValue()).toBe("32");
+  expect(await page.evaluate(() => window.__numericChanges.length)).toBe(1);
+});

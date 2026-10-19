@@ -1,4 +1,5 @@
 <script lang="ts">
+  import NumericField from "./NumericField.svelte";
   import TextOptionsBar from "./TextOptionsBar.svelte";
   import {
     activeTool,
@@ -82,17 +83,14 @@
           <option value="object">Object</option>
         </select>
       </label>
-      <label>
-        Tolerance
-        <input
-          type="number"
-          min="0"
-          max="255"
-          step="1"
-          value={$wandSettings.tolerance}
-          onchange={(event) => updateWandSettings({ tolerance: numberValue(event) })}
-        />
-      </label>
+      <NumericField
+        label="Tolerance"
+        min={0}
+        max={255}
+        step={1}
+        value={$wandSettings.tolerance}
+        onchange={(tolerance) => updateWandSettings({ tolerance })}
+      />
       <label class="check">
         <input
           type="checkbox"
@@ -144,18 +142,15 @@
           <option value="foregroundTransparent">Foreground to transparent</option>
         </select>
       </label>
-      <label>
-        Opacity
-        <input
-          type="number"
-          min="1"
-          max="100"
-          step="1"
-          value={Math.round($gradientSettings.opacity * 100)}
-          onchange={(event) => updateGradientSettings({ opacity: numberValue(event) / 100 })}
-        />
-        %
-      </label>
+      <NumericField
+        label="Opacity"
+        unit="%"
+        min={1}
+        max={100}
+        step={1}
+        value={Math.round($gradientSettings.opacity * 100)}
+        onchange={(percent) => updateGradientSettings({ opacity: percent / 100 })}
+      />
       <label class="check">
         <input
           type="checkbox"
@@ -178,30 +173,24 @@
         </select>
       </label>
       {#if $shapeSettings.kind === "Rectangle"}
-        <label>
-          Corner radius
-          <input
-            type="number"
-            min="0"
-            max="5000"
-            step="1"
-            value={$shapeSettings.cornerRadius}
-            onchange={(event) => updateShapeSettings({ cornerRadius: numberValue(event) })}
-          />
-        </label>
+        <NumericField
+          label="Corner radius"
+          min={0}
+          max={5000}
+          step={1}
+          value={$shapeSettings.cornerRadius}
+          onchange={(cornerRadius) => updateShapeSettings({ cornerRadius })}
+        />
       {/if}
       {#if $shapeSettings.kind === "Line"}
-        <label>
-          Line width
-          <input
-            type="number"
-            min="1"
-            max="5000"
-            step="1"
-            value={$shapeSettings.lineWidth}
-            onchange={(event) => updateShapeSettings({ lineWidth: numberValue(event) })}
-          />
-        </label>
+        <NumericField
+          label="Line width"
+          min={1}
+          max={5000}
+          step={1}
+          value={$shapeSettings.lineWidth}
+          onchange={(lineWidth) => updateShapeSettings({ lineWidth })}
+        />
       {/if}
     {:else if $activeTool === "brush" || $activeTool === "cloneStamp" || $activeTool === "blur" || $activeTool === "spotHealing"}
       {#if $activeTool === "spotHealing"}
@@ -243,61 +232,49 @@
           </select>
         </label>
       {/if}
-      <label>
-        Diameter
-        <input
-          type="number"
-          min="1"
-          max="2000"
-          step="1"
-          value={$activeTool === "spotHealing" ? $healSettings.diameter : $brushSettings.diameter}
-          onchange={(event) => $activeTool === "spotHealing"
-            ? updateHealSettings({ diameter: numberValue(event) })
-            : updateBrushSettings({ diameter: numberValue(event) })}
-        />
-      </label>
-      <label>
-        Hardness
-        <input
-          type="number"
-          min="0"
-          max="100"
-          step="1"
-          value={Math.round(($activeTool === "spotHealing" ? $healSettings.hardness : $brushSettings.hardness) * 100)}
-          onchange={(event) => $activeTool === "spotHealing"
-            ? updateHealSettings({ hardness: numberValue(event) / 100 })
-            : updateBrushSettings({ hardness: numberValue(event) / 100 })}
-        />
-        %
-      </label>
+      <NumericField
+        label="Diameter"
+        min={1}
+        max={2000}
+        step={1}
+        value={$activeTool === "spotHealing" ? $healSettings.diameter : $brushSettings.diameter}
+        onchange={(diameter) => $activeTool === "spotHealing"
+          ? updateHealSettings({ diameter })
+          : updateBrushSettings({ diameter })}
+      />
+      <NumericField
+        label="Hardness"
+        unit="%"
+        min={0}
+        max={100}
+        step={1}
+        value={Math.round(($activeTool === "spotHealing" ? $healSettings.hardness : $brushSettings.hardness) * 100)}
+        onchange={(percent) => $activeTool === "spotHealing"
+          ? updateHealSettings({ hardness: percent / 100 })
+          : updateBrushSettings({ hardness: percent / 100 })}
+      />
       {#if $activeTool !== "blur"}
-        <label>
-          Opacity
-          <input
-            type="number"
-            min="1"
-            max="100"
-            step="1"
-            value={Math.round(($activeTool === "spotHealing" ? $healSettings.opacity : $brushSettings.opacity) * 100)}
-            onchange={(event) => $activeTool === "spotHealing"
-              ? updateHealSettings({ opacity: numberValue(event) / 100 })
-              : updateBrushSettings({ opacity: numberValue(event) / 100 })}
-          />
-          %
-        </label>
+        <NumericField
+          label="Opacity"
+          unit="%"
+          min={1}
+          max={100}
+          step={1}
+          value={Math.round(($activeTool === "spotHealing" ? $healSettings.opacity : $brushSettings.opacity) * 100)}
+          onchange={(percent) => $activeTool === "spotHealing"
+            ? updateHealSettings({ opacity: percent / 100 })
+            : updateBrushSettings({ opacity: percent / 100 })}
+        />
       {/if}
       {#if $activeTool === "brush"}
-        <label>
-          Smoothing
-          <input
-            type="number"
-            min="0"
-            max="100"
-            step="1"
-            value={$brushSettings.smoothing}
-            onchange={(event) => updateBrushSettings({ smoothing: numberValue(event) })}
-          />
-        </label>
+        <NumericField
+          label="Smoothing"
+          min={0}
+          max={100}
+          step={1}
+          value={$brushSettings.smoothing}
+          onchange={(smoothing) => updateBrushSettings({ smoothing })}
+        />
       {/if}
       {#if $activeTool === "cloneStamp"}
         <label class="check">
@@ -318,30 +295,24 @@
         </label>
       {/if}
       {#if $activeTool === "blur"}
-        <label>
-          Strength
-          <input
-            type="number"
-            min="1"
-            max="100"
-            step="1"
-            value={Math.round($smudgeSettings.strength * 100)}
-            onchange={(event) => updateSmudgeSettings({ strength: numberValue(event) / 100 })}
-          />
-          %
-        </label>
+        <NumericField
+          label="Strength"
+          unit="%"
+          min={1}
+          max={100}
+          step={1}
+          value={Math.round($smudgeSettings.strength * 100)}
+          onchange={(percent) => updateSmudgeSettings({ strength: percent / 100 })}
+        />
         {#if $toolModes.blur === "blur"}
-          <label>
-            Blur radius
-            <input
-              type="number"
-              min="0.5"
-              max="50"
-              step="0.5"
-              value={$smudgeSettings.blurRadius}
-              onchange={(event) => updateSmudgeSettings({ blurRadius: numberValue(event) })}
-            />
-          </label>
+          <NumericField
+            label="Blur radius"
+            min={0.5}
+            max={50}
+            step={0.5}
+            value={$smudgeSettings.blurRadius}
+            onchange={(blurRadius) => updateSmudgeSettings({ blurRadius })}
+          />
         {/if}
       {/if}
     {:else if $activeTool === "move"}
@@ -440,10 +411,6 @@
     border-radius: 4px;
     padding: 2px 4px;
     font: inherit;
-  }
-
-  input[type="number"] {
-    width: 64px;
   }
 
   input[type="color"] {

@@ -522,7 +522,10 @@ export type LayerOpName =
   | "deleteLayerMask"
   | "deleteEffect"
   | "mergeLayers"
-  | "nudgeLayer";
+  | "nudgeLayer"
+  // 票 53/C48：把活动图层从它所在的组里移出来，作为**一步可撤销的编辑**（原先只有前端纯函数，
+  // 菜单没接、也不进历史）。
+  | "moveOutOfGroup";
 
 /**
  * One layer mutation → fresh snapshot applied to the store. Payload shapes

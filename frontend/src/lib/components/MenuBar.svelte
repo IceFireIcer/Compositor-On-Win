@@ -16,6 +16,7 @@
     flipCanvas,
     flipLayer,
     layerMenuState,
+    moveActiveLayerOutOfGroup,
     openGeometry,
     openProjectSafe,
     openShortcutsSheet,
@@ -571,6 +572,17 @@
           hint: hintFor("Menus:Ungroup Layers"),
           disabled: !layerMenu.canUngroup || dialogOpen,
           run: () => runAndClose("Menus:Ungroup Layers"),
+        },
+        // 票 53 / C48：移出文件夹（Go op moveOutOfGroup，一步可撤销）。原版没有
+        // 快捷键（keyEquivalent: ""），所以这里没有 hint；只有活动图层在文件夹
+        // 里时可用（与 Swift 的 activeLayer?.parentID == nil 判定一致）。
+        {
+          label: "移出文件夹",
+          disabled: !layerMenu.canMoveOutOfGroup || dialogOpen,
+          run: () => {
+            close();
+            void moveActiveLayerOutOfGroup();
+          },
         },
         {
           label: layerMenu.clippingTitle,

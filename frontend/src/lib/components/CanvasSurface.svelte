@@ -775,6 +775,16 @@
     selectionGesture ? selectionRegionFor(selectionGesture) : null,
   );
 
+  /**
+   * 选区轮廓合成**一条**复合路径（各闭环子路径），再画两遍：白色实线打底、
+   * 黑色虚线叠上去走动 —— 与原版 drawSelection（TransformOverlay.swift:296）
+   * 同一结构。用复合路径而不是每个闭环一个 <path>，是因为像素边描迹在细节
+   * 丰富的画面上能出上万个闭环，一闭环一节点会把 DOM 拖死。
+   */
+  const antsOutline = $derived.by(() =>
+    ($currentSelection?.loops ?? []).map((loop) => loopPath(loop)).join(" "),
+  );
+
   function beginSelection(e: PointerEvent): boolean {
     if (e.button !== 0) return false;
     if ($activeTool === "marquee") {
@@ -1492,10 +1502,11 @@
       </svg>
     {/if}
     {#if $currentSelection && $currentSelection.active}
-      <svg class="ants" viewBox="0 0 {doc.width} {doc.height}" preserveAspectRatio="none">
-        {#each $currentSelection.loops as loop, li (li)}
-          <path d={loopPath(loop)} />
-        {/each}
+      <!-- 蚂蚁线（票 15/S02）：白色实线打底 + 走动的黑色虚线，白底上也看得见；
+           全部闭环合成一条复合路径，所以再细的描迹也只占两个 DOM 节点。 -->
+      <svg class="ants" viewBox="0 0 {doc.width} {doc.height}" preserveAspectRatio="none" aria-hidden="true">
+        <path class="ants-line" d={antsOutline} />
+        <path class="ants-dashes" d={antsOutline} />
       </svg>
     {/if}
     {#if selectionPreview}
@@ -2011,10 +2022,28 @@
 
   .ants path {
     fill: none;
-    stroke: #fff;
     stroke-width: 1;
     vector-effect: non-scaling-stroke;
+  }
+
+  /* 原版是白色实线打底、上面叠一条走动的黑色虚线（TransformOverlay.swift:296
+     drawSelection）。相位每 0.12s 前进 1px（EditorCanvas.swift:2446-2456），
+     [4,4] 一个周期 8px 走完 0.96s；steps(8) 保留原版一格一格的顿挫，而不是
+     平滑滑动。 */
+  .ants .ants-line {
+    stroke: #fff;
+  }
+
+  .ants .ants-dashes {
+    stroke: #000;
     stroke-dasharray: 4 4;
+    animation: ants-march 0.96s steps(8, end) infinite;
+  }
+
+  @keyframes ants-march {
+    to {
+      stroke-dashoffset: 8;
+    }
   }
 
   .selection-preview {
