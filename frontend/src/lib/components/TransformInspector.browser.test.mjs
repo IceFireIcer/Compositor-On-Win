@@ -38,7 +38,8 @@ it("scrubs, steps and clamps the transform fields", async () => {
       const { default: Inspector } = await import("/src/lib/components/TransformInspector.svelte");
       const { applyDocumentSnapshot } = await import("/src/lib/state/document.ts");
       const { workspace } = await import("/src/lib/state/workspace.ts");
-      const { beginTransformSession } = await import("/src/lib/state/transform.ts");
+      const { beginTransformSession, transformDraft } = await import("/src/lib/state/transform.ts");
+      transformDraft.subscribe((value) => { window.__draft = value; });
       const doc = { documentID: "tab-a", width: 200, height: 200, resolution: 72, activeLayerID: "layer", layers: [{
         id: "layer", name: "Layer", isVisible: true, opacity: 1, blendMode: "Normal", imageFile: "layer.png",
         transform: { origin: [10, 20], size: [100, 50], sampling: "Nearest" } }] };
@@ -71,6 +72,15 @@ it("scrubs, steps and clamps the transform fields", async () => {
     // ↓ 减一步。
     await page.keyboard.press("ArrowDown");
     await poll(() => x.inputValue()).toBe("27");
+
+    // 采样质量三档（票 33/L06）：下拉必须真的改草稿。三档缺 UI 曾是矩阵里记的一条。
+    const sampling = page.locator("#transform-sampling");
+    // 夹具里那一层的 transform 本来就写着 Nearest，所以初始值就是它（不是默认的 High quality）。
+    await poll(() => sampling.inputValue()).toBe("Nearest");
+    await sampling.selectOption("Smooth");
+    await poll(() => page.evaluate(() => window.__draft && window.__draft.sampling)).toBe("Smooth");
+    await sampling.selectOption("High quality");
+    await poll(() => page.evaluate(() => window.__draft && window.__draft.sampling)).toBe("High quality");
 
     // 输入超范围：钳到 30000，不回绕。
     //

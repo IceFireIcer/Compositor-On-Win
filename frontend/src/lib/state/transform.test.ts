@@ -181,6 +181,26 @@ describe("变换会话接线（票 17）", () => {
     });
   });
 
+  // 票 33/L06：采样质量三档（Nearest / Smooth / High quality）。
+  //
+  // 这条是变异审计查出来的：把 transformSession.ts 里应用 sampling 的那段改掉，25 条测试**照样全通过** ——
+  // 既有的两条只覆盖「保留文档里的采样」与「缺省值」，没覆盖「改」。
+  it("applyTransformNumeric 能改采样档位，并拒绝未知取值", () => {
+    setDoc([layer()], "l1");
+    expect(beginTransformSession()).toBe(true);
+    expect(get(transformDraft)?.sampling).toBe(DEFAULT_SAMPLING);
+
+    expect(applyTransformNumeric({ sampling: "Nearest" })).toBe(true);
+    expect(get(transformDraft)?.sampling).toBe("Nearest");
+
+    expect(applyTransformNumeric({ sampling: "Smooth" })).toBe(true);
+    expect(get(transformDraft)?.sampling).toBe("Smooth");
+
+    // 未知取值既不应用，也不该报成功。
+    expect(applyTransformNumeric({ sampling: "Bicubic" as never })).toBe(false);
+    expect(get(transformDraft)?.sampling).toBe("Smooth");
+  });
+
   it("没有文档 / 没有活动层 / 活动层是编组时都开不了会话", () => {
     expect(beginTransformSession()).toBe(false);
 
