@@ -40,6 +40,13 @@ func cmykTestProfile(t *testing.T) []byte {
 // buildCMYKTIFF 拼一份最小的小端无压缩 CMYK TIFF。profile 为 nil 时不带 34675 标签。
 func buildCMYKTIFF(t *testing.T, w, h int, ink []uint8, profile []byte) []byte {
 	t.Helper()
+	return buildCMYKTIFFWithSamples(t, w, h, ink, profile, 4)
+}
+
+// buildCMYKTIFFWithSamples 同上，但 SamplesPerPixel 可控 —— 用来造「Photometric 写着 CMYK、
+// 样本数却不是 4」这种畸形文件。
+func buildCMYKTIFFWithSamples(t *testing.T, w, h int, ink []uint8, profile []byte, spp uint16) []byte {
+	t.Helper()
 	type entry struct {
 		tag, typ uint16
 		count    uint32
@@ -52,7 +59,7 @@ func buildCMYKTIFF(t *testing.T, w, h int, ink []uint8, profile []byte) []byte {
 		{259, 3, 1, 1},                // Compression = none
 		{262, 3, 1, 5},                // Photometric = CMYK
 		{273, 4, 1, 0},                // StripOffsets -> offset
-		{277, 3, 1, 4},                // SamplesPerPixel
+		{277, 3, 1, uint32(spp)},      // SamplesPerPixel
 		{278, 4, 1, uint32(h)},        // RowsPerStrip
 		{279, 4, 1, uint32(len(ink))}, // StripByteCounts
 	}
@@ -99,6 +106,47 @@ func buildCMYKTIFF(t *testing.T, w, h int, ink []uint8, profile []byte) []byte {
 
 // 白墨（C=M=Y=K=0）经配置转换后应当是白；半调油墨应当明显偏暗。这条同时验证了
 // 「读得到油墨」与「按内嵌配置转换」两件事。
+// 嗅探是「这个文件该走哪条解码路」的判据，判错的后果是**用错解码器**而不是报错。
+//
+// 三处变异都没被既有测试抓住 —— 因为它们只经 `Decode` 间接覆盖，而夹具里的 JPEG/TIFF 都是
+// 自己造的 4 分量/CMYK 文件，「不是 4 分量」那条分支永远走不到。
+func TestCMYKJPEGSnifferNeedsExactlyFourComponents(t *testing.T) {
+	// 最小 JPEG 头 + 一个 SOF0：长度 = 8 + 3×分量数，分量数在段内字节 i+9。
+	jpeg := func(components byte) []byte {
+		length := 8 + 3*int(components)
+		data := []byte{0xFF, 0xD8, 0xFF, 0xC0, byte(length >> 8), byte(length), 8, 0, 1, 0, 1, components}
+		for i := 0; i < int(components)*3; i++ {
+			data = append(data, 0)
+		}
+		return data
+	}
+	if !isCMYKJPEG(jpeg(4)) {
+		t.Fatal("4 分量应当判成 CMYK")
+	}
+	// 5 分量是合法的 JPEG（少见），但不是 CMYK —— 判成 CMYK 会拿错解码器。
+	if isCMYKJPEG(jpeg(5)) {
+		t.Fatal("5 分量不该判成 CMYK")
+	}
+	if isCMYKJPEG(jpeg(3)) {
+		t.Fatal("3 分量（YCbCr）不该判成 CMYK")
+	}
+}
+
+// Photometric 写着 CMYK 但样本数不是 4 的 TIFF：必须拒绝，**并且说清是哪一条不符**。
+//
+// 只断言「有错」是不够的 —— 把判据从 `spp != 4` 放宽到 `spp < 3`，样本数 3 的文件会继续往下读，
+// 最后因为别的原因（平面读不够）也报错，测试照样通过。所以这里断言**具体原因**，那也正是
+// 用户看到的文案。
+func TestCMYKTIFFRefusesThreeSamplesPerPixel(t *testing.T) {
+	data := buildCMYKTIFFWithSamples(t, 1, 1, []uint8{0, 0, 0}, nil, 3)
+	_, err := decodeCMYKTIFF(data)
+	if err == nil {
+		t.Fatal("样本数 3 的「CMYK」TIFF 应当被拒绝")
+	}
+	if !strings.Contains(err.Error(), "SamplesPerPixel") {
+		t.Fatalf("应当因为样本数不符被拒，得到: %v", err)
+	}
+}
 func TestCMYKTIFFImportsThroughItsEmbeddedProfile(t *testing.T) {
 	profile := cmykTestProfile(t)
 	ink := []uint8{
