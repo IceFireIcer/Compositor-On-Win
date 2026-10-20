@@ -9,7 +9,16 @@
 - [x] 九组参数全部可调并实时预览（复用 33 号票管线）
 - [x] 直方图/矢量示波器数据来自真实像素且实时更新
 - [x] 面板停靠/尺寸调整/关闭记忆
-- [ ] Camera RawSliderTests 语义（滑杆行为）通过
+- [x] Camera RawSliderTests 语义（滑杆行为）通过
+      `CameraRawSlider.browser.test.mjs`（2026-10-20）：双击标签 → `onreset`；拖滑杆 → `oninput`；
+      **按住 Alt 拖 → `onalt` 报 clipping=1，松开后回 0**。
+
+      **补这条测试时查出一个真 bug**：原实现从 `InputEvent` 上读 `altKey`，但浏览器的 input 事件
+      不携带修饰键 —— 那个读取**永远 false**，于是「Option 拖动看剪切视图」这个功能等于死的
+      （`onalt` 永远给 `clipping: 0`）。改成自己跟踪修饰键（指针按下/松开 + 按键），并用测试钉住：
+      把修复还原成「只读事件」，测试立刻失败（`expected +0 to be 1`）。
+
+      顺带记一句：滑杆的「吸附」不值得测 —— range 输入自己就把值约束在 step 的离散网格上。
 
 对等矩阵：R01–R09（面板侧）、故事 39。
 

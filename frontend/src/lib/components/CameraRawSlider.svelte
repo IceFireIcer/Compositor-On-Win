@@ -37,13 +37,21 @@
     onalt?: (value: number, clipping: 0 | 1 | 2) => void;
   } = $props();
 
+  // 浏览器的 `input` 事件**不携带修饰键**（InputEvent 上没有 altKey），所以之前从事件上读
+  // 永远是 false —— Option 拖动看剪切视图从未生效。这里自己跟踪：指针按下/松开与按键都记。
+  let altHeld = $state(false);
+
+  function noteAlt(event: KeyboardEvent | PointerEvent): void {
+    altHeld = event.altKey;
+  }
+
   function changed(event: Event & { currentTarget: HTMLInputElement }): void {
     const raw = +event.currentTarget.value;
     const snapped = Math.round(raw * 10 ** decimals) / 10 ** decimals;
     if (onalt) {
-      const alt = typeof InputEvent !== "undefined" && event instanceof InputEvent
-        ? Boolean((event as unknown as { altKey?: boolean }).altKey)
-        : false;
+      // 事件上若真有 altKey（合成事件）就用它，否则用跟踪到的状态。
+      const fromEvent = (event as unknown as { altKey?: boolean }).altKey;
+      const alt = typeof fromEvent === "boolean" ? fromEvent : altHeld;
       onalt(snapped, alt ? 1 : 0);
     }
     oninput(snapped);
@@ -75,6 +83,10 @@
     {value}
     oninput={changed}
     ondblclick={resetValue}
+    onpointerdown={noteAlt}
+    onpointerup={noteAlt}
+    onkeydown={noteAlt}
+    onkeyup={noteAlt}
     aria-label={label}
   />
   <input
