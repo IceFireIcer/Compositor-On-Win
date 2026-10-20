@@ -257,7 +257,15 @@ func TestClearJumpListWindows(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("仅在 Windows 上跑真实的 Win32 路径")
 	}
-	if err := ClearJumpList(); err != nil {
-		t.Fatalf("ClearJumpList 应成功，得到 %v", err)
+	// 这条调的是**真实** Win32 API：资源管理器忙时它会瞬时失败（本机观察到的现象是「整套跑偶发
+	// 失败、单独跑通过」）。所以做有限重试 —— 真回归照样三次都失败并报出来，而 OS 的瞬时噪声不再
+	// 把套件打红。
+	var err error
+	for attempt := 0; attempt < 3; attempt++ {
+		if err = ClearJumpList(); err == nil {
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
 	}
+	t.Fatalf("ClearJumpList 连续三次失败，得到 %v", err)
 }

@@ -44,6 +44,62 @@ func TestCoordinatorReportsChangedContentOnce(t *testing.T) {
 	}
 }
 
+// settle 之后必须把退避计数**清零**。否则下一轮外部变更会从更大的退避开始，更快撞上
+// MaxAttempts 上限、走向「放弃」分支 —— 也就是**漏掉一次变化**。
+//
+// 这条是变异审计查出来的：把 settle 路径里的 `c.attempt = 0` 改成空操作，全部既有测试照样
+// 通过 —— 因为没人观察过 settle 之后的 attempt。
+//
+// **诚实记一笔**：把那处改成空操作后，这条测试**仍然通过** —— 因为 `endCycleLocked()` 里还有
+// 一次 `c.attempt = 0`（`coordinator.go:218`），两条路径都清零。也就是说 settle 路径那次重置是
+// **冗余的防御**，不是唯一的依赖。本测试钉住的是「settle 之后 attempt 为 0」这个可观察契约，
+// 而不是某一行代码。
+func TestCoordinatorResetsTheBackoffAfterSettling(t *testing.T) {
+	c := NewCoordinator(t.TempDir())
+	c.Base = 2 * time.Millisecond
+	c.MaxAttempts = 10
+
+	// 前三次 poll 的摘要各不相同（一直「不稳」），之后稳定下来。
+	var calls atomic.Int32
+	c.Digest = func(string) (string, error) {
+		n := calls.Add(1)
+		if n <= 3 {
+			return fmt.Sprintf("d%d", n), nil
+		}
+		return "steady", nil
+	}
+
+	fired := make(chan string, 1)
+	c.OnStable = func(digest string) {
+		select {
+		case fired <- digest:
+		default:
+		}
+	}
+	defer c.Stop()
+
+	c.Notify()
+	select {
+	case digest := <-fired:
+		if digest != "steady" {
+			t.Fatalf("OnStable digest = %q，想要 steady", digest)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("OnStable 在 5s 内没有触发")
+	}
+
+	// 走到这里说明上面那轮是「经过多次不稳才 settle」的，attempt 必然涨到 3 以上。
+	if got := calls.Load(); got < 4 {
+		t.Fatalf("Digest 只被调用 %d 次，前提不成立（需要先经历几次不稳）", got)
+	}
+	c.mu.Lock()
+	attempt := c.attempt
+	c.mu.Unlock()
+	if attempt != 0 {
+		t.Fatalf("settle 之后 attempt = %d，想要 0 —— 不清零会让下一次变更从更大的退避起步", attempt)
+	}
+}
+
 func TestCoordinatorDropsRewritesWithSameContent(t *testing.T) {
 	dir := setupProject(t, manifestV1, map[string]string{"A.png": pngOne})
 
