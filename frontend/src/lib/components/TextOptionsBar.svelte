@@ -3,6 +3,7 @@
   import { setRunColor, setRunFont, uniformColorIn, uniformFontIn } from "../state/textRuns";
   import { fonts, fontsLoaded, isInstalled } from "../state/fonts";
   import FontPicker from "./FontPicker.svelte";
+import NumericField from "./NumericField.svelte";
 
   /**
    * 文字选项栏（票 44/45）：工具头设置区——字体（选择器）、字号、颜色、
@@ -81,17 +82,13 @@
       <span class="missing">（本机未安装）</span>
     {/if}
   </label>
-  <label>
-    字号
-    <input
-      class="size"
-      type="number"
-      min="1"
-      max="2000"
-      value={style.fontSize}
-      onchange={(e) => set("fontSize", clampOption(Number((e.target as HTMLInputElement).value), 1, 2000))}
-    />
-  </label>
+  <NumericField
+    label="字号"
+    value={style.fontSize}
+    min={1}
+    max={2000}
+    onchange={(v) => set("fontSize", clampOption(v, 1, 2000))}
+  />
   <label>
     颜色
     <input
@@ -111,30 +108,20 @@
       <option value="Right">右</option>
     </select>
   </label>
-  <label>
-    字距
-    <input
-      class="tracking"
-      type="number"
-      min="-100"
-      max="1000"
-      step="1"
-      value={style.tracking}
-      onchange={(e) => set("tracking", clampOption(Number((e.target as HTMLInputElement).value), -100, 1000))}
-    />
-  </label>
-  <label>
-    行高
-    <input
-      class="leading"
-      type="number"
-      min="0"
-      max="5000"
-      step="1"
-      value={style.leading}
-      onchange={(e) => set("leading", clampOption(Number((e.target as HTMLInputElement).value), 0, 5000))}
-    />
-  </label>
+  <NumericField
+    label="字距"
+    value={style.tracking}
+    min={-100}
+    max={1000}
+    onchange={(v) => set("tracking", clampOption(v, -100, 1000))}
+  />
+  <NumericField
+    label="行高"
+    value={style.leading}
+    min={0}
+    max={5000}
+    onchange={(v) => set("leading", clampOption(v, 0, 5000))}
+  />
   <span class="hint">
     {#if selection}选中文字可单独改字体/颜色 · {/if}点按建点文本 · 拖拽建段落框 · ⌘回车提交 / Esc 取消
   </span>
@@ -166,12 +153,6 @@
     border-radius: 4px;
     padding: 2px 4px;
     font-size: 12px;
-  }
-
-  .size,
-  .tracking,
-  .leading {
-    width: 62px;
   }
 
   input[type="color"] {
