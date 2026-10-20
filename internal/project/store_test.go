@@ -145,6 +145,47 @@ func TestStoreRoundTripKeepsEveryEffectField(t *testing.T) {
 	}
 }
 
+// 票 05：调整图层的**子字段**也要往返。
+//
+// 变异审计查出来的：把 `CurvesSettings.Channels` 从 json 标签里去掉，全部既有测试照样通过 ——
+// 也就是「自定义曲线保存再打开会丢」。`sampleDoc()` 里的调整层只填了 `Kind`，没有任何曲线点。
+//
+// 和特效那条同理：一条测试把每个子字段都填成非默认，以后往结构里加字段跟着填就不会漏。
+func TestStoreRoundTripKeepsAdjustmentSubFields(t *testing.T) {
+	dir := t.TempDir()
+	doc := sampleDoc()
+	identity := domain.IdentityLevelRange()
+	doc.Layers = append(doc.Layers, domain.Layer{
+		ID:        "44444444-4444-4444-4444-444444444444",
+		Name:      "Curves",
+		IsVisible: true,
+		Transform: domain.Transform{Size: [2]float64{100, 50}, Sampling: domain.SamplingHighQuality},
+		Adjustment: &domain.Adjustment{
+			Kind: domain.AdjustmentCurves,
+			Curves: domain.CurvesSettings{
+				Channel: domain.LevelsRed,
+				Channels: [4][]domain.CurvePoint{
+					{{X: 0, Y: 0}, {X: 128, Y: 64}, {X: 255, Y: 255}},
+					{{X: 0, Y: 0}, {X: 64, Y: 32}, {X: 255, Y: 255}},
+					{{X: 0, Y: 0}, {X: 128, Y: 200}, {X: 255, Y: 255}},
+					{{X: 0, Y: 0}, {X: 200, Y: 100}, {X: 255, Y: 255}},
+				},
+			},
+			Levels: domain.LevelsSettings{Ranges: [4]domain.LevelRange{identity, identity, identity, identity}},
+		},
+	})
+	if err := (&Store{}).Save(dir, doc, sampleAssets()); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	reopened, err := (&Store{}).Open(dir)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	if !reflect.DeepEqual(doc, reopened) {
+		t.Fatalf("往返把调整图层改了：\n保存 %+v\n重开 %+v", doc.Layers[len(doc.Layers)-1].Adjustment, reopened.Layers[len(reopened.Layers)-1].Adjustment)
+	}
+}
+
 func TestStoreReplaceRemovesStaleAssets(t *testing.T) {
 	dir := t.TempDir()
 	store := &Store{}
