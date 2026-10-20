@@ -11,6 +11,7 @@
     isCurrentFilterSession,
   } from "../state/filters";
   import * as BridgeService from "../../../wailsjs/go/bridge/Service";
+  import NumericField from "./NumericField.svelte";
   import { untrack } from "svelte";
 
   /**
@@ -273,33 +274,30 @@
       <div class="body" inert={session.operation !== null}>
         {#if isFilterKind && s}
           {#if kind === "gaussianBlur"}
-            <label class="row">
-              <span>半径 (σ)</span>
-              <input type="range" min="0.1" max="250" step="0.1" value={s.radius}
+            <div class="row">
+              <NumericField label="半径 (σ)" min={0.1} max={250} step={0.1} value={s.radius}
+                onchange={(radius) => updateFilterSettings({ radius })} />
+              <input type="range" min="0.1" max="250" step="0.1" value={s.radius} aria-label="半径 (σ)"
                 oninput={(e) => updateFilterSettings({ radius: +e.currentTarget.value })} />
-              <input type="number" min="0.1" max="250" step="0.1" value={s.radius}
-                onchange={(e) => updateFilterSettings({ radius: +e.currentTarget.value })} />
-            </label>
+            </div>
             <label class="check" title="只模糊颜色，保留图层轮廓与透明度">
               <input type="checkbox" checked={s.preserveTransparency}
                 onchange={(e) => updateFilterSettings({ preserveTransparency: e.currentTarget.checked })} />
               保留透明度
             </label>
           {:else if kind === "motionBlur"}
-            <label class="row">
-              <span>角度 (°)</span>
-              <input type="range" min="-90" max="90" step="1" value={s.angle}
+            <div class="row">
+              <NumericField label="角度 (°)" min={-90} max={90} step={1} value={s.angle}
+                onchange={(angle) => updateFilterSettings({ angle })} />
+              <input type="range" min="-90" max="90" step="1" value={s.angle} aria-label="角度 (°)"
                 oninput={(e) => updateFilterSettings({ angle: +e.currentTarget.value })} />
-              <input type="number" min="-90" max="90" value={s.angle}
-                onchange={(e) => updateFilterSettings({ angle: +e.currentTarget.value })} />
-            </label>
-            <label class="row">
-              <span>距离 (px)</span>
-              <input type="range" min="1" max="2000" step="1" value={s.distance}
+            </div>
+            <div class="row">
+              <NumericField label="距离 (px)" min={1} max={2000} step={1} value={s.distance}
+                onchange={(distance) => updateFilterSettings({ distance })} />
+              <input type="range" min="1" max="2000" step="1" value={s.distance} aria-label="距离 (px)"
                 oninput={(e) => updateFilterSettings({ distance: +e.currentTarget.value })} />
-              <input type="number" min="1" max="2000" value={s.distance}
-                onchange={(e) => updateFilterSettings({ distance: +e.currentTarget.value })} />
-            </label>
+            </div>
           {:else if kind === "progressiveBlur"}
             <div class="row">
               <span>形状</span>
@@ -309,20 +307,18 @@
                 <option value="radial">径向</option>
               </select>
             </div>
-            <label class="row">
-              <span>From (px)</span>
-              <input type="range" min="0" max="250" step="0.5" value={s.progressiveFrom}
+            <div class="row">
+              <NumericField label="From (px)" min={0} max={250} step={0.5} value={s.progressiveFrom}
+                onchange={(progressiveFrom) => updateFilterSettings({ progressiveFrom })} />
+              <input type="range" min="0" max="250" step="0.5" value={s.progressiveFrom} aria-label="From (px)"
                 oninput={(e) => updateFilterSettings({ progressiveFrom: +e.currentTarget.value })} />
-              <input type="number" min="0" max="250" step="0.5" value={s.progressiveFrom}
-                onchange={(e) => updateFilterSettings({ progressiveFrom: +e.currentTarget.value })} />
-            </label>
-            <label class="row">
-              <span>To (px)</span>
-              <input type="range" min="0" max="250" step="0.5" value={s.progressiveTo}
+            </div>
+            <div class="row">
+              <NumericField label="To (px)" min={0} max={250} step={0.5} value={s.progressiveTo}
+                onchange={(progressiveTo) => updateFilterSettings({ progressiveTo })} />
+              <input type="range" min="0" max="250" step="0.5" value={s.progressiveTo} aria-label="To (px)"
                 oninput={(e) => updateFilterSettings({ progressiveTo: +e.currentTarget.value })} />
-              <input type="number" min="0" max="250" step="0.5" value={s.progressiveTo}
-                onchange={(e) => updateFilterSettings({ progressiveTo: +e.currentTarget.value })} />
-            </label>
+            </div>
             <label class="check" title="两端互换：起点用 To、终点用 From">
               <input type="checkbox" checked={s.progressiveInverted}
                 onchange={(e) => updateFilterSettings({ progressiveInverted: e.currentTarget.checked })} />
@@ -330,25 +326,23 @@
             </label>
             <p class="hint">在画布上拖动线段的两个端点调整方向与范围。</p>
           {:else if kind === "addNoise"}
-            <label class="row">
-              <span>数量 %</span>
-              <input type="range" min="0.1" max="400" step="0.1" value={s.amount}
+            <div class="row">
+              <NumericField label="数量 %" min={0.1} max={400} step={0.1} value={s.amount}
+                onchange={(amount) => updateFilterSettings({ amount })} />
+              <input type="range" min="0.1" max="400" step="0.1" value={s.amount} aria-label="数量 %"
                 oninput={(e) => updateFilterSettings({ amount: +e.currentTarget.value })} />
-              <input type="number" min="0.1" max="400" step="0.1" value={s.amount}
-                onchange={(e) => updateFilterSettings({ amount: +e.currentTarget.value })} />
-            </label>
+            </div>
             <label class="check"><input type="checkbox" checked={s.gaussian}
               onchange={(e) => updateFilterSettings({ gaussian: e.currentTarget.checked })} /> 高斯分布</label>
             <label class="check"><input type="checkbox" checked={s.monochromatic}
               onchange={(e) => updateFilterSettings({ monochromatic: e.currentTarget.checked })} /> 单色</label>
           {:else if kind === "vignette"}
-            <label class="row">
-              <span>数量 %</span>
-              <input type="range" min="0" max="100" step="1" value={s.vignetteAmount}
+            <div class="row">
+              <NumericField label="数量 %" min={0} max={100} step={1} value={s.vignetteAmount}
+                onchange={(vignetteAmount) => updateFilterSettings({ vignetteAmount })} />
+              <input type="range" min="0" max="100" step="1" value={s.vignetteAmount} aria-label="数量 %"
                 oninput={(e) => updateFilterSettings({ vignetteAmount: +e.currentTarget.value })} />
-              <input type="number" min="0" max="100" value={s.vignetteAmount}
-                onchange={(e) => updateFilterSettings({ vignetteAmount: +e.currentTarget.value })} />
-            </label>
+            </div>
             <div class="row">
               <span>颜色</span>
               {#each [0, 1, 2] as ch (ch)}
@@ -360,85 +354,74 @@
                   }} />
               {/each}
             </div>
-            <label class="row">
-              <span>中点</span>
-              <input type="range" min="0" max="100" value={s.vignetteMidpoint}
+            <div class="row">
+              <NumericField label="中点" min={0} max={100} step={1} value={s.vignetteMidpoint}
+                onchange={(vignetteMidpoint) => updateFilterSettings({ vignetteMidpoint })} />
+              <input type="range" min="0" max="100" value={s.vignetteMidpoint} aria-label="中点"
                 oninput={(e) => updateFilterSettings({ vignetteMidpoint: +e.currentTarget.value })} />
-              <input type="number" min="0" max="100" value={s.vignetteMidpoint}
-                onchange={(e) => updateFilterSettings({ vignetteMidpoint: +e.currentTarget.value })} />
-            </label>
-            <label class="row">
-              <span>圆度</span>
-              <input type="range" min="-100" max="100" value={s.vignetteRoundness}
+            </div>
+            <div class="row">
+              <NumericField label="圆度" min={-100} max={100} step={1} value={s.vignetteRoundness}
+                onchange={(vignetteRoundness) => updateFilterSettings({ vignetteRoundness })} />
+              <input type="range" min="-100" max="100" value={s.vignetteRoundness} aria-label="圆度"
                 oninput={(e) => updateFilterSettings({ vignetteRoundness: +e.currentTarget.value })} />
-              <input type="number" min="-100" max="100" value={s.vignetteRoundness}
-                onchange={(e) => updateFilterSettings({ vignetteRoundness: +e.currentTarget.value })} />
-            </label>
-            <label class="row">
-              <span>羽化</span>
-              <input type="range" min="0" max="100" value={s.vignetteFeather}
+            </div>
+            <div class="row">
+              <NumericField label="羽化" min={0} max={100} step={1} value={s.vignetteFeather}
+                onchange={(vignetteFeather) => updateFilterSettings({ vignetteFeather })} />
+              <input type="range" min="0" max="100" value={s.vignetteFeather} aria-label="羽化"
                 oninput={(e) => updateFilterSettings({ vignetteFeather: +e.currentTarget.value })} />
-              <input type="number" min="0" max="100" value={s.vignetteFeather}
-                onchange={(e) => updateFilterSettings({ vignetteFeather: +e.currentTarget.value })} />
-            </label>
-            <label class="row">
-              <span>高光</span>
-              <input type="range" min="0" max="100" value={s.vignetteHighlights}
+            </div>
+            <div class="row">
+              <NumericField label="高光" min={0} max={100} step={1} value={s.vignetteHighlights}
+                onchange={(vignetteHighlights) => updateFilterSettings({ vignetteHighlights })} />
+              <input type="range" min="0" max="100" value={s.vignetteHighlights} aria-label="高光"
                 oninput={(e) => updateFilterSettings({ vignetteHighlights: +e.currentTarget.value })} />
-              <input type="number" min="0" max="100" value={s.vignetteHighlights}
-                onchange={(e) => updateFilterSettings({ vignetteHighlights: +e.currentTarget.value })} />
-            </label>
+            </div>
           {:else if kind === "bloomGlow"}
-            <label class="row">
-              <span>亮度</span>
-              <input type="range" min="0" max="100" value={s.bloomAmount}
+            <div class="row">
+              <NumericField label="亮度" min={0} max={100} step={1} value={s.bloomAmount}
+                onchange={(bloomAmount) => updateFilterSettings({ bloomAmount })} />
+              <input type="range" min="0" max="100" value={s.bloomAmount} aria-label="亮度"
                 oninput={(e) => updateFilterSettings({ bloomAmount: +e.currentTarget.value })} />
-              <input type="number" min="0" max="100" value={s.bloomAmount}
-                onchange={(e) => updateFilterSettings({ bloomAmount: +e.currentTarget.value })} />
-            </label>
-            <label class="row">
-              <span>半径</span>
-              <input type="range" min="1" max="150" value={s.bloomRadius}
+            </div>
+            <div class="row">
+              <NumericField label="半径" min={1} max={150} step={1} value={s.bloomRadius}
+                onchange={(bloomRadius) => updateFilterSettings({ bloomRadius })} />
+              <input type="range" min="1" max="150" value={s.bloomRadius} aria-label="半径"
                 oninput={(e) => updateFilterSettings({ bloomRadius: +e.currentTarget.value })} />
-              <input type="number" min="1" max="150" value={s.bloomRadius}
-                onchange={(e) => updateFilterSettings({ bloomRadius: +e.currentTarget.value })} />
-            </label>
+            </div>
           {:else if kind === "tonalContrast"}
-            <label class="row">
-              <span>数量</span>
-              <input type="range" min="0" max="100" value={s.tonalAmount}
+            <div class="row">
+              <NumericField label="数量" min={0} max={100} step={1} value={s.tonalAmount}
+                onchange={(tonalAmount) => updateFilterSettings({ tonalAmount })} />
+              <input type="range" min="0" max="100" value={s.tonalAmount} aria-label="数量"
                 oninput={(e) => updateFilterSettings({ tonalAmount: +e.currentTarget.value })} />
-              <input type="number" min="0" max="100" value={s.tonalAmount}
-                onchange={(e) => updateFilterSettings({ tonalAmount: +e.currentTarget.value })} />
-            </label>
-            <label class="row">
-              <span>半径</span>
-              <input type="range" min="1" max="100" value={s.tonalRadius}
+            </div>
+            <div class="row">
+              <NumericField label="半径" min={1} max={100} step={1} value={s.tonalRadius}
+                onchange={(tonalRadius) => updateFilterSettings({ tonalRadius })} />
+              <input type="range" min="1" max="100" value={s.tonalRadius} aria-label="半径"
                 oninput={(e) => updateFilterSettings({ tonalRadius: +e.currentTarget.value })} />
-              <input type="number" min="1" max="100" value={s.tonalRadius}
-                onchange={(e) => updateFilterSettings({ tonalRadius: +e.currentTarget.value })} />
-            </label>
-            <label class="row">
-              <span>阴影</span>
-              <input type="range" min="-100" max="100" value={s.tonalShadows}
+            </div>
+            <div class="row">
+              <NumericField label="阴影" min={-100} max={100} step={1} value={s.tonalShadows}
+                onchange={(tonalShadows) => updateFilterSettings({ tonalShadows })} />
+              <input type="range" min="-100" max="100" value={s.tonalShadows} aria-label="阴影"
                 oninput={(e) => updateFilterSettings({ tonalShadows: +e.currentTarget.value })} />
-              <input type="number" min="-100" max="100" value={s.tonalShadows}
-                onchange={(e) => updateFilterSettings({ tonalShadows: +e.currentTarget.value })} />
-            </label>
-            <label class="row">
-              <span>中间调</span>
-              <input type="range" min="-100" max="100" value={s.tonalMidtones}
+            </div>
+            <div class="row">
+              <NumericField label="中间调" min={-100} max={100} step={1} value={s.tonalMidtones}
+                onchange={(tonalMidtones) => updateFilterSettings({ tonalMidtones })} />
+              <input type="range" min="-100" max="100" value={s.tonalMidtones} aria-label="中间调"
                 oninput={(e) => updateFilterSettings({ tonalMidtones: +e.currentTarget.value })} />
-              <input type="number" min="-100" max="100" value={s.tonalMidtones}
-                onchange={(e) => updateFilterSettings({ tonalMidtones: +e.currentTarget.value })} />
-            </label>
-            <label class="row">
-              <span>高光</span>
-              <input type="range" min="-100" max="100" value={s.tonalHighlights}
+            </div>
+            <div class="row">
+              <NumericField label="高光" min={-100} max={100} step={1} value={s.tonalHighlights}
+                onchange={(tonalHighlights) => updateFilterSettings({ tonalHighlights })} />
+              <input type="range" min="-100" max="100" value={s.tonalHighlights} aria-label="高光"
                 oninput={(e) => updateFilterSettings({ tonalHighlights: +e.currentTarget.value })} />
-              <input type="number" min="-100" max="100" value={s.tonalHighlights}
-                onchange={(e) => updateFilterSettings({ tonalHighlights: +e.currentTarget.value })} />
-            </label>
+            </div>
           {:else if kind === "dither" && s}
             {@const d = s.dither as Record<string, number | boolean | (number[]) | string>}
             <label class="row">
@@ -449,20 +432,18 @@
                 {/each}
               </select>
             </label>
-            <label class="row">
-              <span>像素大小</span>
-              <input type="range" min="1" max="32" value={Number(d.pixelSize)}
+            <div class="row">
+              <NumericField label="像素大小" min={1} max={32} step={1} value={Number(d.pixelSize)}
+                onchange={(pixelSize) => updateFilterSettings({ dither: { ...d, pixelSize } })} />
+              <input type="range" min="1" max="32" value={Number(d.pixelSize)} aria-label="像素大小"
                 oninput={(e) => updateFilterSettings({ dither: { ...d, pixelSize: +e.currentTarget.value } })} />
-              <input type="number" min="1" max="32" value={Number(d.pixelSize)}
-                onchange={(e) => updateFilterSettings({ dither: { ...d, pixelSize: +e.currentTarget.value } })} />
-            </label>
-            <label class="row">
-              <span>色调数</span>
-              <input type="range" min="2" max="8" value={Number(d.levels)}
+            </div>
+            <div class="row">
+              <NumericField label="色调数" min={2} max={8} step={1} value={Number(d.levels)}
+                onchange={(levels) => updateFilterSettings({ dither: { ...d, levels } })} />
+              <input type="range" min="2" max="8" value={Number(d.levels)} aria-label="色调数"
                 oninput={(e) => updateFilterSettings({ dither: { ...d, levels: +e.currentTarget.value } })} />
-              <input type="number" min="2" max="8" value={Number(d.levels)}
-                onchange={(e) => updateFilterSettings({ dither: { ...d, levels: +e.currentTarget.value } })} />
-            </label>
+            </div>
             <label class="row">
               <span>扩散 %</span>
               <input type="range" min="0" max="100" value={Number(d.diffusion)}
@@ -527,90 +508,78 @@
               onchange={(e) => updateFilterSettings({ dither: { ...d, lightOnDark: e.currentTarget.checked } })} /> 亮标记（暗底亮纹）</label>
           {:else if kind === "scanlines" && s}
             {@const sl = s.scanlines as Record<string, number | (number[])>}
-            <label class="row">
-              <span>行间距 px</span>
-              <input type="range" min="2" max="32" value={Number(sl.lineSpacing)}
+            <div class="row">
+              <NumericField label="行间距 px" min={2} max={32} step={1} value={Number(sl.lineSpacing)}
+                onchange={(lineSpacing) => updateFilterSettings({ scanlines: { ...sl, lineSpacing } })} />
+              <input type="range" min="2" max="32" value={Number(sl.lineSpacing)} aria-label="行间距 px"
                 oninput={(e) => updateFilterSettings({ scanlines: { ...sl, lineSpacing: +e.currentTarget.value } })} />
-              <input type="number" min="2" max="32" value={Number(sl.lineSpacing)}
-                onchange={(e) => updateFilterSettings({ scanlines: { ...sl, lineSpacing: +e.currentTarget.value } })} />
-            </label>
-            <label class="row">
-              <span>厚度 %</span>
-              <input type="range" min="5" max="100" value={Number(sl.thickness)}
+            </div>
+            <div class="row">
+              <NumericField label="厚度 %" min={5} max={100} step={1} value={Number(sl.thickness)}
+                onchange={(thickness) => updateFilterSettings({ scanlines: { ...sl, thickness } })} />
+              <input type="range" min="5" max="100" value={Number(sl.thickness)} aria-label="厚度 %"
                 oninput={(e) => updateFilterSettings({ scanlines: { ...sl, thickness: +e.currentTarget.value } })} />
-              <input type="number" min="5" max="100" value={Number(sl.thickness)}
-                onchange={(e) => updateFilterSettings({ scanlines: { ...sl, thickness: +e.currentTarget.value } })} />
-            </label>
-            <label class="row">
-              <span>辉光 %</span>
-              <input type="range" min="0" max="100" value={Number(sl.glow)}
+            </div>
+            <div class="row">
+              <NumericField label="辉光 %" min={0} max={100} step={1} value={Number(sl.glow)}
+                onchange={(glow) => updateFilterSettings({ scanlines: { ...sl, glow } })} />
+              <input type="range" min="0" max="100" value={Number(sl.glow)} aria-label="辉光 %"
                 oninput={(e) => updateFilterSettings({ scanlines: { ...sl, glow: +e.currentTarget.value } })} />
-              <input type="number" min="0" max="100" value={Number(sl.glow)}
-                onchange={(e) => updateFilterSettings({ scanlines: { ...sl, glow: +e.currentTarget.value } })} />
-            </label>
-            <label class="row">
-              <span>珠点 %</span>
-              <input type="range" min="0" max="100" value={Number(sl.dots)}
+            </div>
+            <div class="row">
+              <NumericField label="珠点 %" min={0} max={100} step={1} value={Number(sl.dots)}
+                onchange={(dots) => updateFilterSettings({ scanlines: { ...sl, dots } })} />
+              <input type="range" min="0" max="100" value={Number(sl.dots)} aria-label="珠点 %"
                 oninput={(e) => updateFilterSettings({ scanlines: { ...sl, dots: +e.currentTarget.value } })} />
-              <input type="number" min="0" max="100" value={Number(sl.dots)}
-                onchange={(e) => updateFilterSettings({ scanlines: { ...sl, dots: +e.currentTarget.value } })} />
-            </label>
-            <label class="row">
-              <span>波动 px</span>
-              <input type="range" min="0" max="64" value={Number(sl.wobble)}
+            </div>
+            <div class="row">
+              <NumericField label="波动 px" min={0} max={64} step={1} value={Number(sl.wobble)}
+                onchange={(wobble) => updateFilterSettings({ scanlines: { ...sl, wobble } })} />
+              <input type="range" min="0" max="64" value={Number(sl.wobble)} aria-label="波动 px"
                 oninput={(e) => updateFilterSettings({ scanlines: { ...sl, wobble: +e.currentTarget.value } })} />
-              <input type="number" min="0" max="64" value={Number(sl.wobble)}
-                onchange={(e) => updateFilterSettings({ scanlines: { ...sl, wobble: +e.currentTarget.value } })} />
-            </label>
-            <label class="row">
-              <span>位移 px</span>
-              <input type="range" min="-100" max="100" value={Number(sl.displace)}
+            </div>
+            <div class="row">
+              <NumericField label="位移 px" min={-100} max={100} step={1} value={Number(sl.displace)}
+                onchange={(displace) => updateFilterSettings({ scanlines: { ...sl, displace } })} />
+              <input type="range" min="-100" max="100" value={Number(sl.displace)} aria-label="位移 px"
                 oninput={(e) => updateFilterSettings({ scanlines: { ...sl, displace: +e.currentTarget.value } })} />
-              <input type="number" min="-100" max="100" value={Number(sl.displace)}
-                onchange={(e) => updateFilterSettings({ scanlines: { ...sl, displace: +e.currentTarget.value } })} />
-            </label>
-            <label class="row">
-              <span>平滑 %</span>
-              <input type="range" min="0" max="100" value={Number(sl.smoothness)}
+            </div>
+            <div class="row">
+              <NumericField label="平滑 %" min={0} max={100} step={1} value={Number(sl.smoothness)}
+                onchange={(smoothness) => updateFilterSettings({ scanlines: { ...sl, smoothness } })} />
+              <input type="range" min="0" max="100" value={Number(sl.smoothness)} aria-label="平滑 %"
                 oninput={(e) => updateFilterSettings({ scanlines: { ...sl, smoothness: +e.currentTarget.value } })} />
-              <input type="number" min="0" max="100" value={Number(sl.smoothness)}
-                onchange={(e) => updateFilterSettings({ scanlines: { ...sl, smoothness: +e.currentTarget.value } })} />
-            </label>
-            <label class="row">
-              <span>阈值 %</span>
-              <input type="range" min="0" max="100" value={Number(sl.threshold)}
+            </div>
+            <div class="row">
+              <NumericField label="阈值 %" min={0} max={100} step={1} value={Number(sl.threshold)}
+                onchange={(threshold) => updateFilterSettings({ scanlines: { ...sl, threshold } })} />
+              <input type="range" min="0" max="100" value={Number(sl.threshold)} aria-label="阈值 %"
                 oninput={(e) => updateFilterSettings({ scanlines: { ...sl, threshold: +e.currentTarget.value } })} />
-              <input type="number" min="0" max="100" value={Number(sl.threshold)}
-                onchange={(e) => updateFilterSettings({ scanlines: { ...sl, threshold: +e.currentTarget.value } })} />
-            </label>
-            <label class="row">
-              <span>色彩分离 px</span>
-              <input type="range" min="0" max="16" value={Number(sl.split)}
+            </div>
+            <div class="row">
+              <NumericField label="色彩分离 px" min={0} max={16} step={1} value={Number(sl.split)}
+                onchange={(split) => updateFilterSettings({ scanlines: { ...sl, split } })} />
+              <input type="range" min="0" max="16" value={Number(sl.split)} aria-label="色彩分离 px"
                 oninput={(e) => updateFilterSettings({ scanlines: { ...sl, split: +e.currentTarget.value } })} />
-              <input type="number" min="0" max="16" value={Number(sl.split)}
-                onchange={(e) => updateFilterSettings({ scanlines: { ...sl, split: +e.currentTarget.value } })} />
-            </label>
-            <label class="row">
-              <span>密度</span>
-              <input type="range" min="-100" max="100" value={Number(sl.density)}
+            </div>
+            <div class="row">
+              <NumericField label="密度" min={-100} max={100} step={1} value={Number(sl.density)}
+                onchange={(density) => updateFilterSettings({ scanlines: { ...sl, density } })} />
+              <input type="range" min="-100" max="100" value={Number(sl.density)} aria-label="密度"
                 oninput={(e) => updateFilterSettings({ scanlines: { ...sl, density: +e.currentTarget.value } })} />
-              <input type="number" min="-100" max="100" value={Number(sl.density)}
-                onchange={(e) => updateFilterSettings({ scanlines: { ...sl, density: +e.currentTarget.value } })} />
-            </label>
-            <label class="row">
-              <span>对比度</span>
-              <input type="range" min="-100" max="100" value={Number(sl.contrast)}
+            </div>
+            <div class="row">
+              <NumericField label="对比度" min={-100} max={100} step={1} value={Number(sl.contrast)}
+                onchange={(contrast) => updateFilterSettings({ scanlines: { ...sl, contrast } })} />
+              <input type="range" min="-100" max="100" value={Number(sl.contrast)} aria-label="对比度"
                 oninput={(e) => updateFilterSettings({ scanlines: { ...sl, contrast: +e.currentTarget.value } })} />
-              <input type="number" min="-100" max="100" value={Number(sl.contrast)}
-                onchange={(e) => updateFilterSettings({ scanlines: { ...sl, contrast: +e.currentTarget.value } })} />
-            </label>
-            <label class="row">
-              <span>黑位 %</span>
-              <input type="range" min="0" max="100" value={Number(sl.blackLevel)}
+            </div>
+            <div class="row">
+              <NumericField label="黑位 %" min={0} max={100} step={1} value={Number(sl.blackLevel)}
+                onchange={(blackLevel) => updateFilterSettings({ scanlines: { ...sl, blackLevel } })} />
+              <input type="range" min="0" max="100" value={Number(sl.blackLevel)} aria-label="黑位 %"
                 oninput={(e) => updateFilterSettings({ scanlines: { ...sl, blackLevel: +e.currentTarget.value } })} />
-              <input type="number" min="0" max="100" value={Number(sl.blackLevel)}
-                onchange={(e) => updateFilterSettings({ scanlines: { ...sl, blackLevel: +e.currentTarget.value } })} />
-            </label>
+            </div>
             <label class="row">
               <span>颜色</span>
               <select value={String(sl.colors)} onchange={(e) => updateFilterSettings({ scanlines: { ...sl, colors: +e.currentTarget.value } })}>
@@ -646,13 +615,12 @@
               </div>
             {/if}
           {:else if kind === "lensCorrection"}
-            <label class="row">
-              <span>移除扭曲</span>
-              <input type="range" min="-100" max="100" value={s.distortion}
+            <div class="row">
+              <NumericField label="移除扭曲" min={-100} max={100} step={1} value={s.distortion}
+                onchange={(distortion) => updateFilterSettings({ distortion })} />
+              <input type="range" min="-100" max="100" value={s.distortion} aria-label="移除扭曲"
                 oninput={(e) => updateFilterSettings({ distortion: +e.currentTarget.value })} />
-              <input type="number" min="-100" max="100" value={s.distortion}
-                onchange={(e) => updateFilterSettings({ distortion: +e.currentTarget.value })} />
-            </label>
+            </div>
           {:else if kind === "removeBackground" && s}
             <label class="row">
               <span>质量</span>
@@ -664,52 +632,46 @@
                 <option value="advanced">精细（引导滤波抠边）</option>
               </select>
             </label>
-            <label class="row">
-              <span>抠边强度</span>
-              <input type="range" min="0" max="40" value={s.refineEdges}
+            <div class="row">
+              <NumericField label="抠边强度" min={0} max={40} step={1} value={s.refineEdges}
+                onchange={(refineEdges) => updateFilterSettings({ refineEdges })} />
+              <input type="range" min="0" max="40" value={s.refineEdges} aria-label="抠边强度"
                 oninput={(e) => updateFilterSettings({ refineEdges: +e.currentTarget.value })} />
-              <input type="number" min="0" max="40" value={s.refineEdges}
-                onchange={(e) => updateFilterSettings({ refineEdges: +e.currentTarget.value })} />
-            </label>
-            <label class="row">
-              <span>蒙版对比</span>
-              <input type="range" min="0" max="100" value={s.matteContrast}
+            </div>
+            <div class="row">
+              <NumericField label="蒙版对比" min={0} max={100} step={1} value={s.matteContrast}
+                onchange={(matteContrast) => updateFilterSettings({ matteContrast })} />
+              <input type="range" min="0" max="100" value={s.matteContrast} aria-label="蒙版对比"
                 oninput={(e) => updateFilterSettings({ matteContrast: +e.currentTarget.value })} />
-              <input type="number" min="0" max="100" value={s.matteContrast}
-                onchange={(e) => updateFilterSettings({ matteContrast: +e.currentTarget.value })} />
-            </label>
-            <label class="row">
-              <span>边缘偏移</span>
-              <input type="range" min="-10" max="10" value={s.shiftEdge}
+            </div>
+            <div class="row">
+              <NumericField label="边缘偏移" min={-10} max={10} step={1} value={s.shiftEdge}
+                onchange={(shiftEdge) => updateFilterSettings({ shiftEdge })} />
+              <input type="range" min="-10" max="10" value={s.shiftEdge} aria-label="边缘偏移"
                 oninput={(e) => updateFilterSettings({ shiftEdge: +e.currentTarget.value })} />
-              <input type="number" min="-10" max="10" value={s.shiftEdge}
-                onchange={(e) => updateFilterSettings({ shiftEdge: +e.currentTarget.value })} />
-            </label>
+            </div>
             <p class="hint">安装版已包含 u2netp 分割模型（Apache-2.0）；开发版缺失时会下载。</p>
           {/if}
         {:else if kind === "adjust:Gaussian Blur" && s}
-          <label class="row">
-            <span>半径 (σ)</span>
-            <input type="range" min="0.1" max="250" step="0.1" value={adj().blurRadius ?? 10}
+          <div class="row">
+            <NumericField label="半径 (σ)" min={0.1} max={250} step={0.1} value={adj().blurRadius ?? 10}
+              onchange={(blurRadius) => setAdj({ blurRadius })} />
+            <input type="range" min="0.1" max="250" step="0.1" value={adj().blurRadius ?? 10} aria-label="半径 (σ)"
               oninput={(e) => setAdj({ blurRadius: +e.currentTarget.value })} />
-            <input type="number" min="0.1" max="250" step="0.1" value={adj().blurRadius ?? 10}
-              onchange={(e) => setAdj({ blurRadius: +e.currentTarget.value })} />
-          </label>
+          </div>
         {:else if kind === "adjust:Motion Blur" && s}
-          <label class="row">
-            <span>角度 (°)</span>
-            <input type="range" min="-90" max="90" step="1" value={adj().motionAngle ?? 0}
+          <div class="row">
+            <NumericField label="角度 (°)" min={-90} max={90} step={1} value={adj().motionAngle ?? 0}
+              onchange={(motionAngle) => setAdj({ motionAngle })} />
+            <input type="range" min="-90" max="90" step="1" value={adj().motionAngle ?? 0} aria-label="角度 (°)"
               oninput={(e) => setAdj({ motionAngle: +e.currentTarget.value })} />
-            <input type="number" min="-90" max="90" step="1" value={adj().motionAngle ?? 0}
-              onchange={(e) => setAdj({ motionAngle: +e.currentTarget.value })} />
-          </label>
-          <label class="row">
-            <span>距离 (px)</span>
-            <input type="range" min="1" max="2000" step="1" value={adj().motionDistance ?? 10}
+          </div>
+          <div class="row">
+            <NumericField label="距离 (px)" min={1} max={2000} step={1} value={adj().motionDistance ?? 10}
+              onchange={(motionDistance) => setAdj({ motionDistance })} />
+            <input type="range" min="1" max="2000" step="1" value={adj().motionDistance ?? 10} aria-label="距离 (px)"
               oninput={(e) => setAdj({ motionDistance: +e.currentTarget.value })} />
-            <input type="number" min="1" max="2000" step="1" value={adj().motionDistance ?? 10}
-              onchange={(e) => setAdj({ motionDistance: +e.currentTarget.value })} />
-          </label>
+          </div>
         {:else if kind === "adjust:Invert" && s}
           <p class="hint">反相调整图层没有可调参数。</p>
         {:else if kind === "adjust:Levels" && s}
@@ -726,25 +688,22 @@
             <button onclick={() => void autoLevels(2)}>自动·中性</button>
           </div>
           {@const r = levelsRange()}
-          <label class="row">
-            <span>黑场 <button class="pip" class:armed={eyedropper === "black"} onclick={() => pickLevelPoint("black")}>吸</button></span>
-            <input type="number" min="0" max="254" value={r.black}
-              onchange={(e) => setRange({ black: +e.currentTarget.value })} />
-            <span>灰场</span>
-            <input type="number" min="0.01" max="9.99" step="0.01" value={r.gamma}
-              onchange={(e) => setRange({ gamma: +e.currentTarget.value })} />
-            <span>白场</span>
-            <input type="number" min="1" max="255" value={r.white}
-              onchange={(e) => setRange({ white: +e.currentTarget.value })} />
-          </label>
-          <label class="row">
-            <span>输出黑</span>
-            <input type="number" min="0" max="255" value={r.outputBlack}
-              onchange={(e) => setRange({ outputBlack: +e.currentTarget.value })} />
-            <span>输出白</span>
-            <input type="number" min="0" max="255" value={r.outputWhite}
-              onchange={(e) => setRange({ outputWhite: +e.currentTarget.value })} />
-          </label>
+          <div class="row">
+            <NumericField label="黑场" min={0} max={254} step={1} value={r.black}
+              onchange={(black) => setRange({ black })} />
+            <button class="pip" class:armed={eyedropper === "black"} aria-label="黑场吸管"
+              onclick={() => pickLevelPoint("black")}>吸</button>
+            <NumericField label="灰场" min={0.01} max={9.99} step={0.01} value={r.gamma}
+              onchange={(gamma) => setRange({ gamma })} />
+            <NumericField label="白场" min={1} max={255} step={1} value={r.white}
+              onchange={(white) => setRange({ white })} />
+          </div>
+          <div class="row">
+            <NumericField label="输出黑" min={0} max={255} step={1} value={r.outputBlack}
+              onchange={(outputBlack) => setRange({ outputBlack })} />
+            <NumericField label="输出白" min={0} max={255} step={1} value={r.outputWhite}
+              onchange={(outputWhite) => setRange({ outputWhite })} />
+          </div>
         {:else if kind === "adjust:Curves" && s}
           <div class="tabs">
             {#each CURVE_CHANNELS as name, i (name)}
@@ -771,52 +730,46 @@
           </svg>
           <p class="hint">拖动锚点调整；空白处双击加点，锚点双击删除。</p>
         {:else if kind === "adjust:Hue/Saturation" && s}
-          <label class="row">
-            <span>色相</span>
-            <input type="range" min="-180" max="180" value={hueOr("hue", 0)}
+          <div class="row">
+            <NumericField label="色相" min={-180} max={180} step={1} value={hueOr("hue", 0)}
+              onchange={(hue) => setAdj({ hue })} />
+            <input type="range" min="-180" max="180" value={hueOr("hue", 0)} aria-label="色相"
               oninput={(e) => setAdj({ hue: +e.currentTarget.value })} />
-            <input type="number" min="-180" max="180" value={hueOr("hue", 0)}
-              onchange={(e) => setAdj({ hue: +e.currentTarget.value })} />
-          </label>
-          <label class="row">
-            <span>饱和度</span>
-            <input type="range" min="-100" max="100" value={hueOr("saturation", 0)}
+          </div>
+          <div class="row">
+            <NumericField label="饱和度" min={-100} max={100} step={1} value={hueOr("saturation", 0)}
+              onchange={(saturation) => setAdj({ saturation })} />
+            <input type="range" min="-100" max="100" value={hueOr("saturation", 0)} aria-label="饱和度"
               oninput={(e) => setAdj({ saturation: +e.currentTarget.value })} />
-            <input type="number" min="-100" max="100" value={hueOr("saturation", 0)}
-              onchange={(e) => setAdj({ saturation: +e.currentTarget.value })} />
-          </label>
-          <label class="row">
-            <span>明度</span>
-            <input type="range" min="-100" max="100" value={hueOr("lightness", 0)}
+          </div>
+          <div class="row">
+            <NumericField label="明度" min={-100} max={100} step={1} value={hueOr("lightness", 0)}
+              onchange={(lightness) => setAdj({ lightness })} />
+            <input type="range" min="-100" max="100" value={hueOr("lightness", 0)} aria-label="明度"
               oninput={(e) => setAdj({ lightness: +e.currentTarget.value })} />
-            <input type="number" min="-100" max="100" value={hueOr("lightness", 0)}
-              onchange={(e) => setAdj({ lightness: +e.currentTarget.value })} />
-          </label>
+          </div>
           <label class="check"><input type="checkbox" checked={(adj().colorize ?? false)}
             onchange={(e) => setAdj({ colorize: e.currentTarget.checked })} /> 着色</label>
         {:else if kind === "adjust:Exposure" && s}
           {@const ex = adj().exposureSettings ?? { exposure: 0, offset: 0, gamma: 1 }}
-          <label class="row">
-            <span>曝光 (档)</span>
-            <input type="range" min="-20" max="20" step="0.05" value={ex.exposure}
+          <div class="row">
+            <NumericField label="曝光 (档)" min={-20} max={20} step={0.05} value={ex.exposure}
+              onchange={(exposure) => setAdj({ exposureSettings: { ...ex, exposure } })} />
+            <input type="range" min="-20" max="20" step="0.05" value={ex.exposure} aria-label="曝光 (档)"
               oninput={(e) => setAdj({ exposureSettings: { ...ex, exposure: +e.currentTarget.value } })} />
-            <input type="number" min="-20" max="20" step="0.05" value={ex.exposure}
-              onchange={(e) => setAdj({ exposureSettings: { ...ex, exposure: +e.currentTarget.value } })} />
-          </label>
-          <label class="row">
-            <span>偏移</span>
-            <input type="range" min="-0.5" max="0.5" step="0.01" value={ex.offset}
+          </div>
+          <div class="row">
+            <NumericField label="偏移" min={-0.5} max={0.5} step={0.01} value={ex.offset}
+              onchange={(offset) => setAdj({ exposureSettings: { ...ex, offset } })} />
+            <input type="range" min="-0.5" max="0.5" step="0.01" value={ex.offset} aria-label="偏移"
               oninput={(e) => setAdj({ exposureSettings: { ...ex, offset: +e.currentTarget.value } })} />
-            <input type="number" min="-0.5" max="0.5" step="0.01" value={ex.offset}
-              onchange={(e) => setAdj({ exposureSettings: { ...ex, offset: +e.currentTarget.value } })} />
-          </label>
-          <label class="row">
-            <span>灰度系数</span>
-            <input type="range" min="0.01" max="9.99" step="0.01" value={ex.gamma}
+          </div>
+          <div class="row">
+            <NumericField label="灰度系数" min={0.01} max={9.99} step={0.01} value={ex.gamma}
+              onchange={(gamma) => setAdj({ exposureSettings: { ...ex, gamma } })} />
+            <input type="range" min="0.01" max="9.99" step="0.01" value={ex.gamma} aria-label="灰度系数"
               oninput={(e) => setAdj({ exposureSettings: { ...ex, gamma: +e.currentTarget.value } })} />
-            <input type="number" min="0.01" max="9.99" step="0.01" value={ex.gamma}
-              onchange={(e) => setAdj({ exposureSettings: { ...ex, gamma: +e.currentTarget.value } })} />
-          </label>
+          </div>
         {:else if kind === "adjust:Gradient Map" && s}
           {@const gm = adj().gradientMapSettings ?? {
             shadows: { red: 0, green: 0, blue: 0 },
@@ -855,35 +808,31 @@
             onchange={(e) => setAdj({ gradientMapSettings: { ...gm, reversed: e.currentTarget.checked } })} /> 反向</label>
         {:else if kind === "adjust:Grain" && s}
           {@const g = adj().grainSettings ?? { amount: 25, size: 1.5, roughness: 50, seed: session.seed }}
-          <label class="row">
-            <span>数量 %</span>
-            <input type="range" min="0" max="100" value={g.amount}
+          <div class="row">
+            <NumericField label="数量 %" min={0} max={100} step={1} value={g.amount}
+              onchange={(amount) => setAdj({ grainSettings: { ...g, amount } })} />
+            <input type="range" min="0" max="100" value={g.amount} aria-label="数量 %"
               oninput={(e) => setAdj({ grainSettings: { ...g, amount: +e.currentTarget.value } })} />
-            <input type="number" min="0" max="100" value={g.amount}
-              onchange={(e) => setAdj({ grainSettings: { ...g, amount: +e.currentTarget.value } })} />
-          </label>
-          <label class="row">
-            <span>大小</span>
-            <input type="range" min="0.5" max="20" step="0.1" value={g.size}
+          </div>
+          <div class="row">
+            <NumericField label="大小" min={0.5} max={20} step={0.1} value={g.size}
+              onchange={(size) => setAdj({ grainSettings: { ...g, size } })} />
+            <input type="range" min="0.5" max="20" step="0.1" value={g.size} aria-label="大小"
               oninput={(e) => setAdj({ grainSettings: { ...g, size: +e.currentTarget.value } })} />
-            <input type="number" min="0.5" max="20" step="0.1" value={g.size}
-              onchange={(e) => setAdj({ grainSettings: { ...g, size: +e.currentTarget.value } })} />
-          </label>
-          <label class="row">
-            <span>粗糙度</span>
-            <input type="range" min="0" max="100" value={g.roughness}
+          </div>
+          <div class="row">
+            <NumericField label="粗糙度" min={0} max={100} step={1} value={g.roughness}
+              onchange={(roughness) => setAdj({ grainSettings: { ...g, roughness } })} />
+            <input type="range" min="0" max="100" value={g.roughness} aria-label="粗糙度"
               oninput={(e) => setAdj({ grainSettings: { ...g, roughness: +e.currentTarget.value } })} />
-            <input type="number" min="0" max="100" value={g.roughness}
-              onchange={(e) => setAdj({ grainSettings: { ...g, roughness: +e.currentTarget.value } })} />
-          </label>
+          </div>
         {:else if kind === "adjust:Add Noise" && s}
-          <label class="row">
-            <span>数量 %</span>
-            <input type="range" min="0.1" max="400" step="0.1" value={adj().noiseAmount ?? 10}
+          <div class="row">
+            <NumericField label="数量 %" min={0.1} max={400} step={0.1} value={adj().noiseAmount ?? 10}
+              onchange={(noiseAmount) => setAdj({ noiseAmount })} />
+            <input type="range" min="0.1" max="400" step="0.1" value={adj().noiseAmount ?? 10} aria-label="数量 %"
               oninput={(e) => setAdj({ noiseAmount: +e.currentTarget.value })} />
-            <input type="number" min="0.1" max="400" step="0.1" value={adj().noiseAmount ?? 10}
-              onchange={(e) => setAdj({ noiseAmount: +e.currentTarget.value })} />
-          </label>
+          </div>
           <label class="check"><input type="checkbox" checked={adj().noiseGaussian ?? false}
             onchange={(e) => setAdj({ noiseGaussian: e.currentTarget.checked })} /> 高斯分布</label>
           <label class="check"><input type="checkbox" checked={adj().noiseMonochromatic ?? false}
@@ -894,13 +843,12 @@
             tint: false, tintHue: 40, tintSaturation: 20,
           }) as Record<string, number | boolean>}
           {#each [["reds", "红"], ["yellows", "黄"], ["greens", "绿"], ["cyans", "青"], ["blues", "蓝"], ["magentas", "洋红"]] as [key, label] (key)}
-            <label class="row">
-              <span>{label}</span>
-              <input type="range" min="-200" max="300" value={bw[key] as number}
+            <div class="row">
+              <NumericField label={label} min={-200} max={300} step={1} value={bw[key] as number}
+                onchange={(value) => setAdj({ blackWhiteSettings: { ...bw, [key]: value } })} />
+              <input type="range" min="-200" max="300" value={bw[key] as number} aria-label={label}
                 oninput={(e) => setAdj({ blackWhiteSettings: { ...bw, [key]: +e.currentTarget.value } })} />
-              <input type="number" min="-200" max="300" value={bw[key] as number}
-                onchange={(e) => setAdj({ blackWhiteSettings: { ...bw, [key]: +e.currentTarget.value } })} />
-            </label>
+            </div>
           {/each}
           <label class="check"><input type="checkbox" checked={bw.tint as boolean}
             onchange={(e) => setAdj({ blackWhiteSettings: { ...bw, tint: e.currentTarget.checked } })} /> 着色</label>
@@ -1026,6 +974,13 @@
   .row > span:first-child {
     min-width: 84px;
     color: var(--text-dim);
+  }
+
+  /* 数值框并进 NumericField（票 53/V06）后，标签和数字成为一个整体：保留原来的标签列
+     宽度，让各行的滑块左边缘继续对齐；数字右对齐，和旧的"数字框在行尾"观感接近。 */
+  .row:has(input[type="range"]) > :global(.numeric-field) {
+    min-width: 136px;
+    justify-content: space-between;
   }
 
   .row input[type="range"] {
