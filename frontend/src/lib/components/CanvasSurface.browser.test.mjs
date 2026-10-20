@@ -299,3 +299,212 @@ it("draws the traced pixel edges as animated marching ants", async () => {
     await page.close();
   }
 }, 30000);
+
+// ---------------------------------------------------------------------------
+// 票 53/S05：选区的鼠标拖动搬运（浮动选区）
+//
+// 「拖到视口边缘自动滚动」与「方向键搬运选区像素」都已接线，但「在选区内按下并
+// 拖动」此前没有入口：画布会把这次按下当成新建选区。这四条钉住接线，语义跟原版
+// 一致（EditorCanvas.swift:2418-2423 / SelectionEdits.swift:168-212）：
+// 普通拖动只移选区轮廓（无 RPC、无撤销步骤），⌘/Ctrl 拖动才搬像素（与方向键同一条
+// Go 通道），Esc / 右键取消不提交，且「在选区外按下仍然新建选区」不变。
+
+const SELECTION_MASK_B64 = (() => {
+  const mask = Buffer.alloc(8 * 8);
+  for (let y = 1; y <= 3; y++) for (let x = 1; x <= 3; x++) mask[y * 8 + x] = 255;
+  return mask.toString("base64");
+})();
+// Go 回复里的权威选区：左半边跟着位移 +2px（x 3..5）。
+const MOVED_SELECTION_MASK_B64 = (() => {
+  const mask = Buffer.alloc(8 * 8);
+  for (let y = 1; y <= 3; y++) for (let x = 3; x <= 5; x++) mask[y * 8 + x] = 255;
+  return mask.toString("base64");
+})();
+// 初始选区（x/y 各 1..3）的蚂蚁线闭环；向右拖 2 个文档像素后的跟手位置。
+const ANTS_AT_ORIGIN = "M 1 1 L 4 1 L 4 4 L 1 4 Z";
+const ANTS_MOVED_2PX = "M 3 1 L 6 1 L 6 4 L 3 4 Z";
+
+// 挂一块 8×8 的画布，marquee 工具，预置初始选区，并把 MoveSelectedPixels 换成
+// 记录调用的假实现。返回文档像素 → 页面坐标的换算函数。
+async function openFloatingSelectionPage(page) {
+  await page.addInitScript(() => Object.defineProperty(navigator, "gpu", { value: undefined }));
+  await page.goto(`${server.resolvedUrls.local[0]}canvas-preview-test`);
+  const body = { contentType: "image/png", body: Buffer.from([0]) };
+  await page.route("**/render/**", (route) => route.fulfill(body));
+  await page.route("**/pixel/**", (route) => route.fulfill(body));
+  await page.evaluate(`(async () => {
+    const { mount, tick } = await import("/node_modules/.vite-canvas-browser/deps/svelte.js");
+    const { default: Surface } = await import("/src/lib/components/CanvasSurface.svelte");
+    const { applyDocumentSnapshot } = await import("/src/lib/state/document.ts");
+    const { workspace } = await import("/src/lib/state/workspace.ts");
+    const { activeTool, toolModes } = await import("/src/lib/state/tools.ts");
+    const { currentSelection, select } = await import("/src/lib/state/selection.ts");
+    currentSelection.subscribe((value) => { window.__selection = value; });
+    const doc = { documentID: "tab-a", width: 8, height: 8, resolution: 72, activeLayerID: "layer", layers: [{
+      id: "layer", name: "Layer", isVisible: true, opacity: 1, blendMode: "Normal", imageFile: "layer.png",
+      transform: { origin: [0, 0], size: [8, 8], sampling: "Nearest" } }] };
+    const tab = { id: "tab-a", name: "Floating", width: 8, height: 8, resolution: 72, dirty: false };
+    window.__moveCalls = [];
+    window.go = { bridge: { Service: {
+      MoveSelectedPixels: async (selectionJSON, dx, dy) => {
+        window.__moveCalls.push({ selectionJSON, dx, dy });
+        // applyDocumentSnapshot 只接受前进的 rev；每次回复递增一档。
+        return JSON.stringify({ rev: 1 + window.__moveCalls.length, filterRev: 0, doc,
+          selection: { x: 0, y: 0, w: 8, h: 8, mask: "${MOVED_SELECTION_MASK_B64}" } });
+      },
+    } } };
+    workspace.set({ activeId: "tab-a", tabs: [tab] });
+    applyDocumentSnapshot(JSON.stringify({ rev: 1, filterRev: 0, doc }));
+    activeTool.set("marquee");
+    toolModes.update((value) => ({ ...value, marquee: "rect" }));
+    const mask = Uint8Array.from(atob("${SELECTION_MASK_B64}"), (c) => c.charCodeAt(0));
+    // 带羽化：普通拖动移轮廓时羽化必须跟着走（原版 moveSelection 保留 feather）。
+    currentSelection.set({ ...select("replace", null, { width: 8, height: 8, mask, loops: [] }), feather: 3 });
+    mount(Surface, { target: document.getElementById("canvas"), props: { doc: tab } });
+    await tick();
+  })()`);
+  await poll(() => page.locator(".doc").isVisible()).toBe(true);
+  // 文档像素 → 页面坐标：.doc 的左上角 + (x + 0.5) 个文档像素的实际屏幕尺寸。
+  const docBox = await page.locator(".doc").boundingBox();
+  const pixel = (x, y) => ({
+    x: docBox.x + ((x + 0.5) * docBox.width) / 8,
+    y: docBox.y + ((y + 0.5) * docBox.height) / 8,
+  });
+  return { docBox, pixel };
+}
+
+// 在 (fromX, fromY) 按下、拖到 (+dx, +dy)，返回松手前状态；不负责 mouse.up。
+async function dragFrom(page, pixel, fromX, fromY, dx, dy) {
+  const start = pixel(fromX, fromY);
+  const end = pixel(fromX + dx, fromY + dy);
+  await page.mouse.move(start.x, start.y);
+  await page.mouse.down();
+  await page.mouse.move(end.x, end.y, { steps: 4 });
+  return { start, end };
+}
+
+it("moves only the selection outline on a plain drag inside the selection", async () => {
+  const page = await browser.newPage();
+  try {
+    const { pixel } = await openFloatingSelectionPage(page);
+    const ants = page.locator(".ants .ants-line");
+    await poll(() => ants.count()).toBe(1);
+    await poll(() => ants.getAttribute("d")).toBe(ANTS_AT_ORIGIN);
+
+    // 悬停在选区内 → move 光标；选区外仍是选框光标（原版 lassoCursor 的 replace 分支）。
+    const stageCursor = () => page.evaluate(() => getComputedStyle(document.querySelector(".canvas-stage")).cursor);
+    await page.mouse.move(pixel(2, 2).x, pixel(2, 2).y);
+    await poll(stageCursor).toBe("move");
+    await page.mouse.move(pixel(6, 6).x, pixel(6, 6).y);
+    await page.waitForTimeout(100);
+    expect(await stageCursor()).not.toBe("move");
+
+    await dragFrom(page, pixel, 2, 2, 2, 0);
+    // 拖动中轮廓按整像素跟手。
+    await poll(() => ants.getAttribute("d")).toBe(ANTS_MOVED_2PX);
+    expect(await page.evaluate(() => getComputedStyle(document.querySelector(".canvas-stage")).cursor)).toBe("move");
+
+    await page.mouse.up();
+    // 普通拖动只移选区轮廓：选区本身（mask + loops + feather）整体 +2px，像素不动，
+    // 也没有任何 RPC / 撤销步骤（原版 beginSelectionMove/moveSelection 的语义）。
+    await poll(() => page.evaluate(`(() => {
+      const sel = window.__selection;
+      return !!sel && sel.mask[2 * 8 + 4] === 255 && sel.mask[2 * 8 + 2] === 0
+        && sel.feather === 3 && sel.loops[0][0].x === 3;
+    })()`)).toBe(true);
+    expect(await page.evaluate(() => window.__moveCalls.length)).toBe(0);
+
+    // 反例（原来的行为不能被改掉）：在选区**外**按下拖动 = 新建选区，也不搬像素。
+    await page.mouse.move(pixel(6, 6).x, pixel(6, 6).y);
+    await page.mouse.down();
+    await page.mouse.move(pixel(7, 7).x, pixel(7, 7).y, { steps: 4 });
+    await page.mouse.up();
+    await poll(() => page.evaluate(`(() => {
+      const sel = window.__selection;
+      return !!sel && sel.mask[7 * 8 + 7] === 255 && sel.mask[4 * 8 + 4] === 0;
+    })()`)).toBe(true);
+    expect(await page.evaluate(() => window.__moveCalls.length)).toBe(0);
+  } finally {
+    await page.close();
+  }
+}, 30000);
+
+it("moves the selected pixels on a Ctrl/Cmd drag inside the selection", async () => {
+  const page = await browser.newPage();
+  try {
+    const { pixel } = await openFloatingSelectionPage(page);
+    const ants = page.locator(".ants .ants-line");
+    await poll(() => ants.count()).toBe(1);
+    // 浏览器里的 ⌘/主修饰键：仓库按 chords.ts 的 Cmd→Ctrl 映射，两者都认；Windows 上按 Ctrl。
+    await page.keyboard.down("Control");
+    await dragFrom(page, pixel, 2, 2, 2, 0);
+    // 拖动中轮廓同样跟手。
+    await poll(() => ants.getAttribute("d")).toBe(ANTS_MOVED_2PX);
+    await page.mouse.up();
+    await page.keyboard.up("Control");
+    await poll(() => page.evaluate(() => window.__moveCalls.length)).toBe(1);
+    const [call] = await page.evaluate(() => window.__moveCalls);
+    // 与方向键搬运同一个 Go 方法：整像素位移。
+    expect(call.dx).toBe(2);
+    expect(call.dy).toBe(0);
+    // 负载是**原始**选区（像素此刻还在的位置），不是跟手后的位置；羽化随行李走。
+    const payload = JSON.parse(call.selectionJSON);
+    expect([payload.w, payload.h]).toEqual([8, 8]);
+    expect(payload.feather).toBe(3);
+    const sent = Buffer.from(payload.mask, "base64");
+    expect(sent[2 * 8 + 2]).toBe(255);
+    expect(sent[2 * 8 + 4]).toBe(0);
+    // 回复里的权威选区装回前端：Go 把选区跟着像素一起移了。
+    await poll(() => page.evaluate(`(() => {
+      const sel = window.__selection;
+      return !!sel && sel.mask[3 * 8 + 3] === 255 && sel.mask[1 * 8 + 1] === 0;
+    })()`)).toBe(true);
+  } finally {
+    await page.close();
+  }
+}, 30000);
+
+it("cancels a Ctrl/Cmd pixel drag on Escape without moving pixels", async () => {
+  const page = await browser.newPage();
+  try {
+    const { pixel } = await openFloatingSelectionPage(page);
+    const ants = page.locator(".ants .ants-line");
+    await poll(() => ants.count()).toBe(1);
+    // 用 ⌘/Ctrl 拖动：这条路径松手会发 RPC，所以「取消后 0 次调用」才是判别性的。
+    await page.keyboard.down("Control");
+    await dragFrom(page, pixel, 2, 2, 2, 0);
+    await poll(() => ants.getAttribute("d")).toBe(ANTS_MOVED_2PX);
+    await page.keyboard.press("Escape");
+    await page.keyboard.up("Control");
+    // 轮廓回到原处，像素一个都没动。
+    await poll(() => ants.getAttribute("d")).toBe(ANTS_AT_ORIGIN);
+    await page.mouse.up();
+    await page.waitForTimeout(200);
+    expect(await page.evaluate(() => window.__moveCalls.length)).toBe(0);
+  } finally {
+    await page.close();
+  }
+}, 30000);
+
+it("cancels a Ctrl/Cmd pixel drag on right-click without moving pixels", async () => {
+  const page = await browser.newPage();
+  try {
+    const { pixel } = await openFloatingSelectionPage(page);
+    const ants = page.locator(".ants .ants-line");
+    await poll(() => ants.count()).toBe(1);
+    await page.keyboard.down("Control");
+    const { end } = await dragFrom(page, pixel, 2, 2, 2, 0);
+    await poll(() => ants.getAttribute("d")).toBe(ANTS_MOVED_2PX);
+    // 右键按下（左键还按着）→ 取消；再动一下会走 pointermove 那条判定。
+    await page.mouse.down({ button: "right" });
+    await page.mouse.move(end.x + 8, end.y, { steps: 2 });
+    await page.mouse.up({ button: "right" });
+    await poll(() => ants.getAttribute("d")).toBe(ANTS_AT_ORIGIN);
+    await page.mouse.up();
+    await page.keyboard.up("Control");
+    await page.waitForTimeout(200);
+    expect(await page.evaluate(() => window.__moveCalls.length)).toBe(0);
+  } finally {
+    await page.close();
+  }
+}, 30000);

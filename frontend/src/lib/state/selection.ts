@@ -309,6 +309,9 @@ export function offsetSelection(selection: Selection, dx: number, dy: number): S
     mask: fillLoops(loops, selection.width, selection.height),
     loops,
     active: selection.active,
+    // 羽化跟着选区一起走（原版 moveSelection 保留 feather）；没有羽化时不带这个
+    // 字段，免得改变既有对象的形状。
+    ...(selection.feather !== undefined ? { feather: selection.feather } : {}),
   };
 }
 

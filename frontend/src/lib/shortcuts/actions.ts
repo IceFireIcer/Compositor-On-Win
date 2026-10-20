@@ -680,10 +680,10 @@ export async function flipCanvas(axis: "horizontal" | "vertical"): Promise<void>
 // ---------------------------------------------------------------------------
 
 /**
- * 方向键搬动选区内的像素（Go 侧实现，选区同步移动）。
+ * 搬动选区内的像素（Go 侧实现，选区同步移动）。方向键与画布上的 ⌘ 拖动共用这一条通道。
  * Go 的回复带**权威选区**，所以先应用文档信封，再用它覆盖前端选区。
  */
-async function moveSelectedPixels(dx: number, dy: number): Promise<void> {
+export async function moveSelectedPixels(dx: number, dy: number): Promise<void> {
   const doc = get(document);
   if (!doc.docId || !doc.activeLayerID) return;
   if (!get(currentSelection)) return; // 没有选区就没什么可搬的

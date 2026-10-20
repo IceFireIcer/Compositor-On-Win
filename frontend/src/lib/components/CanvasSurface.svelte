@@ -46,8 +46,10 @@
     select,
     selectionMode,
     selectionFromMask,
+    offsetSelection,
     type Point as SelectionPoint,
     type Region as SelectionRegion,
+    type Selection,
     type SelectionMode,
   } from "../state/selection";
   import {
@@ -92,7 +94,7 @@
     SelectWandAt,
     SelectObjectAt,
   } from "../../../wailsjs/go/bridge/Service";
-  import { cursorForTool } from "./cursors";
+  import { MOVE_CURSOR, cursorForTool } from "./cursors";
 
   function decodeProof(encoded: string): Uint8Array {
     const binary = atob(encoded);
@@ -118,7 +120,7 @@
     visibleGuides,
   } from "../state/view";
   import { gridLines, gridStep } from "../state/snap";
-  import { commitGuides as commitGuidesAction } from "../shortcuts/actions";
+  import { commitGuides as commitGuidesAction, moveSelectedPixels } from "../shortcuts/actions";
   import CropOverlay from "./CropOverlay.svelte";
   import Navigator from "./Navigator.svelte";
   import {
@@ -172,6 +174,26 @@
         mode: SelectionMode;
       };
   let selectionGesture = $state<SelectionGesture | null>(null);
+
+  // 票 53/S05：选区的鼠标拖动（浮动选区）。只有「选区类工具 + 在选区内按下」
+  // 才进入，语义跟原版一致（EditorCanvas.swift:2418-2423 / SelectionEdits.swift:168-212）：
+  //  - 普通拖动只移**选区轮廓**：改前端选区，不动像素、不发 RPC、不产生撤销步骤；
+  //  - ⌘/Ctrl 拖动才搬**选区内像素**：走 actions 的 moveSelectedPixels（与方向键同一条 Go 通道）。
+  // offset 是未取整的文档像素位移，绘制与结算时各自 Math.round（原版
+  // moveSelection 的 rounded()，边缘保持清晰）。
+  type SelectionMove = {
+    pointerID: number;
+    start: SelectionPoint;
+    offset: SelectionPoint;
+    /** outline = 只移轮廓；pixels = ⌘/Ctrl 拖动搬像素。 */
+    kind: "outline" | "pixels";
+  };
+  let selectionMove = $state<SelectionMove | null>(null);
+  // 松手后 RPC 在飞的这一小段时间里，轮廓停在新位置而不是先弹回原处
+  // （原版提交时 displayedSelection 一直显示在新位置）。
+  let pendingSelectionMove = $state<{ dx: number; dy: number } | null>(null);
+  // 一次只允许一个搬运提交在飞：飞行中再按下不开新手势，免得第二次用过期的选区。
+  let selectionMoveBusy = false;
 
   // Text tool (ticket 44): a press on a live text layer edits it, otherwise
   // a drag draws a paragraph box and a click makes point text.
@@ -424,13 +446,18 @@
       return pow * 10;
     })(),
   );
+  // 拖动搬运中、或选区类工具悬停在选区内时用 move 光标（原版 lassoCursor 的
+  // selectionDragStart / replace 分支，EditorCanvas.swift:818-837）。
+  // selectionDragHovered 是函数声明（会提升），这里先引用没问题。
   const cursor = $derived(
-    cursorForTool({
-    tool: $activeTool,
-    bits: $modifierBits,
-    panning,
-    middleZoom: middleZoom ? (middleZoomOut ? "out" : "in") : null,
-  }),
+    selectionMove || selectionDragHovered()
+      ? MOVE_CURSOR
+      : cursorForTool({
+          tool: $activeTool,
+          bits: $modifierBits,
+          panning,
+          middleZoom: middleZoom ? (middleZoomOut ? "out" : "in") : null,
+        }),
   );
 
   /**
@@ -562,6 +589,13 @@
     };
     const onKeyDown = (e: KeyboardEvent) => {
       if (editable(e.target)) return;
+      // 票 53/S05：拖动搬运中 Esc = 放弃（不提交像素）。在修饰键表之前吃掉，
+      // 免得快捷键层把这次 Esc 解释成别的取消。
+      if (e.code === "Escape" && selectionMove) {
+        cancelSelectionMove();
+        e.preventDefault();
+        return;
+      }
       if (applyKey(e.code, true)) {
         // Keep Space from re-clicking focused buttons and scrolling pages.
         if (e.code === "Space" || e.code.startsWith("Alt")) e.preventDefault();
@@ -676,6 +710,7 @@
       clearStrokePreview();
       stopEdgeScroll();
       selectionGesture = null;
+      cancelSelectionMove();
       sampling = false;
       samplePending = null;
       sampleRing = null;
@@ -781,9 +816,21 @@
    * 同一结构。用复合路径而不是每个闭环一个 <path>，是因为像素边描迹在细节
    * 丰富的画面上能出上万个闭环，一闭环一节点会把 DOM 拖死。
    */
-  const antsOutline = $derived.by(() =>
-    ($currentSelection?.loops ?? []).map((loop) => loopPath(loop)).join(" "),
-  );
+  /** 拖动搬运的整像素偏移：拖动中跟手，松手后等 RPC 回来前也停在新位置。 */
+  const selectionMoveDelta = $derived.by(() => {
+    const move = selectionMove;
+    if (move) return { dx: Math.round(move.offset.x), dy: Math.round(move.offset.y) };
+    return pendingSelectionMove ?? { dx: 0, dy: 0 };
+  });
+
+  const antsOutline = $derived.by(() => {
+    const { dx, dy } = selectionMoveDelta;
+    const loops = $currentSelection?.loops ?? [];
+    const drawn = dx === 0 && dy === 0
+      ? loops
+      : loops.map((loop) => loop.map((p) => ({ x: p.x + dx, y: p.y + dy })));
+    return drawn.map((loop) => loopPath(loop)).join(" ");
+  });
 
   function beginSelection(e: PointerEvent): boolean {
     if (e.button !== 0) return false;
@@ -876,6 +923,116 @@
     if (points.length < 3) return;
     currentSelection.set(select(gesture.mode, get(currentSelection), lassoRegion(points, doc.width, doc.height)));
     selectionGesture = null;
+  }
+
+  // --- 选区拖动（票 53/S05，浮动选区）----------------------------------------
+  // 入口与原版一致（EditorCanvas.swift:2418-2423）：New 模式 + 点在选区内按下。
+  // 松开时按按下时的修饰键分两路（SelectionEdits.swift:168-212）：
+  //  - 普通拖动 = beginSelectionMove/moveSelection：只移选区轮廓，像素不动；
+  //  - ⌘/Ctrl 拖动 = beginPixelMove：搬选区内像素，与方向键走同一个 Go 通道。
+
+  /** 指针是否落在选区的非零覆盖里（文档像素坐标；mask 一格一个像素）。 */
+  function selectionContainsPoint(selection: Selection, p: SelectionPoint): boolean {
+    const x = Math.floor(p.x);
+    const y = Math.floor(p.y);
+    if (x < 0 || y < 0 || x >= selection.width || y >= selection.height) return false;
+    return selection.mask[y * selection.width + x] > 0;
+  }
+
+  /**
+   * 选区类工具下、New 模式、指针悬在选区内 → move 光标。Shift/Alt 是加/减选区
+   * 的徽标，此时按下仍然画框，所以不给 move 光标（原版 selectionMode 同一判定）。
+   */
+  function selectionDragHovered(): boolean {
+    if ($activeTool !== "marquee" && $activeTool !== "lasso") return false;
+    if (selectionGesture) return false; // 正在画框/收多边形角
+    if (($modifierBits & (Modifier.Shift | Modifier.Alt)) !== 0) return false;
+    if (get(selectionSettings).combination !== "replace") return false;
+    const selection = $currentSelection;
+    const p = hoverPoint;
+    if (!selection || !selection.active || !p) return false;
+    return selectionContainsPoint(selection, p);
+  }
+
+  /**
+   * 在选区内部按下：进入拖动。false = 照旧画新选区（选区外按下）。
+   * 按下时按住主修饰键（macOS ⌘ / Windows Ctrl；仓库按 chords.ts 的 Cmd→Ctrl
+   * 映射统一，两个都认）才搬像素，否则只移轮廓 —— 与原版 ⌘ 拖动的分工一致。
+   */
+  function beginSelectionMove(e: PointerEvent): boolean {
+    if (e.button !== 0) return false;
+    if (selectionMoveBusy) return true; // 上一次提交还在飞：吞掉按下，别叠第二个手势
+    if (selectionGesture) return false; // 多边形套索开着：按下是加一个角
+    const command = e.ctrlKey || e.metaKey;
+    // 普通拖动是 New 模式的行为；Shift/Alt（加/减选区）仍然照常画框。
+    if (!command && selectionModeFor(e) !== "replace") return false;
+    const selection = get(currentSelection);
+    if (!selection || !selection.active) return false;
+    const p = selectionPointOf(e);
+    if (!selectionContainsPoint(selection, p)) return false;
+    selectionMove = {
+      pointerID: e.pointerId,
+      start: p,
+      offset: { x: 0, y: 0 },
+      kind: command ? "pixels" : "outline",
+    };
+    stage?.setPointerCapture(e.pointerId);
+    e.preventDefault();
+    return true;
+  }
+
+  /** 更新搬运偏移；拖动中按住 Shift 约束到位移更大的那条轴（EditorCanvas.swift:2367-2369）。 */
+  function updateSelectionMove(e: PointerEvent): void {
+    const move = selectionMove;
+    if (!move) return;
+    const p = selectionPointOf(e);
+    let dx = p.x - move.start.x;
+    let dy = p.y - move.start.y;
+    if (e.shiftKey) {
+      if (Math.abs(dx) >= Math.abs(dy)) dy = 0;
+      else dx = 0;
+    }
+    move.offset = { x: dx, y: dy };
+  }
+
+  /** Esc / 右键：放弃这次搬运，像素一个都不动。 */
+  function cancelSelectionMove(): void {
+    selectionMove = null;
+    pendingSelectionMove = null;
+  }
+
+  /**
+   * 松手结算，按按下时的修饰键分两条路：
+   *  - outline：把选区本身平移到新位置（轮廓 + 覆盖一起；mask 裁剪到画布，轮廓
+   *    不重裁，所以移出画布再移回来形状完整 —— 原版 moveSelection 的语义）。
+   *    纯前端，不发 RPC、不产生撤销步骤。
+   *  - pixels：调 actions 的 moveSelectedPixels —— 与方向键搬运同一条 Go 通道
+   *    （MoveSelectedPixels），由它应用文档信封并把权威选区写回前端。
+   */
+  async function finishSelectionMove(): Promise<void> {
+    const move = selectionMove;
+    selectionMove = null;
+    if (!move) return;
+    const dx = Math.round(move.offset.x);
+    const dy = Math.round(move.offset.y);
+    if (dx === 0 && dy === 0) return; // 只是点了一下：不产生撤销步骤
+    if (move.kind === "outline") {
+      const selection = get(currentSelection);
+      if (!selection || !selection.active) return;
+      currentSelection.set(offsetSelection(selection, dx, dy));
+      return;
+    }
+    const tabID = doc.id;
+    const state = get(documentState);
+    if (state.docId !== tabID || !state.activeLayerID || !get(currentSelection)) return;
+    selectionMoveBusy = true;
+    pendingSelectionMove = { dx, dy };
+    try {
+      await moveSelectedPixels(dx, dy);
+    } finally {
+      pendingSelectionMove = null;
+      selectionMoveBusy = false;
+    }
   }
 
   // --- 变换会话（票 17）----------------------------------------------------
@@ -1060,6 +1217,11 @@
 
   function onPointerDown(e: PointerEvent): void {
     if (strokeGesture || drawingGesture || tipDrag) return;
+    // 票 53/S05：搬运拖动中右键按下 = 取消（原版取消像素搬运的同一语义）。
+    if (e.button === 2 && selectionMove) {
+      cancelSelectionMove();
+      return;
+    }
     const spaceHeld = ($modifierBits & Modifier.Space) !== 0;
     if (e.button === 2 && BRUSH_TOOLS.has($activeTool)) {
       const bounds = stage!.getBoundingClientRect();
@@ -1170,7 +1332,8 @@
     // transforms. Polygon lasso stays open across clicks and closes on a
     // double-click; the other gestures commit on pointer-up.
     if (e.button === 0 && ($activeTool === "marquee" || $activeTool === "lasso")) {
-      beginSelection(e);
+      // 票 53/S05：选区**内部**按下 = 拖动搬运；外部按下照旧新建选区。
+      if (!beginSelectionMove(e)) beginSelection(e);
       return;
     }
     if (e.button === 0 && $activeTool === "type") {
@@ -1283,6 +1446,17 @@
       updateMoveDrag(e);
       return;
     }
+    if (selectionMove) {
+      if (selectionMove.pointerID !== e.pointerId) return;
+      // 右键按住（左键还没松）= 取消。Chorded 按键在浏览器里只来 pointermove、
+      // 不一定再来 pointerdown，所以这里也要认一次。
+      if ((e.buttons & 2) !== 0) {
+        cancelSelectionMove();
+        return;
+      }
+      updateSelectionMove(e);
+      return;
+    }
     if (selectionGesture) {
       if (selectionGesture.kind === "marquee") {
         selectionGesture.current = selectionPointOf(e);
@@ -1351,6 +1525,16 @@
       endMoveDrag(e);
       return;
     }
+    if (selectionMove) {
+      if (selectionMove.pointerID !== e.pointerId) return;
+      // 左键先松、右键还按着：同样算取消（上下文菜单那条路径的另一半）。
+      if ((e.buttons & 2) !== 0) cancelSelectionMove();
+      else updateSelectionMove(e);
+      if (stage?.hasPointerCapture(e.pointerId)) stage.releasePointerCapture(e.pointerId);
+      if (!selectionMove) return;
+      void finishSelectionMove();
+      return;
+    }
     if (selectionGesture) {
       const polygon = selectionGesture.kind === "lasso" && selectionGesture.polygon;
       if (!polygon) finishSelection();
@@ -1398,6 +1582,7 @@
     cancelTipDrag();
     finishDrawing(true);
     selectionGesture = null;
+    cancelSelectionMove();
     textDrag = null;
     textDragRect = null;
     if (moveDrag) { moveDrag = null; cancelTransformSession(); }
@@ -1424,6 +1609,8 @@
   }
 
   function onContextMenu(e: MouseEvent): void {
+    // 票 53/S05：拖动中右键 = 取消这次拖动，不提交像素。
+    if (selectionMove) cancelSelectionMove();
     e.preventDefault(); // Alt-click / right-click belong to the tools
   }
 
