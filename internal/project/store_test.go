@@ -113,6 +113,38 @@ func TestStoreRoundTrip(t *testing.T) {
 	}
 }
 
+// 票 05：`.comp` 往返必须保留**每个特效的每个字段**。
+//
+// 这条是变异审计查出来的：把 `Effects.ColorOverlay` 或 `StrokeEffect.Inside` 从 json 标签里去掉，
+// 全部既有测试照样通过 —— `sampleDoc()` 里根本没有特效，而 `validate_test.go` 只验证「能通过校验」，
+// 不做往返。于是「保存再打开，颜色叠加没了 / 描边的内/外翻了」这类 bug 测不出来。
+//
+// 一条测试覆盖全部字段，比逐字段写十几条更难遗漏 —— 以后往 `Effects` 加字段，只要这里跟着填，
+// 漏序列化就会被抓住。
+func TestStoreRoundTripKeepsEveryEffectField(t *testing.T) {
+	dir := t.TempDir()
+	doc := sampleDoc()
+	on := true
+	doc.Layers[0].Effects = &domain.Effects{
+		Stroke:       &domain.StrokeEffect{Enabled: &on, Size: 7, Red: 0.1, Green: 0.2, Blue: 0.3, Opacity: 0.4, Inside: true},
+		Shadow:       &domain.ShadowEffect{Enabled: &on, Angle: 30, Distance: 11, Blur: 13, Red: 0.5, Green: 0.6, Blue: 0.7, Opacity: 0.8},
+		ColorOverlay: &domain.OverlayEffect{Enabled: &on, Red: 0.9, Green: 0.11, Blue: 0.12, Opacity: 0.13},
+		InnerShadow:  &domain.ShadowEffect{Enabled: &on, Angle: 40, Distance: 21, Blur: 23, Red: 0.31, Green: 0.32, Blue: 0.33, Opacity: 0.34},
+		OuterGlow:    &domain.GlowEffect{Enabled: &on, Size: 17, Red: 0.41, Green: 0.42, Blue: 0.43, Opacity: 0.44},
+		InnerGlow:    &domain.GlowEffect{Enabled: &on, Size: 19, Red: 0.51, Green: 0.52, Blue: 0.53, Opacity: 0.54},
+	}
+	if err := (&Store{}).Save(dir, doc, sampleAssets()); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	reopened, err := (&Store{}).Open(dir)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	if !reflect.DeepEqual(doc, reopened) {
+		t.Fatalf("往返把特效改了：\n保存 %+v\n重开 %+v", doc.Layers[0].Effects, reopened.Layers[0].Effects)
+	}
+}
+
 func TestStoreReplaceRemovesStaleAssets(t *testing.T) {
 	dir := t.TempDir()
 	store := &Store{}
