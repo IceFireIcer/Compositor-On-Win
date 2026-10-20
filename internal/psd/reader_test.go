@@ -525,6 +525,23 @@ func TestFlattenedPSDBecomesABackgroundLayer(t *testing.T) {
 	}
 }
 
+// PackBits 的 0x80（-128）是**空操作**，不是 run。Photoshop 会拿它做填充，所以合法文件里会出现；
+// 当 run 处理会算出 129 个字节、直接判成截断 —— 也就是**合法文件被拒**。
+//
+// 这条是变异审计查出来的：把 `n != -128` 那个判断去掉（当成 run），全部既有测试照样通过 ——
+// 因为现有夹具都是自己 encode 出来的，从不产生 0x80。
+func TestUnpackRLETreatsMinus128AsANoOp(t *testing.T) {
+	// 一行 3 字节：行字节数 5；包序列 = 0x80（空操作）+ 0x02（字面量 3 字节）+ a b c。
+	data := []byte{0x00, 0x05, 0x80, 0x02, 'a', 'b', 'c'}
+	plane, err := unpackRLE(3, 1, data, false, nil)
+	if err != nil {
+		t.Fatalf("0x80 应当被当作空操作，得到错误: %v", err)
+	}
+	if want := []byte{'a', 'b', 'c'}; string(plane) != string(want) {
+		t.Fatalf("解出来 = %q，想要 %q", plane, want)
+	}
+}
+
 // 同样的文件用 RLE 压缩：行字节数表 + PackBits 打包。
 func TestFlattenedPSDWithRLECompression(t *testing.T) {
 	r := []byte{10, 20}
