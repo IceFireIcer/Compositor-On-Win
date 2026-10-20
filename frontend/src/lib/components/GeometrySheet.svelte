@@ -1,4 +1,5 @@
 <script lang="ts">
+  import NumericField from "./NumericField.svelte";
   import {
     activeSize,
     canvasSize,
@@ -102,8 +103,8 @@
         {#if kind === "canvasSize"}
           <h2>画布大小</h2>
           <div class="row">
-            <label>宽度（px）<input type="number" min="1" max="30000" bind:value={cw} required /></label>
-            <label>高度（px）<input type="number" min="1" max="30000" bind:value={ch} required /></label>
+            <NumericField label="宽度（px）" min={1} max={30000} step={1} value={cw} onchange={(value) => (cw = value)} />
+            <NumericField label="高度（px）" min={1} max={30000} step={1} value={ch} onchange={(value) => (ch = value)} />
           </div>
           <fieldset class="anchors">
             <legend>锚点</legend>
@@ -126,12 +127,12 @@
         {:else if kind === "imageSize"}
           <h2>图像大小</h2>
           <div class="row">
-            <label>宽度（px）<input type="number" min="1" max="30000" value={iw} oninput={(e) => setWidth(Number((e.target as HTMLInputElement).value))} required /></label>
-            <label>高度（px）<input type="number" min="1" max="30000" value={ih} oninput={(e) => setHeight(Number((e.target as HTMLInputElement).value))} required /></label>
+            <NumericField label="宽度（px）" min={1} max={30000} step={1} value={iw} onchange={setWidth} />
+            <NumericField label="高度（px）" min={1} max={30000} step={1} value={ih} onchange={setHeight} />
           </div>
           <div class="row">
             <label class="check"><input type="checkbox" bind:checked={locked} /> 保持长宽比</label>
-            <label>分辨率（ppi）<input type="number" min="1" max="9600" bind:value={resolution} required /></label>
+            <NumericField label="分辨率（ppi）" min={1} max={9600} step={1} value={resolution} onchange={(value) => (resolution = value)} />
           </div>
           <label>
             重采样
@@ -158,10 +159,7 @@
             <label class="check"><input type="checkbox" bind:checked={left} /> 左</label>
             <label class="check"><input type="checkbox" bind:checked={right} /> 右</label>
           </fieldset>
-          <label>
-            容差（0–255）
-            <input type="number" min="0" max="255" bind:value={tolerance} />
-          </label>
+          <NumericField label="容差（0–255）" min={0} max={255} step={1} value={tolerance} onchange={(value) => (tolerance = value)} />
         {/if}
 
         {#if error}
@@ -227,7 +225,6 @@
     gap: 6px;
   }
 
-  input[type="number"],
   select {
     padding: 4px 6px;
   }

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import NumericField from "./NumericField.svelte";
   import { registerCanvasModalGuard } from "../shortcuts/dispatch";
   import {
     applySelectionAmount, applySelectionTransform, cancelSelectionEdit, commitColorRange,
@@ -91,8 +92,8 @@
           </select>
         </label>
         <div class="row">
-          <label>取样 X<input type="number" min="0" max={edit.width - 1} step="1" bind:value={sampleX} disabled={busy} /></label>
-          <label>取样 Y<input type="number" min="0" max={edit.height - 1} step="1" bind:value={sampleY} disabled={busy} /></label>
+          <NumericField label="取样 X" min={0} max={edit.width - 1} step={1} value={sampleX} disabled={busy} onchange={(value) => (sampleX = value)} />
+          <NumericField label="取样 Y" min={0} max={edit.height - 1} step={1} value={sampleY} disabled={busy} onchange={(value) => (sampleY = value)} />
           <button type="button" disabled={busy} onclick={() => void work(() => sampleColorRange(sampleX, sampleY, mode))}>取样</button>
         </div>
         <div class="samples" aria-live="polite">
@@ -100,12 +101,13 @@
           {#each edit.include as rgb, i (`include-${i}`)}<span class="swatch" title="包含 RGB {rgb.join(', ')}" style:background={`rgb(${rgb.join(',')})`}></span>{/each}
           {#each edit.exclude as rgb, i (`exclude-${i}`)}<span class="swatch excluded" title="排除 RGB {rgb.join(', ')}" style:background={`rgb(${rgb.join(',')})`}></span>{/each}
         </div>
-        <label>颜色容差<input type="number" min="0" max="200" step="1" bind:value={fuzziness} disabled={busy} required onchange={() => void work(() => previewColorRange(fuzziness, invert))} /></label>
+        <NumericField label="颜色容差" min={0} max={200} step={1} value={fuzziness} disabled={busy}
+          onchange={(value) => { fuzziness = value; void work(() => previewColorRange(fuzziness, invert)); }} />
         <label class="check"><input type="checkbox" bind:checked={invert} disabled={busy} onchange={() => void work(() => previewColorRange(fuzziness, invert))} />反向选区</label>
       {:else if edit.kind === "transform"}
         <div class="row">
-          <label>水平位移（px）<input type="number" bind:value={dx} required /></label>
-          <label>垂直位移（px）<input type="number" bind:value={dy} required /></label>
+          <NumericField label="水平位移（px）" step={1} value={dx} onchange={(value) => (dx = value)} />
+          <NumericField label="垂直位移（px）" step={1} value={dy} onchange={(value) => (dy = value)} />
         </div>
         <div class="row">
           <label>水平缩放（%）<input type="number" min="0.01" step="any" bind:value={scaleX} required /></label>
@@ -114,7 +116,7 @@
         <label>旋转角度（°）<input type="number" step="any" bind:value={angle} required /></label>
         <p class="hint">绕选区中心缩放和旋转，仅改变选区边界。</p>
       {:else}
-        <label>半径（px）<input type="number" min="1" max={edit.kind === "feather" ? 250 : 500} step="1" bind:value={amount} required /></label>
+        <NumericField label="半径（px）" min={1} max={edit.kind === "feather" ? 250 : 500} step={1} value={amount} onchange={(value) => (amount = value)} />
       {/if}
       {#if error}<p class="error" role="alert">{error}</p>{/if}
       <div class="actions">
