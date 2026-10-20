@@ -121,6 +121,7 @@
   } from "../state/view";
   import { gridLines, gridStep } from "../state/snap";
   import { commitGuides as commitGuidesAction, moveSelectedPixels } from "../shortcuts/actions";
+import { layerViaCopy } from "../state/clipboard";
   import CropOverlay from "./CropOverlay.svelte";
   import Navigator from "./Navigator.svelte";
   import {
@@ -178,7 +179,9 @@
   // 票 53/S05：选区的鼠标拖动（浮动选区）。只有「选区类工具 + 在选区内按下」
   // 才进入，语义跟原版一致（EditorCanvas.swift:2418-2423 / SelectionEdits.swift:168-212）：
   //  - 普通拖动只移**选区轮廓**：改前端选区，不动像素、不发 RPC、不产生撤销步骤；
-  //  - ⌘/Ctrl 拖动才搬**选区内像素**：走 actions 的 moveSelectedPixels（与方向键同一条 Go 通道）。
+  //  - ⌘/Ctrl 拖动才搬**选区内像素**：走 actions 的 moveSelectedPixels（与方向键同一条 Go 通道）；
+  //  - ⌘/Ctrl + Alt 拖动是**复制后搬**（原版 ⌘⌥）：先把选区像素拷成新层，再在新层上搬，原件不动。
+  //    用现有两条 RPC 组合而成，所以撤销是**两步**而不是原版的一步（已知差异，记在矩阵里）。
   // offset 是未取整的文档像素位移，绘制与结算时各自 Math.round（原版
   // moveSelection 的 rounded()，边缘保持清晰）。
   type SelectionMove = {
@@ -187,6 +190,8 @@
     offset: SelectionPoint;
     /** outline = 只移轮廓；pixels = ⌘/Ctrl 拖动搬像素。 */
     kind: "outline" | "pixels";
+    /** ⌘/Ctrl + Alt：复制后搬（原版 ⌘⌥），而不是就地搬。 */
+    copy: boolean;
   };
   let selectionMove = $state<SelectionMove | null>(null);
   // 松手后 RPC 在飞的这一小段时间里，轮廓停在新位置而不是先弹回原处
@@ -975,6 +980,7 @@
       start: p,
       offset: { x: 0, y: 0 },
       kind: command ? "pixels" : "outline",
+      copy: command && e.altKey,
     };
     stage?.setPointerCapture(e.pointerId);
     e.preventDefault();
@@ -1028,8 +1034,13 @@
     selectionMoveBusy = true;
     pendingSelectionMove = { dx, dy };
     try {
-      await moveSelectedPixels(dx, dy);
-    } finally {
+			// ⌘/Ctrl + Alt：先把选区像素拷成新层，再在新层上搬 —— 原件因此留在原处。
+			if (move.copy) {
+				const copied = await layerViaCopy();
+				if (!copied) return;
+			}
+			await moveSelectedPixels(dx, dy);
+		} finally {
       pendingSelectionMove = null;
       selectionMoveBusy = false;
     }

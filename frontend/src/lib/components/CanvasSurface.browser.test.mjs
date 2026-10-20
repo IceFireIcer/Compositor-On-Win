@@ -508,3 +508,4 @@ it("cancels a Ctrl/Cmd pixel drag on right-click without moving pixels", async (
     await page.close();
   }
 }, 30000);
+
