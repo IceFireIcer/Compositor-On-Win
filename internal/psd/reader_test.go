@@ -287,13 +287,22 @@ func layerFile(width, height int, channels []struct {
 	id      int16
 	payload []byte
 }) []byte {
+	return layerFileWithCount(width, height, 1, channels)
+}
+
+// layerFileWithCount 同上，但层计数可控 —— 用来测「负计数」（Photoshop 用负数表示首个 alpha
+// 通道是透明度，所以**合法文件里会出现**）与「超过上限的计数」。
+func layerFileWithCount(width, height, count int, channels []struct {
+	id      int16
+	payload []byte
+}) []byte {
 	item := preparedLayer{
 		record:   fixtureRecord{name: "Layer", visible: true, opacity: 1, blendKey: "norm"},
 		channels: channels,
 		top:      0, left: 0, bottom: height, right: width,
 	}
 	records := &buf{}
-	records.i16(1)
+	records.i16(int16(count))
 	writeFixtureRecord(records, item, false, "", nil)
 	payloads := &buf{}
 	for _, channel := range channels {
@@ -522,6 +531,58 @@ func TestFlattenedPSDBecomesABackgroundLayer(t *testing.T) {
 		if layer.Image.Pix[i] != want[i] {
 			t.Fatalf("像素 %d = %d，想要 %d（整块 %v）", i, layer.Image.Pix[i], want[i], layer.Image.Pix)
 		}
+	}
+}
+
+// PSD 用**负的层计数**表示「首个 alpha 通道是透明度」，所以**合法文件里会出现**。不取绝对值 →
+// 循环一次都不跑 → 合法文件被导入成**空文档**，而用户看到的是「打开了但什么都没有」。
+//
+// 变异审计查出来的：去掉 `if count < 0 { count = -count }`，全部既有测试照样通过 —— 因为夹具
+// 都写正计数。
+func TestNegativeLayerCountStillImportsTheLayer(t *testing.T) {
+	pixels := []byte{255, 255, 255, 255}
+	// 用类型别名（=），这样 []channel 与 layerFileWithCount 要的匿名结构体是同一个类型。
+	type channel = struct {
+		id      int16
+		payload []byte
+	}
+	channels := []channel{
+		{-1, rawChannel(pixels)}, {0, rawChannel(pixels)},
+		{1, rawChannel(pixels)}, {2, rawChannel(pixels)},
+	}
+	doc, err := Read(layerFileWithCount(1, 1, -1, channels), 1<<20)
+	if err != nil {
+		t.Fatalf("负计数的合法 PSD 应当读得出来: %v", err)
+	}
+	if len(doc.Layers) != 1 {
+		t.Fatalf("负计数被当成 0 层了：导入成 %d 层", len(doc.Layers))
+	}
+}
+
+// 通道数上限 56：超过就报 ErrTooLarge，不再往下读（否则会按畸形计数去分配）。
+func TestChannelCountOverTheLimitIsRefused(t *testing.T) {
+	type channel = struct {
+		id      int16
+		payload []byte
+	}
+	channels := make([]channel, 57)
+	for i := range channels {
+		channels[i] = channel{int16(i), rawChannel([]byte{0})}
+	}
+	if _, err := Read(layerFile(1, 1, channels), 1<<20); err != ErrTooLarge {
+		t.Fatalf("通道数 57 应当被拒绝，得到 %v", err)
+	}
+}
+
+// 层数上限 10000：计数本身就被拒绝，不去尝试读那么多记录。
+func TestLayerCountOverTheLimitIsRefused(t *testing.T) {
+	type channel = struct {
+		id      int16
+		payload []byte
+	}
+	channels := []channel{{0, rawChannel([]byte{255, 255, 255, 255})}}
+	if _, err := Read(layerFileWithCount(1, 1, 10_001, channels), 1<<30); err != ErrTooLarge {
+		t.Fatalf("层数 10001 应当被拒绝，得到 %v", err)
 	}
 }
 
