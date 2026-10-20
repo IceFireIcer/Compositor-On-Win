@@ -146,6 +146,13 @@ func BuildCurvesLUT(s domain.CurvesSettings, size int) *LUT {
 // srgbToLinear/linearToSrgb are the transfer functions the original uses
 // throughout its adjustments (srgb_to_linear / linear_to_srgb in
 // AdjustPixels.c, and inline in ExposureSettings.table).
+// srgbToLinear is the sRGB EOTF. The 0.04045 join and the 2.4 exponent are the
+// spec's, not tunable: the exponent changes the whole midtone ramp (a mutation
+// to 2.2 is caught by the LUT tests), while the join is **continuous** — the
+// linear branch and the power branch agree to ~5e-7 there (measured:
+// 0.04045 → 0.0031308050 vs 0.0031308073), far below one 8-bit level, so moving
+// the threshold cannot be detected and does not need a test. Only the exponent
+// and the two scale constants are worth pinning.
 func srgbToLinear(encoded float64) float64 {
 	if encoded <= 0.04045 {
 		return encoded / 12.92
