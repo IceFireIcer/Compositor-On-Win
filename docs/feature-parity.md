@@ -216,7 +216,7 @@
 | V07 | 合成徽标光标（加选/减选/吸管/旋转等 ~10 种） | NSCursor 家族 | — | M3 | ☑ 票13：合成徽标光标按工具/修饰键切换（`components/cursors.ts`、`cursors.test.ts`），已接画布（`CanvasSurface.svelte:340`） |
 | V08 | 右键拖拽笔刷 HUD | `EditorCanvas` | 18 | M4 | ☑ `lib/gpu/brushCursor.ts` + `brushCursor.test.ts`；画布右键在笔刷类工具上开 `beginBrushTipDrag`（`CanvasSurface.svelte:1014-1018`，`e.button === 2 && BRUSH_TOOLS.has($activeTool)`），拖动走 `dragBrushTip`（`:1186`） |
 | V09 | 4K 笔刷回显 <16ms 基准 | `brush-performance.md` | 19 | M4 | ◐ 票52：`TestBrushStroke4KLatency` 在 4000×4000 上逐段计时，实测 median 1.5–2.0ms / p95 2.1–2.5ms（门禁：默认 48ms，`COMPOSITOR_BENCH_STRICT=1` 时为票面目标 16ms），基线入 `docs/benchmarks/performance.md`。**只有后端、不含显示**，且桥接层只暴露直径 30（原版测 40/800）—— 故 ◐ |
-| V10 | 内存压力响应的纹理/缓存逐出 | `GPUCanvas` | — | M2 | ◐ 票52：`internal/memory` 采样档位（<25% moderate / <12% critical），桥接侧真的逐出渲染缓存并把历史压到 10–50 步（注入测试证明撤销/重做/重渲染仍可用），档位变化推 `memory:pressure`；前端注册口就位且有测试。**「GPU 纹理缓存尚未接进画布」是过期记录**（2026-10-20 核实）：`CanvasSurface.svelte:491` 调 `WebGpuCompositor.create(canvas)`，构造函数里 `registerPressureHandler`（`compositor.ts:635`）把 `moderate`/`critical` 转发给 `layerStore.onMemoryPressure`；逐出本身在缓存层有测试（`textureCache.test.ts:82,96`、`layerBitmaps.test.ts:153`、`effectPass.test.ts:76`），档位归一化在 `memory.test.ts`。故 ☑ |
+| V10 | 内存压力响应的纹理/缓存逐出 | `GPUCanvas` | — | M2 | ☑ 票52：`internal/memory` 采样档位（<25% moderate / <12% critical），桥接侧真的逐出渲染缓存并把历史压到 10–50 步（注入测试证明撤销/重做/重渲染仍可用），档位变化推 `memory:pressure`；前端注册口就位且有测试。**「GPU 纹理缓存尚未接进画布」是过期记录**（2026-10-20 核实）：`CanvasSurface.svelte:491` 调 `WebGpuCompositor.create(canvas)`，构造函数里 `registerPressureHandler`（`compositor.ts:635`）把 `moderate`/`critical` 转发给 `layerStore.onMemoryPressure`；逐出本身在缓存层有测试（`textureCache.test.ts:82,96`、`layerBitmaps.test.ts:153`、`effectPass.test.ts:76`），档位归一化在 `memory.test.ts`。故 ☑ |
 
 ## K. 平台集成与代理契约
 
