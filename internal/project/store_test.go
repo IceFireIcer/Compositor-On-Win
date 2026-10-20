@@ -186,6 +186,41 @@ func TestStoreRoundTripKeepsAdjustmentSubFields(t *testing.T) {
 	}
 }
 
+// 票 05：形状样式的**每个子字段**也要往返。
+//
+// 变异审计查出来的：`ShapeStyle.CornerRadius` 从 json 标签里去掉，全部既有测试照样通过 ——
+// 形状的圆角保存再打开会丢。`Kind` / `LineWidth` / `Start` 都有覆盖，唯独圆角没有。
+//
+// 这是第三次在同一类位置（嵌套结构的某个子字段）发现缺口，所以这里把形状的字段一次填满：
+// 以后往 `ShapeStyle` 加字段，只要这里跟着填，漏序列化就会被抓住。
+func TestStoreRoundTripKeepsShapeSubFields(t *testing.T) {
+	dir := t.TempDir()
+	doc := sampleDoc()
+	lineWidth := 3.5
+	start := [2]float64{11, 22}
+	end := [2]float64{33, 44}
+	doc.Layers[0].Shape = &domain.ShapeStyle{
+		Kind:         domain.ShapeLine,
+		Red:          0.12,
+		Green:        0.34,
+		Blue:         0.56,
+		CornerRadius: 7.5,
+		LineWidth:    &lineWidth,
+		Start:        &start,
+		End:          &end,
+	}
+	if err := (&Store{}).Save(dir, doc, sampleAssets()); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	reopened, err := (&Store{}).Open(dir)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	if !reflect.DeepEqual(doc, reopened) {
+		t.Fatalf("往返把形状改了：\n保存 %+v\n重开 %+v", doc.Layers[0].Shape, reopened.Layers[0].Shape)
+	}
+}
+
 func TestStoreReplaceRemovesStaleAssets(t *testing.T) {
 	dir := t.TempDir()
 	store := &Store{}
