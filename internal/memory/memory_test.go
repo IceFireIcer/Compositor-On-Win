@@ -6,6 +6,32 @@ import (
 	"time"
 )
 
+// 边界恰好等于阈值时**算哪一档**是行为差异：Critical 比 Moderate 更狠地压历史，
+// Moderate 与 None 之间是「要不要动手」的区别。所以两处边界本身都要钉住。
+//
+// 取值挑能精确表示的比值，避开浮点抖动：3/25 与字面量 0.12 是同一个 float64（都是同一实数的
+// 正确舍入结果），1/4 更是精确值。
+//
+// 这条是变异审计查出来的：把 `ratio < CriticalBelow` 改成 `<=`，全部既有测试照样通过 ——
+// 因为它们都只测阈值**两侧**，没人测阈值**本身**。
+func TestLevelForBoundariesBelongToTheUpperLevel(t *testing.T) {
+	// ratio == CriticalBelow（0.12）：仍是 Moderate，不是 Critical。
+	if got := LevelFor(25, 3); got != Moderate {
+		t.Fatalf("ratio 恰为 CriticalBelow 时 = %v，想要 Moderate", got)
+	}
+	// ratio == ModerateBelow（0.25）：仍是 None，不是 Moderate。
+	if got := LevelFor(4, 1); got != None {
+		t.Fatalf("ratio 恰为 ModerateBelow 时 = %v，想要 None", got)
+	}
+	// 刚跨过边界才降档。
+	if got := LevelFor(25, 2); got != Critical {
+		t.Fatalf("ratio 0.08 = %v，想要 Critical", got)
+	}
+	if got := LevelFor(25, 4); got != Moderate {
+		t.Fatalf("ratio 0.16 = %v，想要 Moderate", got)
+	}
+}
+
 func TestLevelFor(t *testing.T) {
 	cases := []struct {
 		name         string
