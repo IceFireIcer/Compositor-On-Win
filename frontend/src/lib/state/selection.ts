@@ -114,20 +114,46 @@ export function fillLoops(loops: Point[][], width: number, height: number): Uint
  * of corner points: outer boundaries clockwise, holes counterclockwise in
  * top-left coordinates. Port of the Go WandTrace walk (WandPixels.c).
  */
-export function outlineLoops(mask: Uint8Array, width: number, height: number): Point[][] {
+// 与 Go 的 `wandEdgeLimit` 同一个上限（`internal/render/wand.go`，照 C 的 wand_trace -2）：
+// 边太多时那条路径字符串会长到没法画。Go 返回 `ErrOutlineTooDetailed`；这里没有错误通道，
+// 所以返回**空列表** —— 结果是「这个选区不画蚂蚁线」，而不是把画布卡死。
+export const OUTLINE_EDGE_LIMIT = 8000000;
+
+export function outlineLoops(
+  mask: Uint8Array,
+  width: number,
+  height: number,
+  // 上限可注入：生产用默认值，测试用一个小值来验证「超限就返回空」这条分支（用真实的 800 万
+  // 造夹具会把 worker 撑爆，失败方式反而不干净）。
+  edgeLimit: number = OUTLINE_EDGE_LIMIT,
+): Point[][] {
   const EAST = 1,
     SOUTH = 2,
     WEST = 4,
     NORTH = 8;
   const stride = width + 1;
   const out = new Uint8Array(stride * (height + 1));
+  let edges = 0;
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
       if (!mask[y * width + x]) continue;
-      if (y === 0 || !mask[(y - 1) * width + x]) out[y * stride + x] |= EAST;
-      if (x + 1 === width || !mask[y * width + x + 1]) out[y * stride + x + 1] |= SOUTH;
-      if (y + 1 === height || !mask[(y + 1) * width + x]) out[(y + 1) * stride + x + 1] |= WEST;
-      if (x === 0 || !mask[y * width + x - 1]) out[(y + 1) * stride + x] |= NORTH;
+      if (y === 0 || !mask[(y - 1) * width + x]) {
+        out[y * stride + x] |= EAST;
+        edges++;
+      }
+      if (x + 1 === width || !mask[y * width + x + 1]) {
+        out[y * stride + x + 1] |= SOUTH;
+        edges++;
+      }
+      if (y + 1 === height || !mask[(y + 1) * width + x]) {
+        out[(y + 1) * stride + x + 1] |= WEST;
+        edges++;
+      }
+      if (x === 0 || !mask[y * width + x - 1]) {
+        out[(y + 1) * stride + x] |= NORTH;
+        edges++;
+      }
+      if (edges > edgeLimit) return [];
     }
   }
   const turnRight = (d: number): number => (d === NORTH ? EAST : d << 1);
